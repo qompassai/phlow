@@ -372,6 +372,20 @@ fn is_driver_script_name(script: &str) -> bool {
         && &bytes[7..11] == b".lua"
 }
 
+/// A verdict line is a JSON object carrying a string `id` — not merely a
+/// line that starts with `{`. Lua table dumps and log noise (`{1,2}`,
+/// `{ not json`) used to shadow the real verdict; requiring a parseable
+/// object with a string id keeps those out while preserving the id-mismatch
+/// and missing-outcome diagnostics downstream.
+fn is_verdict_line(line: &str) -> bool {
+    match serde_json::from_str::<serde_json::Value>(line) {
+        Ok(serde_json::Value::Object(map)) => {
+            matches!(map.get("id"), Some(serde_json::Value::String(_)))
+        }
+        _ => false,
+    }
+}
+
 /// Find the verdict line: stdout first, then stderr.
 ///
 /// Rationale (empirically verified 2026-09-28): `nvim --headless -l` routes
@@ -380,12 +394,12 @@ fn is_driver_script_name(script: &str) -> bool {
 /// report says so, so the stream choice stays visible instead of silently
 /// accepted.
 fn find_verdict_line<'a>(stdout: &'a str, stderr: &'a str) -> Option<(&'a str, &'static str)> {
-    if let Some(line) = stdout.lines().find(|l| l.trim_start().starts_with('{')) {
+    if let Some(line) = stdout.lines().find(|l| is_verdict_line(l)) {
         return Some((line, "stdout"));
     }
     stderr
         .lines()
-        .find(|l| l.trim_start().starts_with('{'))
+        .find(|l| is_verdict_line(l))
         .map(|line| (line, "stderr"))
 }
 
@@ -508,16 +522,17 @@ mod tests {
     /// Validation: stdout wins when both streams carry a verdict line.
     #[test]
     fn verdict_prefers_stdout() {
-        let (line, stream) = find_verdict_line("{\"a\":1}", "{\"b\":2}").unwrap();
-        assert_eq!(line, "{\"a\":1}");
+        let (line, stream) =
+            find_verdict_line("{\"id\":\"task_01\"}", "{\"id\":\"task_02\"}").unwrap();
+        assert_eq!(line, "{\"id\":\"task_01\"}");
         assert_eq!(stream, "stdout");
     }
 
     /// Validation: a print()-style driver (verdict on stderr) is still heard.
     #[test]
     fn verdict_falls_back_to_stderr() {
-        let (line, stream) = find_verdict_line("startup noise\n", "{\"b\":2}").unwrap();
-        assert_eq!(line, "{\"b\":2}");
+        let (line, stream) = find_verdict_line("startup noise\n", "{\"id\":\"task_02\"}").unwrap();
+        assert_eq!(line, "{\"id\":\"task_02\"}");
         assert_eq!(stream, "stderr");
     }
 
@@ -527,6 +542,54 @@ mod tests {
     fn verdict_absent_is_none() {
         assert!(find_verdict_line("no json here", "lua error: boom").is_none());
         assert!(find_verdict_line("x = {1,2}", "traceback...").is_none());
+    }
+
+    /// Validation (the reported bug): `{`-leading garbage — a Lua table
+    /// dump, a half-written line — no longer shadows the real verdict on
+    /// stdout.
+    #[test]
+    fn verdict_skips_garbage_brace_lines() {
+        let stdout = "{ not json\n{1,2}\n{\"id\":\"task_07\",\"outcome\":\"pass\"}\n";
+        let (line, stream) = find_verdict_line(stdout, "").unwrap();
+        assert_eq!(line, "{\"id\":\"task_07\",\"outcome\":\"pass\"}");
+        assert_eq!(stream, "stdout");
+    }
+
+    /// Validation: stdout garbage with no verdict falls through to a real
+    /// verdict on stderr, and the stream is reported honestly.
+    #[test]
+    fn verdict_found_on_stderr_past_stdout_garbage() {
+        let stdout = "{garbage}\n{1,2}\n";
+        let stderr = "noise\n{\"id\":\"task_07\",\"outcome\":\"pass\"}\n";
+        let (line, stream) = find_verdict_line(stdout, stderr).unwrap();
+        assert_eq!(line, "{\"id\":\"task_07\",\"outcome\":\"pass\"}");
+        assert_eq!(stream, "stderr");
+    }
+
+    /// Adversarial: valid JSON that is not a verdict — no `id`, a non-object,
+    /// a non-string `id` — is skipped in favor of the real verdict.
+    #[test]
+    fn verdict_skips_valid_json_non_verdicts() {
+        let stdout = concat!(
+            "{\"x\":1}\n",
+            "[1,2]\n",
+            "{\"id\":123}\n",
+            "{\"id\":\"task_07\",\"outcome\":\"fail\",\"where\":\"w\",\"how\":\"h\"}\n",
+        );
+        let (line, stream) = find_verdict_line(stdout, "").unwrap();
+        assert_eq!(
+            line,
+            "{\"id\":\"task_07\",\"outcome\":\"fail\",\"where\":\"w\",\"how\":\"h\"}"
+        );
+        assert_eq!(stream, "stdout");
+    }
+
+    /// Adversarial: when no line anywhere is a verdict-shaped object, the
+    /// answer stays None — unchanged behavior, no guessing.
+    #[test]
+    fn verdict_absent_among_non_verdicts_is_none() {
+        assert!(find_verdict_line("{\"x\":1}\n", "[1,2]\n{\"id\":42}\n").is_none());
+        assert!(find_verdict_line("", "").is_none());
     }
 
     /// Spawn a piped `/bin/sh` child for the wait-path tests: no nvim in
