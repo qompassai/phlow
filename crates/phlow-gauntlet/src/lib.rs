@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-//! Gauntlet: the 115-task agent-orchestration proving ground for phlow (105 implemented).
+//! Gauntlet: the 130-task agent-orchestration proving ground for phlow (110 implemented).
 //!
 //! # Status: EXPERIMENTAL
 //!
@@ -34,8 +34,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 /// Maximum number of tasks in the gauntlet. The task list is closed: adding
-/// a 101st task is a design change, not an iteration.
-pub const TASK_COUNT_MAX: usize = 105;
+/// a 111th task is a design change, not an iteration.
+pub const TASK_COUNT_MAX: usize = 110;
 
 /// Maximum length in characters of a single evidence line in a report.
 /// Evidence is diagnostic text, not bulk data; oversized lines are truncated
@@ -295,7 +295,9 @@ pub fn run_nvim_lua_driver_with_env(
     if !is_driver_script_name(script) {
         return TaskOutcome::Fail {
             where_: "spawn".to_string(),
-            how: format!("rejected driver script name '{script}' (want task-NN.lua)"),
+            how: format!(
+                "rejected driver script name '{script}' (want task-NN.lua or task-NNN.lua)"
+            ),
             evidence: vec![],
         };
     }
@@ -362,15 +364,21 @@ pub fn run_nvim_lua_driver_with_env(
     }
 }
 
-/// Accept only `task_NN.lua`: no directories, no surprises on the command line.
-/// The underscore matches the on-disk driver names (`lua/gauntlet/task_01.lua`).
+/// Accept only `task_NN.lua` or `task_NNN.lua`: no directories, no
+/// surprises on the command line. The underscore matches the on-disk
+/// driver names (`lua/gauntlet/task_01.lua`); three-digit indices serve
+/// tasks 100-130 while two-digit indices keep working unchanged.
 fn is_driver_script_name(script: &str) -> bool {
     let bytes = script.as_bytes();
-    bytes.len() == 11
+    (bytes.len() == 11 || bytes.len() == 12)
         && &bytes[0..5] == b"task_"
         && bytes[5].is_ascii_digit()
         && bytes[6].is_ascii_digit()
-        && &bytes[7..11] == b".lua"
+        && if bytes.len() == 12 {
+            bytes[7].is_ascii_digit() && &bytes[8..12] == b".lua"
+        } else {
+            &bytes[7..11] == b".lua"
+        }
 }
 
 /// A verdict line is a JSON object carrying a string `id` — not merely a
@@ -489,11 +497,20 @@ mod tests {
     /// Validation: every real driver name is accepted.
     #[test]
     fn driver_names_valid() {
-        for nn in ["00", "01", "09", "10", "20", "99"] {
-            assert!(
-                is_driver_script_name(&format!("task_{nn}.lua")),
-                "task_{nn}.lua should be accepted"
-            );
+        for name in [
+            "task_00.lua",
+            "task_01.lua",
+            "task_09.lua",
+            "task_10.lua",
+            "task_20.lua",
+            "task_99.lua",
+            "task_100.lua",
+            "task_115.lua",
+            "task_116.lua",
+            "task_120.lua",
+            "task_130.lua",
+        ] {
+            assert!(is_driver_script_name(name), "{name:?} should be accepted");
         }
     }
 
@@ -508,12 +525,13 @@ mod tests {
             "TASK_01.LUA",     // wrong case
             "task-01.lua",     // dash instead of underscore
             "task_1.lua",      // short index
-            "task_011.lua",    // long index
+            "task_0111.lua",   // overlong index (four digits)
             "task_01.luax",    // wrong extension
             "task_01lua",      // missing dot
             "",                // empty
             "task_01.lua\n",   // embedded newline
             "sub/task_01.lua", // subdirectory
+            "task_11a.lua",    // non-digit in three-digit index
         ];
         for name in hostile {
             assert!(!is_driver_script_name(name), "{name:?} should be rejected");

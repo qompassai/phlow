@@ -1,18 +1,22 @@
 # crates/phlow-gauntlet/flake.nix
 #
-# Phlow 115-task orchestration gauntlet: Nix entry points for the task
+# Phlow 130-task orchestration gauntlet: Nix entry points for the task
 # drivers in `crates/phlow-gauntlet` (tasks 01-20 designed in
 # ~/workspace/gauntlet-design.md; tasks 21-70 designed in
 # ~/workspace/gauntlet-design-tasks-21-70.md; tasks 71-100 designed in
 # ~/workspace/gauntlet-design-tasks-71-100.md; tasks 101-115 designed in
-# ~/workspace/gauntlet-design-tasks-101-115.md).
+# ~/workspace/gauntlet-design-tasks-101-115.md; tasks 116-130 designed in
+# ~/workspace/gauntlet-design-tasks-116-130.md).
 #
 # ROSTER SCHEME (two levels — read this before extending):
 # - `gauntletRoster` declares EVERY task as pure data: { id, name, kind },
 #   split into `tasks01to105` (implemented: drivers for 01-105 all landed
-#   in this crate, waves 01-20) and `tasks106to115` (pending: designed in
-#   the two extension docs above, wave 21, drivers not yet landed).
-#   Roster asserts validate ALL 115 entries.
+#   in this crate, waves 01-20), `tasks116to120` (implemented: diver
+#   harness Phase-2 acceptance probes, wave 116-120), `tasks106to115`
+#   (pending: designed in the extension docs, wave 21, drivers not yet
+#   landed), and `tasks121to130` (pending: designed in the Phase-2 doc,
+#   drivers not yet landed).
+#   Roster asserts validate ALL 130 entries.
 # - Apps (`apps.task-NN`), the `gauntlet` runner, and `checks.task-list`
 #   cover IMPLEMENTED tasks only. The flake never claims an app for a
 #   task without a driver. This deliberately deviates from the design
@@ -24,11 +28,11 @@
 #   checks all consume the two segments via `gauntletRoster` and
 #   `implementedTasks` — no other edits needed. Waves through 96-100
 #   landed every designed task, so the implemented side is complete
-#   through task-105; the pending side holds tasks 106-115 until their
-#   drivers land.
+#   through task-105 plus tasks 116-120; the pending side holds tasks
+#   106-115 and 121-130 until their drivers land.
 # - `tasks01to60` was once referenced but never defined (dangling binding
 #   in the 70-task flake); it is defined here so the implemented
-#   concatenation evaluates. Nothing is hardcoded to 115 except the
+#   concatenation evaluates. Nothing is hardcoded to 130 except the
 #   named bound `taskCountMax`.
 #
 # INPUT PINS: `nixpkgs` tracks the `nixos-25.05` branch and `flake-utils`
@@ -53,7 +57,7 @@
 # Evaluator: Nix 2.x with the `nix-command` and `flakes` experimental
 # features enabled. Nixpkgs: nixos-25.05 (locked on primo, see above).
 {
-  description = "phlow 115-task gauntlet: declared roster, apps for implemented drivers";
+  description = "phlow 130-task gauntlet: declared roster, apps for implemented drivers";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
@@ -65,9 +69,9 @@
     let
       inherit (nixpkgs) lib;
 
-      # Named bound on the declared roster: exactly 115 entries
-      # (task-01..task-115), no more.
-      taskCountMax = 115;
+      # Named bound on the declared roster: exactly 130 entries
+      # (task-01..task-130), no more.
+      taskCountMax = 130;
 
       # Roster segment: tasks 01-50. Drivers landed in this crate
       # (`src/tasks/task_01.rs` .. `src/tasks/task_50.rs`).
@@ -688,6 +692,87 @@
           kind = "rust";
         }
       ];
+      tasks116to120 = [
+        {
+          id = "task-116";
+          name = "goal-propagation";
+          kind = "nvim-lua";
+        }
+        {
+          id = "task-117";
+          name = "a2a-completion-integrity";
+          kind = "nvim-lua";
+        }
+        {
+          id = "task-118";
+          name = "policy-launch-enforcement";
+          kind = "nvim-lua";
+        }
+        {
+          id = "task-119";
+          name = "resume-mutation-ordering";
+          kind = "nvim-lua";
+        }
+        {
+          id = "task-120";
+          name = "run-failure-legality";
+          kind = "nvim-lua";
+        }
+      ];
+
+      tasks121to130 = [
+        {
+          id = "task-121";
+          name = "deny-all default and explicit opt-in";
+          kind = "nvim-lua";
+        }
+        {
+          id = "task-122";
+          name = "capability-based risk escalation";
+          kind = "nvim-lua";
+        }
+        {
+          id = "task-123";
+          name = "HarnessRun argument parsing contract";
+          kind = "nvim-lua";
+        }
+        {
+          id = "task-124";
+          name = "prompt fallback and abort atomicity";
+          kind = "nvim-lua";
+        }
+        {
+          id = "task-125";
+          name = "run selection TOCTOU for cancel/resume";
+          kind = "nvim-lua";
+        }
+        {
+          id = "task-126";
+          name = "sink-append wakes supervision, no poll";
+          kind = "nvim-lua";
+        }
+        {
+          id = "task-127";
+          name = "deadline one-shots and handle hygiene";
+          kind = "nvim-lua";
+        }
+        {
+          id = "task-128";
+          name = "retry one-shot lifecycle";
+          kind = "nvim-lua";
+        }
+        {
+          id = "task-129";
+          name = "approval-expiry one-shots";
+          kind = "nvim-lua";
+        }
+        {
+          id = "task-130";
+          name = "idle-loop quietness";
+          kind = "nvim-lua";
+        }
+      ];
+
       tasks106to115 = [
         {
           id = "task-106";
@@ -756,14 +841,14 @@
       tasks01to95 = tasks01to90 ++ tasks91to95;
       tasks01to100 = tasks01to95 ++ tasks96to100;
       tasks01to105 = tasks01to100 ++ tasks101to105;
-      rosterImplemented = tasks01to105;
-      rosterPending = tasks106to115;
+      rosterImplemented = tasks01to105 ++ tasks116to120;
+      rosterPending = tasks106to115 ++ tasks121to130;
 
       # Full declared roster: segments concatenated, nothing hardcoded.
       gauntletRoster = rosterImplemented ++ rosterPending;
 
-      # Roster invariant: the concatenated table really is the 115 declared
-      # entries, each well-shaped, ids unique and exactly task-01..task-115.
+      # Roster invariant: the concatenated table really is the 130 declared
+      # entries, each well-shaped, ids unique and exactly task-01..task-130.
       # Laziness note: these asserts fire when a per-system output that
       # references `implementedTasks` is evaluated, not at flake load.
       # `checks.task-list` forces that evaluation under `nix flake check`.
