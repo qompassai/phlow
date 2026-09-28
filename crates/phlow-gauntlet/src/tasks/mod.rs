@@ -1,4 +1,4 @@
-//! The 55 gauntlet tasks. One module per task; each file has a single
+//! The 60 gauntlet tasks. One module per task; each file has a single
 //! owning worker during implementation (disjoint ownership).
 
 pub mod task_01;
@@ -56,6 +56,11 @@ pub mod task_52;
 pub mod task_53;
 pub mod task_54;
 pub mod task_55;
+pub mod task_56;
+pub mod task_57;
+pub mod task_58;
+pub mod task_59;
+pub mod task_60;
 
 use crate::{Ctx, GauntletError, TaskKind, TaskReport};
 use std::time::Instant;
@@ -69,7 +74,8 @@ pub const TASK_IDS: [&str; crate::TASK_COUNT_MAX] = [
     "task-25", "task-26", "task-27", "task-28", "task-29", "task-30", "task-31", "task-32",
     "task-33", "task-34", "task-35", "task-36", "task-37", "task-38", "task-39", "task-40",
     "task-41", "task-42", "task-43", "task-44", "task-45", "task-46", "task-47", "task-48",
-    "task-49", "task-50", "task-51", "task-52", "task-53", "task-54", "task-55",
+    "task-49", "task-50", "task-51", "task-52", "task-53", "task-54", "task-55", "task-56",
+    "task-57", "task-58", "task-59", "task-60",
 ];
 
 /// Run one task by id and record a `TaskReport`.
@@ -131,6 +137,11 @@ pub fn run_task(id: &str, ctx: &Ctx) -> Result<TaskReport, GauntletError> {
         task_53::ID => (task_53::ID, task_53::NAME, task_53::KIND, task_53::run(ctx)),
         task_54::ID => (task_54::ID, task_54::NAME, task_54::KIND, task_54::run(ctx)),
         task_55::ID => (task_55::ID, task_55::NAME, task_55::KIND, task_55::run(ctx)),
+        task_56::ID => (task_56::ID, task_56::NAME, task_56::KIND, task_56::run(ctx)),
+        task_57::ID => (task_57::ID, task_57::NAME, task_57::KIND, task_57::run(ctx)),
+        task_58::ID => (task_58::ID, task_58::NAME, task_58::KIND, task_58::run(ctx)),
+        task_59::ID => (task_59::ID, task_59::NAME, task_59::KIND, task_59::run(ctx)),
+        task_60::ID => (task_60::ID, task_60::NAME, task_60::KIND, task_60::run(ctx)),
         _ => return Err(GauntletError::UnknownTask { id: id.to_string() }),
     };
     let duration_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
@@ -201,6 +212,11 @@ pub fn task_meta(id: &str) -> Option<(&'static str, TaskKind)> {
         task_53::ID => Some((task_53::NAME, task_53::KIND)),
         task_54::ID => Some((task_54::NAME, task_54::KIND)),
         task_55::ID => Some((task_55::NAME, task_55::KIND)),
+        task_56::ID => Some((task_56::NAME, task_56::KIND)),
+        task_57::ID => Some((task_57::NAME, task_57::KIND)),
+        task_58::ID => Some((task_58::NAME, task_58::KIND)),
+        task_59::ID => Some((task_59::NAME, task_59::KIND)),
+        task_60::ID => Some((task_60::NAME, task_60::KIND)),
         _ => None,
     }
 }
