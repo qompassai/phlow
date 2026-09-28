@@ -158,11 +158,11 @@ graph TB
         llm["phlow-llm"]
         mcp["phlow-mcp"]
         edt["phlow-editor"]
+        sim["phlow-self-improve"]
     end
 
     subgraph L2["Layer 2 — composed capabilities"]
         tls["phlow-tools"]
-        sim["phlow-self-improve"]
     end
 
     subgraph L3["Layer 3 — the foreman"]
@@ -216,8 +216,8 @@ graph TB
     cli --> tui
 
     class cfg,jsn,wsp,inf,tui l0
-    class chk,llm,mcp,edt l1
-    class tls,sim l2
+    class chk,llm,mcp,edt,sim l1
+    class tls l2
     class rt l3
     class agt,cgen l4
     class cli l5
@@ -229,6 +229,9 @@ Reading the layers:
   workspace. `phlow-tui` and `phlow-inference` sit here because nothing in the
   workspace depends on their internals — the TUI is driven through its facade
   by `phlow-cli`, inference is standalone.
+- **Layer 1** holds the crates whose only path dependencies are foundation:
+  checks, the LLM backend, the MCP server, the editor bridge — and
+  `phlow-self-improve`, whose single path dependency is `phlow-workspace`.
 - **Layer 3 has exactly one crate.** `phlow-runtime` is the only crate allowed
   to own everything at once (config, agents, tools, reports, shutdown) — the
   one-owner rule made structural.
@@ -250,19 +253,20 @@ sequenceDiagram
 
     U->>C: phlow run "fix the typo"
     C->>C: parse flags (before or after subcommand)
-    C->>C: load --config TOML (explicit only, never auto)
+    C->>C: load config (--config explicit, else auto-load
+    C->>C: $XDG_CONFIG_HOME/flow/config.toml, project config ignored unless explicit)
     Note over C: invalid config → "Phlow: reason", exit 2
     C->>R: build Runtime (config, workspace, transports)
     R->>O: run task, bounded iterations
     loop planner → coder → verification → reviewer
         O->>L: planner prompt
-        L->>M: POST /api/chat
+        L->>M: POST /v1/chat/completions
         M-->>L: draft plan
         O->>T: coder tool calls (workspace-contained, atomic writes)
         T-->>O: results
         O->>O: verification (operator-approved named checks)
         O->>L: reviewer prompt
-        L->>M: POST /api/chat
+        L->>M: POST /v1/chat/completions
         M-->>L: verdict
     end
     O-->>R: report
@@ -290,7 +294,7 @@ sequenceDiagram
     S->>R: dispatch to Runtime (same path as CLI run)
     R-->>S: report
     S-->>K: {"jsonrpc":"2.0","id":3,"result":{...}}
-    Note over K,S: EOF on stdin ends the session; Runtime closes on every exit path
+    Note over K,S: EOF on stdin ends the session, and the Runtime closes on every exit path
 ```
 
 One request line → one response line; frames are newline-delimited JSON-RPC.
@@ -304,9 +308,9 @@ graph TB
     classDef mid fill:#2d6a4f,stroke:#d8f3dc,stroke-width:2px,color:#ffffff
     classDef lib fill:#495057,stroke:#dee2e6,stroke-width:2px,color:#ffffff
 
-    APP["app.rs<br/>FlowApp: event loop, startup banner"]
-    FAC["facade.rs<br/>drives the app without a TTY"]
-    CMD["commands.rs<br/>command dispatch"]
+    APP["app.rs<br/>chat loop · startup banner<br/>ratatui on TTY, line mode without"]
+    FAC["facade.rs<br/>RuntimeFacade: the narrow surface<br/>the commands program against"]
+    CMD["commands.rs<br/>FlowApp: app state + command dispatch"]
     PAN["panels.rs<br/>result panels, styled output"]
     RAT["ratatui + crossterm<br/>widgets, terminal control"]
     TTY["terminal<br/>or line-mode stdout fallback"]
@@ -323,8 +327,12 @@ graph TB
     class RAT,TTY lib
 ```
 
-`phlow tui` renders the ratatui app when a TTY is present; without one the
-facade falls back to line mode, so scripts never hang waiting for a terminal.
+`phlow tui` renders the ratatui app (`app::run`, inline panels) when stdout is
+a TTY; without one `phlow-cli` runs `app::run_line_mode` instead — the same
+`read_line`/`classify_line` loop with a plain-text banner — so scripts never
+hang waiting for a terminal. The slash commands program against the
+`RuntimeFacade` trait in `facade.rs`, so tests drive them through
+`FakeRuntime` without a live backend.
 
 ## Component responsibilities
 
