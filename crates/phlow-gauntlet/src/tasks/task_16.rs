@@ -216,6 +216,14 @@ fn bad_fields(what: &str) -> ExperimentError {
 /// Phase 2 (validation): malformed manifests are rejected with the typed
 /// error at the right key.
 fn drive_malformed(evidence: &mut Vec<String>) -> Result<(), (String, String)> {
+    drive_malformed_envelope(evidence)?;
+    drive_malformed_fields(evidence)?;
+    Ok(())
+}
+
+/// Envelope breakage: unparseable documents, wrong or missing schema
+/// versions, stray top-level keys.
+fn drive_malformed_envelope(evidence: &mut Vec<String>) -> Result<(), (String, String)> {
     // Not TOML at all: rejected at the document level.
     expect_rejected(
         evidence,
@@ -252,6 +260,11 @@ fn drive_malformed(evidence: &mut Vec<String>) -> Result<(), (String, String)> {
         "manifest.evil",
         "unknown key",
     )?;
+    Ok(())
+}
+
+/// Field breakage: wrong types and missing required tables/arrays.
+fn drive_malformed_fields(evidence: &mut Vec<String>) -> Result<(), (String, String)> {
     // Wrong type for a boolean.
     expect_rejected(
         evidence,
@@ -300,6 +313,14 @@ fn drive_malformed(evidence: &mut Vec<String>) -> Result<(), (String, String)> {
 /// Phase 3 (adversarial): attacker-shaped inputs — type confusion,
 /// oversized arrays, injected keys — are rejected without coercion.
 fn drive_adversarial(evidence: &mut Vec<String>) -> Result<(), (String, String)> {
+    drive_adversarial_types(evidence)?;
+    drive_adversarial_bounds(evidence)?;
+    Ok(())
+}
+
+/// Type confusion: strings, floats, zeros, and negatives must not coerce
+/// into the expected types.
+fn drive_adversarial_types(evidence: &mut Vec<String>) -> Result<(), (String, String)> {
     // Type confusion: a string schema version must not coerce to 1.
     expect_rejected(
         evidence,
@@ -336,6 +357,12 @@ fn drive_adversarial(evidence: &mut Vec<String>) -> Result<(), (String, String)>
         "defaults.workers_max",
         "must not be negative",
     )?;
+    Ok(())
+}
+
+/// Size bombs and smuggled keys: oversized arrays/strings, injected keys,
+/// unknown enum spellings, duplicate keys.
+fn drive_adversarial_bounds(evidence: &mut Vec<String>) -> Result<(), (String, String)> {
     // Oversized array: 17 suites against SUITES_MAX = 16.
     expect_rejected(
         evidence,
