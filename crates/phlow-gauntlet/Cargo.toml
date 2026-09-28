@@ -2,7 +2,7 @@
 name = "phlow-gauntlet"
 version = "0.1.0"
 edition = "2024"
-description = "130-task agent-orchestration proving ground for phlow (115 implemented): task drivers, failure recorder, and report CLI. EXPERIMENTAL — drives only test doubles and headless Neovim; enables no production behavior."
+description = "130-task agent-orchestration proving ground for phlow (120 implemented): task drivers, failure recorder, and report CLI. EXPERIMENTAL — drives only test doubles and headless Neovim; enables no production behavior."
 license = "MIT OR Apache-2.0"
 
 [lib]
