@@ -9,8 +9,10 @@
 //! back into an invalid state.
 //!
 //! Port of `flow/config.py`. Project configuration is never auto-discovered:
-//! only an explicit `--config` path or `$XDG_CONFIG_HOME/flow/config.toml`
-//! is loaded, and workspace-local `config.toml`/`.flow.toml` files produce
+//! only an explicit `--config` path or `$XDG_CONFIG_HOME/phlow/config.toml`
+//! (with a migration fallback to the legacy
+//! `$XDG_CONFIG_HOME/flow/config.toml`) is loaded, and workspace-local
+//! `config.toml`/`.phlow.toml`/`.flow.toml` files produce
 //! warnings instead of configuration.
 //!
 //! # Bounds

@@ -5,6 +5,18 @@ All notable changes to phlow are documented here. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Operator config paths follow the Phlow product rename: the default
+  auto-load path is now `$XDG_CONFIG_HOME/phlow/config.toml` (previously
+  `$XDG_CONFIG_HOME/flow/config.toml`), and the preferred workspace-local
+  project-config name is `.phlow.toml` (previously `.flow.toml`). The legacy
+  locations keep working as a migration fallback — the `flow/` config is used
+  when the `phlow/` file is absent (with a deprecation warning naming both
+  paths), and `.flow.toml` remains warned-on and write-protected. When both
+  exist, the `phlow/` location wins. Decision recorded in
+  `docs/decisions.md`.
+
 ## [2026-09-28] — tuios session/inbox integration
 
 ### Added

@@ -26,3 +26,18 @@ The two `system_prompt.md` copies
 `flow/skills/system_prompt.md`) were both updated to "You are Phlow"
 and must remain byte-identical (pinned by
 `vendored_prompt_is_byte_identical_to_flow_skills`).
+
+## 2026-09-28 — Config paths follow the Phlow rename (with legacy fallback)
+
+The operator config locations were the last product-facing `flow` names the
+rename did not cover. The default auto-load path is now
+`$XDG_CONFIG_HOME/phlow/config.toml`, and the preferred workspace-local
+project-config name is `.phlow.toml` (warned-on when not explicitly
+selected, and always write-protected).
+
+To avoid stranding existing operators, the legacy locations keep working as
+a migration fallback: `$XDG_CONFIG_HOME/flow/config.toml` is used when the
+`phlow/` file does not exist, and `.flow.toml` is still warned-on and
+protected. Selecting the legacy XDG path emits a deprecation warning naming
+both locations. When both locations exist, the `phlow/` one wins. This keeps
+the rename promise ("everywhere product-facing") without a flag day.

@@ -270,7 +270,8 @@ impl Workspace {
     ///
     /// `trusted` gates writes; `protected` lists extra paths the file tools
     /// may never modify (absolute, or relative to the root; the root's
-    /// `config.toml` and `.flow.toml` are always protected).
+    /// `config.toml`, `.phlow.toml`, and legacy `.flow.toml` are always
+    /// protected).
     pub fn open(
         root: &Path,
         trusted: bool,
@@ -286,6 +287,7 @@ impl Workspace {
             .map(|item| anchor_protected(&canonical, item))
             .collect();
         protected_set.insert(canonical.join("config.toml"));
+        protected_set.insert(canonical.join(".phlow.toml"));
         protected_set.insert(canonical.join(".flow.toml"));
         Ok(Workspace {
             root: canonical,
@@ -972,6 +974,10 @@ mod tests {
         let ws = open_trusted(&dir);
         assert!(matches!(
             ws.write("config.toml", "evil = true"),
+            Err(WorkspaceError::Protected)
+        ));
+        assert!(matches!(
+            ws.write(".phlow.toml", "evil = true"),
             Err(WorkspaceError::Protected)
         ));
         assert!(matches!(

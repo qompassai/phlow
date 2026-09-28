@@ -260,7 +260,8 @@ sequenceDiagram
     U->>C: phlow run "fix the typo"
     C->>C: parse flags (before or after subcommand)
     C->>C: load config (--config explicit, else auto-load
-    C->>C: $XDG_CONFIG_HOME/flow/config.toml, project config ignored unless explicit)
+    C->>C: $XDG_CONFIG_HOME/phlow/config.toml, legacy flow/ fallback,
+    C->>C: project config ignored unless explicit)
     Note over C: invalid config → "Phlow: reason", exit 2
     C->>R: build Runtime (config, workspace, transports)
     R->>O: run task, bounded iterations

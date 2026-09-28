@@ -4,8 +4,10 @@
 //!
 //! - An explicit `--config` path approves its contents but grants no
 //!   execution trust (`trusted` stays false unless the CLI says otherwise).
-//! - Only `$XDG_CONFIG_HOME/flow/config.toml` is auto-loaded. No
-//!   workspace-local `config.toml`/`.flow.toml` is ever consumed
+//! - Only `$XDG_CONFIG_HOME/phlow/config.toml` is auto-loaded, with a
+//!   migration fallback to the legacy `$XDG_CONFIG_HOME/flow/config.toml`
+//!   (selecting the legacy path emits a deprecation warning). No
+//!   workspace-local `config.toml`/`.phlow.toml`/`.flow.toml` is ever consumed
 //!   automatically; when one exists and was not explicitly selected, it
 //!   produces a warning, not configuration.
 //! - `trusted` is CLI/API-only. A `trusted` key in TOML is rejected as an
@@ -69,10 +71,13 @@ pub struct LoadOptions {
 /// missing workspaces. Rejected validation leaves nothing behind; there is
 /// no partial config to observe.
 pub fn load_config(options: &LoadOptions) -> Result<FlowConfig, ConfigError> {
-    // 1. Resolve which file to read.
+    // 1. Resolve which file to read. Without an explicit path, the
+    //    `phlow/` XDG location wins; the legacy `flow/` location is a
+    //    migration fallback that emits a deprecation warning.
+    let mut warnings: Vec<String> = Vec::new();
     let config_path = match &options.config_path {
         Some(path) => normalize_path(path)?,
-        None => default_config_path()?,
+        None => select_default_config_path(&mut warnings)?,
     };
     let explicit = options.config_path.is_some();
 
@@ -160,8 +165,7 @@ pub fn load_config(options: &LoadOptions) -> Result<FlowConfig, ConfigError> {
     };
 
     // 7. Warn about workspace-local configs that were NOT selected.
-    let mut warnings = Vec::new();
-    for local_name in ["config.toml", ".flow.toml"] {
+    for local_name in ["config.toml", ".phlow.toml", ".flow.toml"] {
         let local = workspace_dir.join(local_name);
         if !local.exists() {
             continue;
@@ -846,12 +850,12 @@ fn normalize_path(path: &Path) -> Result<PathBuf, ConfigError> {
     lexical_absolute(&expanded)
 }
 
-/// Pure XDG default-path resolution, split out so tests never mutate the
+/// Pure XDG base-directory resolution, split out so tests never mutate the
 /// process environment (`std::env::set_var` is `unsafe` in edition 2024).
 ///
 /// Deviation from Python, documented: an empty `XDG_CONFIG_HOME` falls back
 /// to the default per the XDG spec; Python would use the empty string.
-fn xdg_default_config_path(
+fn xdg_config_base(
     xdg_config_home: Option<&str>,
     home: Option<&Path>,
 ) -> Result<PathBuf, ConfigError> {
@@ -859,15 +863,64 @@ fn xdg_default_config_path(
         Some(dir) if !dir.is_empty() => PathBuf::from(dir),
         _ => home.ok_or(ConfigError::NoHomeDirectory)?.join(".config"),
     };
-    lexical_absolute(&base.join("flow").join("config.toml"))
+    lexical_absolute(&base)
 }
 
-/// Read `$XDG_CONFIG_HOME` / `$HOME` from the environment and resolve the
+/// Preferred default config path: `$XDG_CONFIG_HOME/phlow/config.toml`.
+fn xdg_default_config_path(
+    xdg_config_home: Option<&str>,
+    home: Option<&Path>,
+) -> Result<PathBuf, ConfigError> {
+    Ok(xdg_config_base(xdg_config_home, home)?
+        .join("phlow")
+        .join("config.toml"))
+}
+
+/// Legacy default config path kept as a migration fallback:
+/// `$XDG_CONFIG_HOME/flow/config.toml`.
+fn xdg_legacy_config_path(
+    xdg_config_home: Option<&str>,
+    home: Option<&Path>,
+) -> Result<PathBuf, ConfigError> {
+    Ok(xdg_config_base(xdg_config_home, home)?
+        .join("flow")
+        .join("config.toml"))
+}
+
+/// Select the default config path: the preferred `phlow/` location wins when
+/// it exists; otherwise the legacy `flow/` location is used when it exists
+/// (emitting a deprecation warning); when neither exists the preferred path
+/// is returned so diagnostics point at the location to create.
+///
+/// Pure over its inputs (plus the filesystem) so tests never mutate the
+/// process environment (`std::env::set_var` is `unsafe` in edition 2024).
+fn select_default_config_path_for(
+    xdg_config_home: Option<&str>,
+    home: Option<&Path>,
+    warnings: &mut Vec<String>,
+) -> Result<PathBuf, ConfigError> {
+    let preferred = xdg_default_config_path(xdg_config_home, home)?;
+    if std::fs::metadata(&preferred).is_ok() {
+        return Ok(preferred);
+    }
+    let legacy = xdg_legacy_config_path(xdg_config_home, home)?;
+    if std::fs::metadata(&legacy).is_ok() {
+        warnings.push(format!(
+            "Deprecated config location {}; move it to {}",
+            legacy.display(),
+            preferred.display()
+        ));
+        return Ok(legacy);
+    }
+    Ok(preferred)
+}
+
+/// Read `$XDG_CONFIG_HOME` / `$HOME` from the environment and select the
 /// default config path.
-fn default_config_path() -> Result<PathBuf, ConfigError> {
+fn select_default_config_path(warnings: &mut Vec<String>) -> Result<PathBuf, ConfigError> {
     let xdg = std::env::var_os("XDG_CONFIG_HOME");
     let xdg_str = xdg.as_deref().and_then(|s| s.to_str());
-    xdg_default_config_path(xdg_str, home_dir().as_deref())
+    select_default_config_path_for(xdg_str, home_dir().as_deref(), warnings)
 }
 
 #[cfg(test)]
@@ -1453,8 +1506,11 @@ mod tests {
         // Pure function: no process-environment mutation in tests.
         let home = Path::new("/home/tester");
         let path = xdg_default_config_path(Some("/tmp/xdg"), Some(home)).unwrap();
-        assert!(path.ends_with("flow/config.toml"));
+        assert!(path.ends_with("phlow/config.toml"));
         assert!(path.starts_with("/tmp/xdg"));
+        let legacy = xdg_legacy_config_path(Some("/tmp/xdg"), Some(home)).unwrap();
+        assert!(legacy.ends_with("flow/config.toml"));
+        assert!(legacy.starts_with("/tmp/xdg"));
         let path = xdg_default_config_path(None, Some(home)).unwrap();
         assert!(path.starts_with("/home/tester/.config"));
         // Empty XDG_CONFIG_HOME falls back per the XDG spec (documented
@@ -1463,6 +1519,82 @@ mod tests {
         assert!(path.starts_with("/home/tester/.config"));
         let err = xdg_default_config_path(None, None).expect_err("no home must fail");
         assert_eq!(err, ConfigError::NoHomeDirectory);
+    }
+
+    #[test]
+    fn default_selection_prefers_phlow_dir() {
+        // Validation: phlow/config.toml exists -> selected, no warning.
+        let xdg = test_dir("xdg-prefer");
+        let phlow_dir = xdg.join("phlow");
+        std::fs::create_dir_all(&phlow_dir).expect("phlow dir");
+        std::fs::write(phlow_dir.join("config.toml"), "").expect("write config");
+        let mut warnings = Vec::new();
+        let selected =
+            select_default_config_path_for(Some(xdg_to_str(&xdg)), None, &mut warnings).unwrap();
+        assert!(selected.ends_with("phlow/config.toml"));
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn default_selection_falls_back_to_legacy_flow_dir() {
+        // Validation: only flow/config.toml exists -> legacy selected and a
+        // deprecation warning is emitted.
+        let xdg = test_dir("xdg-legacy");
+        let flow_dir = xdg.join("flow");
+        std::fs::create_dir_all(&flow_dir).expect("flow dir");
+        std::fs::write(flow_dir.join("config.toml"), "").expect("write config");
+        let mut warnings = Vec::new();
+        let selected =
+            select_default_config_path_for(Some(xdg_to_str(&xdg)), None, &mut warnings).unwrap();
+        assert!(selected.ends_with("flow/config.toml"));
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("Deprecated config location"));
+        assert!(warnings[0].contains("phlow/config.toml"));
+    }
+
+    #[test]
+    fn default_selection_neither_exists_returns_preferred() {
+        // Validation: nothing on disk -> the preferred path is returned so
+        // diagnostics point at the location the operator should create.
+        let xdg = test_dir("xdg-empty");
+        let mut warnings = Vec::new();
+        let selected =
+            select_default_config_path_for(Some(xdg_to_str(&xdg)), None, &mut warnings).unwrap();
+        assert!(selected.ends_with("phlow/config.toml"));
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn default_selection_prefers_phlow_when_both_exist() {
+        // Adversarial: both locations exist -> the preferred one wins and no
+        // deprecation warning fires.
+        let xdg = test_dir("xdg-both");
+        for dir in ["phlow", "flow"] {
+            let d = xdg.join(dir);
+            std::fs::create_dir_all(&d).expect("config dir");
+            std::fs::write(d.join("config.toml"), "").expect("write config");
+        }
+        let mut warnings = Vec::new();
+        let selected =
+            select_default_config_path_for(Some(xdg_to_str(&xdg)), None, &mut warnings).unwrap();
+        assert!(selected.ends_with("phlow/config.toml"));
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn default_selection_no_home_fails() {
+        // Adversarial: no XDG dir and no home -> a typed error, never a
+        // fabricated path, and no warning is emitted.
+        let mut warnings = Vec::new();
+        let err = select_default_config_path_for(None, None, &mut warnings)
+            .expect_err("missing home must fail");
+        assert_eq!(err, ConfigError::NoHomeDirectory);
+        assert!(warnings.is_empty());
+    }
+
+    /// Test-dir path as UTF-8 (temp dirs are always valid UTF-8 on Unix).
+    fn xdg_to_str(path: &Path) -> &str {
+        path.to_str().expect("test temp dir is UTF-8")
     }
 
     #[test]
