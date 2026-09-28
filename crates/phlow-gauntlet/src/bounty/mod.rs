@@ -28,7 +28,9 @@ pub use feed::{FeedError, ScopeFeed, ScriptedFeed};
 pub use platform::{FakePlatform, TriageEvent, TriageKind};
 pub use sched::{SchedAction, Scheduler};
 pub use secret::{SecretVault, redact_text};
-pub use store::{AuditLog, FindingStore, RunLedger, ScopeStore, TargetQueue};
+pub use store::{
+    AuditLog, FindingStore, RunLedger, ScopeStore, StoreTransitionError, TargetQueue, content_hash,
+};
 pub use types::{
     Approval, CustodyEntry, Evidence, Finding, FindingState, Program, RateLimit, Run, RunState,
     ScopeDiff, ScopeSnapshot, Target, TargetId, TargetKind, TestingWindow,

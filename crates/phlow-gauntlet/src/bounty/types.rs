@@ -150,8 +150,9 @@ pub struct CustodyEntry {
     pub evidence_sha256: String,
 }
 
-/// A candidate vulnerability. The fingerprint is the dedup key across
-/// cycles (task 139); the state machine below governs its lifecycle.
+/// A candidate vulnerability. The composite (fingerprint,
+/// content_hash) is the dedup key across cycles (task 139); the state
+/// machine below governs its lifecycle.
 #[derive(Clone, Debug)]
 pub struct Finding {
     pub id: String,

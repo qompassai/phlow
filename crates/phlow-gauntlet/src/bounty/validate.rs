@@ -2,7 +2,7 @@
 //! pass before a finding becomes reportable. A check that errors fails
 //! closed — the finding is NOT reportable.
 
-use crate::bounty::store::FindingStore;
+use crate::bounty::store::{FindingStore, content_hash};
 use crate::bounty::types::{Finding, ScopeSnapshot};
 
 /// Per-check context: what the check may consult. Nothing else.
@@ -67,20 +67,25 @@ impl Check for EvidencePresentCheck {
     }
 }
 
-/// The fingerprint is not already a validated-or-later record (fresh
-/// work, not a re-report of a known finding).
+/// No other record carries the same (fingerprint, content-hash)
+/// under a different record id (fresh work, not a re-report of a known
+/// finding). A fingerprint collision with different content is NOT a
+/// duplicate — the store keeps both records.
 pub struct NonDuplicateCheck;
 impl Check for NonDuplicateCheck {
     fn name(&self) -> &'static str {
         "non-duplicate"
     }
     fn check(&self, finding: &Finding, ctx: &CheckCtx) -> CheckResult {
-        match ctx.store.get_by_fingerprint(&finding.fingerprint) {
-            Some(existing) if existing.id != finding.id => CheckResult::Fail {
-                reason: format!("duplicate of {}", existing.id),
-            },
-            _ => CheckResult::Pass,
+        let hash = content_hash(finding);
+        for existing in ctx.store.findings_for(&finding.fingerprint) {
+            if content_hash(existing) == hash && existing.id != finding.id {
+                return CheckResult::Fail {
+                    reason: format!("duplicate of {}", existing.id),
+                };
+            }
         }
+        CheckResult::Pass
     }
 }
 

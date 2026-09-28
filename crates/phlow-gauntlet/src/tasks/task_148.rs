@@ -130,13 +130,15 @@ fn registry_with(
     let mut f = triage_finding("placeholder");
     f.state = state;
     let (id, _) = store.insert(f);
-    let finding = store
-        .get_by_fingerprint(FINGERPRINT)
-        .cloned()
-        .ok_or_else(|| TaskDriverError::Fixture {
-            what: "finding".to_string(),
-            detail: "task-148: fixture finding missing from store".to_string(),
-        })?;
+    let finding = match store.findings_for(FINGERPRINT) {
+        [only] => only.clone(),
+        _ => {
+            return Err(TaskDriverError::Fixture {
+                what: "finding".to_string(),
+                detail: "task-148: fixture finding missing from store".to_string(),
+            });
+        }
+    };
     let mut registry = HashMap::new();
     registry.insert(id.clone(), finding);
     Ok((registry, store, id))

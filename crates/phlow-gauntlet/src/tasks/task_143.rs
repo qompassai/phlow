@@ -4,9 +4,11 @@
 //! buries). A plausible-looking finding that fails validation is
 //! discarded *with a recorded reason*, held in a queryable quarantine
 //! with its evidence intact — never silently dropped. Rejection is
-//! sticky: it is keyed by the finding fingerprint, so re-submitting the
-//! same false positive next cycle stays rejected instead of
-//! resurrecting it.
+//! sticky: it is keyed by the composite (fingerprint, content-hash),
+//! so re-submitting the same false positive next cycle stays rejected
+//! instead of resurrecting it. Genuinely different content under the
+//! same fingerprint is a new finding (the task-139 collision tiebreak),
+//! not a resurrection.
 //!
 //! The rejection reasons are the pipeline's own check names and fail
 //! reasons, recorded verbatim. All verdict evidence comes from scripted
@@ -157,24 +159,32 @@ fn reject_and_quarantine(
     if !is_new {
         return Err(TaskDriverError::Fixture {
             what: "rejection".to_string(),
-            detail: "task-143: reject_and_quarantine called on a known fingerprint".to_string(),
+            detail: "task-143: reject_and_quarantine called on a known finding".to_string(),
         });
     }
     store
-        .transition(&fp, FindingState::Rejected)
+        .transition(&id, FindingState::Rejected)
         .map_err(|e| TaskDriverError::Fixture {
             what: "rejection".to_string(),
-            detail: format!(
-                "task-143: Candidate -> Rejected refused: {} -> {}",
-                e.from, e.to
-            ),
+            detail: match e {
+                StoreTransitionError::UnknownId { id } => {
+                    format!("task-143: transition of unknown record id {id}")
+                }
+                StoreTransitionError::Illegal(t) => format!(
+                    "task-143: Candidate -> Rejected refused: {} -> {}",
+                    t.from, t.to
+                ),
+            },
         })?;
-    let record = store
-        .get_by_fingerprint(&fp)
-        .ok_or_else(|| TaskDriverError::Fixture {
-            what: "rejection".to_string(),
-            detail: "task-143: record vanished after insert".to_string(),
-        })?;
+    let record = match store.findings_for(&fp) {
+        [only] => only,
+        _ => {
+            return Err(TaskDriverError::Fixture {
+                what: "rejection".to_string(),
+                detail: "task-143: record vanished after insert".to_string(),
+            });
+        }
+    };
     quarantine.hold(record, reason);
     Ok(id)
 }
@@ -200,12 +210,15 @@ fn case_rejection_records_reason() -> Result<CaseReport, TaskDriverError> {
         other => failures.push(format!("expected reproducible Fail, got {other:?}")),
     }
     let id = reject_and_quarantine(&mut store, &mut quarantine, fp_finding, "not-reproducible")?;
-    let record = store
-        .get_by_fingerprint("fp-143-v1")
-        .ok_or_else(|| TaskDriverError::Fixture {
-            what: "rejection".to_string(),
-            detail: "task-143: rejected record not found".to_string(),
-        })?;
+    let record = match store.findings_for("fp-143-v1") {
+        [only] => only,
+        _ => {
+            return Err(TaskDriverError::Fixture {
+                what: "rejection".to_string(),
+                detail: "task-143: rejected record not found".to_string(),
+            });
+        }
+    };
     if record.state != FindingState::Rejected {
         failures.push(format!("record state {:?}, want Rejected", record.state));
     }
@@ -364,8 +377,11 @@ fn case_empty_evidence_rejected() -> Result<CaseReport, TaskDriverError> {
 }
 
 /// A2: re-submit the same rejected false positive next cycle. The
-/// rejection is keyed by fingerprint and stays sticky: no new record,
-/// state stays Rejected, reason intact.
+/// rejection is keyed by the composite (fingerprint, content-hash) and
+/// stays sticky: no new record, state stays Rejected, reason intact.
+/// (A retitled re-observation is different content and would correctly
+/// open a new record — the task-139 collision tiebreak, not a
+/// resurrection — so the re-submission here is content-identical.)
 fn case_rejection_sticky_across_cycles() -> Result<CaseReport, TaskDriverError> {
     let mut store = FindingStore::new();
     let mut quarantine = Quarantine::new();
@@ -375,8 +391,7 @@ fn case_rejection_sticky_across_cycles() -> Result<CaseReport, TaskDriverError> 
     let id = reject_and_quarantine(&mut store, &mut quarantine, fp, "not-reproducible")?;
     let records_before = store.record_count();
     // Next cycle: the same false positive is observed again.
-    let mut resub = passing_finding("fp-143-sticky");
-    resub.title = "mock: reflected XSS in /search (re-observed)".to_string();
+    let resub = passing_finding("fp-143-sticky");
     let (id2, is_new) = store.insert(resub);
     if is_new {
         failures.push("rejected fingerprint created a second record".to_string());
@@ -387,13 +402,15 @@ fn case_rejection_sticky_across_cycles() -> Result<CaseReport, TaskDriverError> 
     if store.record_count() != records_before {
         failures.push("record count grew on re-submit".to_string());
     }
-    let record =
-        store
-            .get_by_fingerprint("fp-143-sticky")
-            .ok_or_else(|| TaskDriverError::Fixture {
+    let record = match store.findings_for("fp-143-sticky") {
+        [only] => only,
+        _ => {
+            return Err(TaskDriverError::Fixture {
                 what: "stickiness".to_string(),
                 detail: "task-143: record vanished".to_string(),
-            })?;
+            });
+        }
+    };
     if record.state != FindingState::Rejected {
         failures.push(format!(
             "rejected finding resurrected to {:?}",
@@ -415,7 +432,7 @@ fn case_rejection_sticky_across_cycles() -> Result<CaseReport, TaskDriverError> 
         verdict_line(
             "143",
             Verdict::Replicates,
-            "rejection sticky by fingerprint across cycles",
+            "rejection sticky by (fingerprint, content-hash) across cycles",
         ),
     ];
     evidence_lines.extend(failures.iter().cloned());

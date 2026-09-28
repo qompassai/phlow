@@ -4,9 +4,10 @@
 //! scaffold's `FindingStore` with synthetic findings (MOCK). The same
 //! finding in two cycles is one record with two observations; distinct
 //! findings are two records; near-duplicates are not fuzzy-merged; a
-//! forced fingerprint collision is classified NEGATIVE — the scaffold
-//! has no collision tiebreak, and that gap is measured, not wished
-//! away.
+//! forced fingerprint collision is resolved by the composite
+//! (fingerprint, content_hash) tiebreak — both findings survive as
+//! distinct records (verdict POSITIVE), while byte-identical
+//! re-observations still dedup to one record.
 
 use phlow_gauntlet::skillopt::driver::CaseReport;
 use phlow_gauntlet::tasks::task_139;
@@ -59,23 +60,38 @@ fn near_duplicate_no_fuzzy_merge() {
     );
 }
 
-/// A2: forced fingerprint collision — verdict NEGATIVE. The scaffold
-/// keys solely on the fingerprint string and drops the colliding
-/// finding's content; the test pins the negative so a future scaffold
-/// tiebreak trips it loudly.
+/// A2: forced fingerprint collision — verdict POSITIVE. The
+/// composite (fingerprint, content_hash) tiebreak stores both findings
+/// as distinct records (both survive); a byte-identical re-observation
+/// of A still dedups onto A's record instead of opening a third.
 #[test]
 fn fingerprint_collision_preserves_data() {
     let report = check_case("fingerprint_collision_preserves_data");
     let m = &report.metrics;
     assert_eq!(
         m["verdict"].as_str().unwrap(),
-        "negative",
-        "the collision arm must classify negative until the scaffold gains a tiebreak"
+        "replicates",
+        "the collision arm must classify positive: the tiebreak preserves both findings"
     );
-    assert!(!m["finding_b_preserved"].as_bool().unwrap());
+    assert!(
+        m["finding_b_preserved"].as_bool().unwrap(),
+        "finding B's content must survive the collision"
+    );
+    assert_eq!(m["records"].as_u64().unwrap(), 2);
+    assert!(
+        m["duplicate_merged"].as_bool().unwrap(),
+        "byte-identical duplicates must still dedup to one record"
+    );
+    let ids = m["record_ids"].as_array().unwrap();
+    assert_eq!(ids.len(), 2);
+    assert_ne!(
+        ids[0].as_str().unwrap(),
+        ids[1].as_str().unwrap(),
+        "colliding findings must hold distinct record ids"
+    );
     let joined = report.evidence.join("\n");
     assert!(
-        joined.contains("task-139 verdict: negative"),
+        joined.contains("task-139 verdict: replicates"),
         "evidence must carry the verdict line:\n{joined}"
     );
 }

@@ -1,9 +1,12 @@
 //! In-memory stores: scope history, the target queue, the run ledger,
-//! the finding store (dedup by fingerprint), and the append-only audit
-//! log with write-time secret redaction.
+//! the finding store (dedup by fingerprint + content hash), and the
+//! append-only audit log with write-time secret redaction.
 
+use crate::bounty::approve::sha256_hex;
 use crate::bounty::secret::redact_text;
-use crate::bounty::types::{Finding, FindingState, Run, RunState, ScopeSnapshot, Target, TargetId};
+use crate::bounty::types::{
+    Finding, FindingState, IllegalTransition, Run, RunState, ScopeSnapshot, Target, TargetId,
+};
 use std::collections::{HashMap, VecDeque};
 
 /// Latest scope plus full version history. Filing is monotonic: a
@@ -147,14 +150,83 @@ impl RunLedger {
     }
 }
 
-/// Finding storage with cross-cycle dedup. `insert` keys on the
-/// fingerprint: a repeat observation bumps `observation_count` on the
-/// existing record instead of creating a new one. Rejection is sticky:
-/// re-inserting a rejected fingerprint stays rejected.
+/// Finding storage with cross-cycle dedup. The dedup key is the
+/// composite (fingerprint, content_hash): a repeat observation of
+/// identical content bumps `observation_count` on the existing record;
+/// different content under the same fingerprint is stored as a
+/// distinct record (the collision tiebreak — no silent data loss).
+/// Rejection is sticky per composite key: re-inserting identical
+/// content of a rejected finding stays rejected.
 #[derive(Debug, Default)]
 pub struct FindingStore {
-    by_fingerprint: HashMap<String, Finding>,
+    by_fingerprint: HashMap<String, Vec<Finding>>,
     next_id: u64,
+}
+
+/// Deterministic content identity for a finding: sha256 over the
+/// canonical field sequence in fixed order, each field
+/// length-prefixed so field boundaries cannot collide.
+///
+/// Included:
+/// - `target_id`: findings are target-bound; the same fingerprint on
+///   different targets is a different finding.
+/// - `fingerprint`: the producer's coarse identity claim; keeps the
+///   hash meaningful standalone and preserves the fingerprint's role
+///   in the composite key.
+/// - `title`: the human-readable claim; a retitled finding is
+///   different content (this is what splits the task-139 collision
+///   arm: same fingerprint, different titles).
+/// - `evidence.sha256`: content identity of the raw evidence without
+///   re-hashing large byte buffers (sealed as sha256(raw) at capture,
+///   task 141).
+///
+/// Excluded:
+/// - `id`: store-assigned (`f{:06}`); hashing it would make every
+///   insert unique and destroy dedup. Candidates also arrive with
+///   empty/placeholder ids.
+/// - `state`: lifecycle — a Candidate -> Validated transition must not
+///   fork the record.
+/// - `observation_count`: the dedup accumulator itself; including it
+///   would prevent merging.
+/// - `reject_reason`: post-validation annotation; a rejected finding
+///   re-observed must merge back onto its rejected record (stickiness).
+/// - `custody` (handler/action/at/evidence_sha256): per-observation
+///   metadata. `at` timestamps are volatile — every re-observation
+///   would hash differently and cross-cycle dedup would break;
+///   handler/action vary by who sealed it; evidence_sha256 duplicates
+///   evidence.sha256.
+/// - `evidence.truncated`: capture metadata, not content; the bytes it
+///   describes are already identified by evidence.sha256.
+/// - `evidence.raw`: covered by evidence.sha256 (hash-of-hash avoids
+///   O(bytes) work per insert).
+///
+/// sha256 (via `approve::sha256_hex`, the crate's canonical hash) is
+/// used instead of `std`'s `DefaultHasher` deliberately:
+/// DefaultHasher (SipHash) is keyed with a RANDOM seed per instance,
+/// so equal findings hashed by different instances produce different
+/// digests and cross-insert comparisons would silently fail.
+pub fn content_hash(f: &Finding) -> String {
+    let mut bytes = Vec::new();
+    for field in [
+        f.target_id.0.as_str(),
+        f.fingerprint.as_str(),
+        f.title.as_str(),
+        f.evidence.sha256.as_str(),
+    ] {
+        let field_bytes = field.as_bytes();
+        bytes.extend_from_slice(&(field_bytes.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(field_bytes);
+    }
+    sha256_hex(&bytes)
+}
+
+/// Rejection for `FindingStore::transition`: unknown record ids are a
+/// typed error, never a panic; illegal state moves keep the existing
+/// `IllegalTransition` shape.
+#[derive(Debug, PartialEq, Eq)]
+pub enum StoreTransitionError {
+    UnknownId { id: String },
+    Illegal(IllegalTransition),
 }
 
 impl FindingStore {
@@ -166,8 +238,16 @@ impl FindingStore {
     }
 
     /// Insert a candidate finding. Returns (record id, is_new_record).
+    /// Same (fingerprint, content_hash): bumps `observation_count` on
+    /// the existing record. Same fingerprint, different content hash:
+    /// stores a distinct record with a fresh id.
     pub fn insert(&mut self, mut f: Finding) -> (String, bool) {
-        if let Some(existing) = self.by_fingerprint.get_mut(&f.fingerprint) {
+        let hash = content_hash(&f);
+        if let Some(existing) = self
+            .by_fingerprint
+            .get_mut(&f.fingerprint)
+            .and_then(|bucket| bucket.iter_mut().find(|r| content_hash(r) == hash))
+        {
             existing.observation_count += 1;
             return (existing.id.clone(), false);
         }
@@ -177,29 +257,42 @@ impl FindingStore {
         if f.observation_count == 0 {
             f.observation_count = 1;
         }
-        self.by_fingerprint.insert(f.fingerprint.clone(), f);
+        self.by_fingerprint
+            .entry(f.fingerprint.clone())
+            .or_default()
+            .push(f);
         (id, true)
     }
 
-    pub fn get_by_fingerprint(&self, fp: &str) -> Option<&Finding> {
-        self.by_fingerprint.get(fp)
+    /// Every record stored under a fingerprint, in insertion order;
+    /// empty when the fingerprint is unknown. Never assume one record:
+    /// a fingerprint collision stores several — pick explicitly.
+    pub fn findings_for(&self, fp: &str) -> &[Finding] {
+        self.by_fingerprint
+            .get(fp)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
     }
 
+    /// Total records across all fingerprints.
     pub fn record_count(&self) -> usize {
-        self.by_fingerprint.len()
+        self.by_fingerprint.values().map(Vec::len).sum()
     }
 
-    /// Transition a stored finding's state through the legal machine.
-    pub fn transition(
-        &mut self,
-        fp: &str,
-        next: FindingState,
-    ) -> Result<(), crate::bounty::types::IllegalTransition> {
-        let f = self
+    /// Transition a stored finding's state through the legal machine,
+    /// addressed by record id — unambiguous even under fingerprint
+    /// collision.
+    pub fn transition(&mut self, id: &str, next: FindingState) -> Result<(), StoreTransitionError> {
+        let record = self
             .by_fingerprint
-            .get_mut(fp)
-            .expect("bounty: transition of unknown fingerprint");
-        f.state = f.state.transition(next)?;
+            .values_mut()
+            .flat_map(|bucket| bucket.iter_mut())
+            .find(|r| r.id == id)
+            .ok_or_else(|| StoreTransitionError::UnknownId { id: id.to_string() })?;
+        record.state = record
+            .state
+            .transition(next)
+            .map_err(StoreTransitionError::Illegal)?;
         Ok(())
     }
 }

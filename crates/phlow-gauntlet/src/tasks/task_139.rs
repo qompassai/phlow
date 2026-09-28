@@ -1,15 +1,16 @@
 //! Task 139 — finding deduplication across cycles (rust, validation +
 //! adversarial).
 //!
-//! `FindingStore::insert` keys on the fingerprint: the same finding
-//! observed in two cycles is one record with two observations — never
-//! two records (V1); genuinely different findings are two records (V2).
-//! Near-duplicates (same title, different fingerprint fields) are NOT
-//! fuzzy-merged — merging is the operator's job, a deliberate precision
-//! choice (A1). A forced fingerprint collision with different content
-//! (A2) is the honest-failure arm: the scaffold has no collision
-//! tiebreak, so the verdict is NEGATIVE with full evidence, and the
-//! gap is reported as a scaffold bug rather than papered over.
+//! `FindingStore::insert` keys on the composite (fingerprint,
+//! content_hash): the same finding observed in two cycles is one record
+//! with two observations — never two records (V1); genuinely different
+//! findings are two records (V2). Near-duplicates (same title,
+//! different fingerprint fields) are NOT fuzzy-merged — merging is the
+//! operator's job, a deliberate precision choice (A1). A forced
+//! fingerprint collision with different content (A2) exercises the
+//! deterministic tiebreak: the composite key stores both findings as
+//! distinct records, so the verdict is POSITIVE with both contents
+//! preserved, while byte-identical re-observations still merge.
 
 use crate::bounty::{Evidence, Finding, FindingState, FindingStore, TargetId};
 use crate::skillopt::driver::{CaseReport, TaskDriverError, verdict_line};
@@ -64,7 +65,7 @@ fn case_repeat_observation_single_record() -> Result<CaseReport, TaskDriverError
         "stored xss in search",
         "cycle-2 body",
     ));
-    let record = store.get_by_fingerprint("fp-9f2a");
+    let records = store.findings_for("fp-9f2a");
     let mut failures = Vec::new();
     if !new1 {
         failures.push("cycle-1 insert did not create a record".to_string());
@@ -75,11 +76,14 @@ fn case_repeat_observation_single_record() -> Result<CaseReport, TaskDriverError
     if id1 != id2 {
         failures.push(format!("record ids differ: {id1} vs {id2}"));
     }
-    match record {
-        Some(r) if r.observation_count == 2 => {}
-        other => failures.push(format!(
-            "observation_count != 2: {:?}",
-            other.map(|r| r.observation_count)
+    match records {
+        [r] if r.observation_count == 2 => {}
+        _ => failures.push(format!(
+            "expected one record with observation_count == 2, got {:?}",
+            records
+                .iter()
+                .map(|r| r.observation_count)
+                .collect::<Vec<_>>()
         )),
     }
     if store.record_count() != 1 {
@@ -122,11 +126,14 @@ fn case_distinct_findings_two_records() -> Result<CaseReport, TaskDriverError> {
         failures.push(format!("record_count {} != 2", store.record_count()));
     }
     for fp in ["fp-aaaa", "fp-bbbb"] {
-        match store.get_by_fingerprint(fp) {
-            Some(r) if r.observation_count == 1 => {}
+        match store.findings_for(fp) {
+            [r] if r.observation_count == 1 => {}
             other => failures.push(format!(
-                "{fp}: observation_count != 1: {:?}",
-                other.map(|r| r.observation_count)
+                "{fp}: expected one record with observation_count == 1, got {:?}",
+                other
+                    .iter()
+                    .map(|r| r.observation_count)
+                    .collect::<Vec<_>>()
             )),
         }
     }
@@ -185,61 +192,53 @@ fn case_near_duplicate_no_fuzzy_merge() -> Result<CaseReport, TaskDriverError> {
 }
 
 /// A2 (adversarial): forced fingerprint collision — same fingerprint
-/// string, different content. The design demands a deterministic
-/// tiebreak preserving both findings. The scaffold has none:
-/// `FindingStore::insert` keys solely on the fingerprint string and
-/// silently absorbs the second finding's content. Verdict: NEGATIVE,
-/// with the data loss measured exactly. (Scaffold bug reported; see
-/// the task doc.)
+/// string, different content (title/body). The composite dedup key
+/// (fingerprint, content_hash) is the deterministic tiebreak: both
+/// findings survive as distinct records with fresh ids, and neither
+/// one's content is dropped. A byte-identical re-observation of A
+/// still merges (observation_count bumps, no new record). Verdict:
+/// POSITIVE — the collision tiebreak holds.
 fn case_fingerprint_collision_preserves_data() -> Result<CaseReport, TaskDriverError> {
-    let mut store = FindingStore::new();
-    let (id_a, new_a) = store.insert(mk_finding("fp-collide", "title-A", "body-A"));
-    let (id_b, new_b) = store.insert(mk_finding("fp-collide", "title-B", "body-B"));
-    let record = store.get_by_fingerprint("fp-collide").cloned();
-    let mut failures = Vec::new();
-    if !new_a {
-        failures.push("first insert did not create a record".to_string());
-    }
-    // The measurement: is finding B's content still recoverable?
-    let b_preserved = match &record {
-        Some(r) => r.title == "title-B" || store.record_count() == 2,
-        None => false,
-    };
-    if b_preserved {
-        failures.push("collision tiebreak exists — update this case (see doc)".to_string());
-    }
+    let (store, a, b, a2) = run_collision_scenario();
+    let (id_a, _) = a.clone();
+    let (id_b, _) = b.clone();
+    let (id_a2, new_a2) = a2.clone();
+    let (failures, b_preserved) = check_collision_outcome(&store, a, b, a2);
     let verdict = if b_preserved {
         Verdict::Replicates
     } else {
         Verdict::Negative
     };
-    let detail = match &record {
-        Some(r) => format!(
-            "second insert -> (id={id_b}, is_new={new_b}); stored title is {:?} \
-             (finding B's content dropped), observation_count={}",
-            r.title, r.observation_count
-        ),
-        None => "fingerprint vanished from the store".to_string(),
-    };
+    let titles: Vec<&str> = store
+        .findings_for("fp-collide")
+        .iter()
+        .map(|r| r.title.as_str())
+        .collect();
+    let detail = format!(
+        "collision -> two records ({id_a}, {id_b}); titles preserved {titles:?}; \
+         byte-identical re-observation -> (id={id_a2}, is_new={new_a2})"
+    );
     let mut evidence = vec![
         "forced collision: same fingerprint string, different title/body".to_string(),
-        format!("insert A -> ({id_a}, is_new={new_a}); insert B -> ({id_b}, is_new={new_b})"),
+        format!("insert A -> ({id_a}); insert B -> ({id_b})"),
+        format!("re-insert A byte-identical -> ({id_a2}, is_new={new_a2})"),
         detail.clone(),
-        "design demands a deterministic tiebreak preserving both; scaffold has none".to_string(),
+        "composite (fingerprint, content_hash) tiebreak: both survive, duplicates merge"
+            .to_string(),
         verdict_line("139", verdict, &detail),
         "synthetic findings (MOCK)".to_string(),
     ];
     evidence.extend(failures.iter().cloned());
-    // The case passes when the measurement is complete and classified
-    // (task-110 precedent): the verdict — negative — is the finding.
-    // If the scaffold ever gains a collision tiebreak, `failures` trips
-    // and this case (plus its test) must be updated.
+    // The case passes when the measurement is complete and classified:
+    // the tiebreak holds, so the verdict is positive.
     let mut report = CaseReport::pass(
         CASES[3],
         serde_json::json!({
             "verdict": verdict.to_string(),
             "records": store.record_count(),
             "finding_b_preserved": b_preserved,
+            "record_ids": [id_a, id_b],
+            "duplicate_merged": !new_a2,
             "detail": detail,
             "backend": "scripted-mock",
         }),
@@ -247,6 +246,75 @@ fn case_fingerprint_collision_preserves_data() -> Result<CaseReport, TaskDriverE
     );
     report.passed = failures.is_empty();
     Ok(report)
+}
+
+/// One `FindingStore::insert` outcome: (record id, is_new_record).
+type InsertOutcome = (String, bool);
+
+/// Run the forced-collision scenario: A and B share a fingerprint with
+/// different content; a byte-identical re-observation of A follows.
+/// Returns the store plus the three (id, is_new) insert outcomes.
+fn run_collision_scenario() -> (FindingStore, InsertOutcome, InsertOutcome, InsertOutcome) {
+    let mut store = FindingStore::new();
+    let a = store.insert(mk_finding("fp-collide", "title-A", "body-A"));
+    let b = store.insert(mk_finding("fp-collide", "title-B", "body-B"));
+    let a2 = store.insert(mk_finding("fp-collide", "title-A", "body-A"));
+    (store, a, b, a2)
+}
+
+/// Check the collision outcome: both findings survive as distinct
+/// records with their own observation counts; the byte-identical
+/// re-observation merges onto A's record. Returns (failures,
+/// b_preserved).
+fn check_collision_outcome(
+    store: &FindingStore,
+    a: InsertOutcome,
+    b: InsertOutcome,
+    a2: InsertOutcome,
+) -> (Vec<String>, bool) {
+    let (id_a, new_a) = a;
+    let (id_b, new_b) = b;
+    let (id_a2, new_a2) = a2;
+    let records = store.findings_for("fp-collide");
+    let mut failures = Vec::new();
+    if !new_a {
+        failures.push("first insert did not create a record".to_string());
+    }
+    if !new_b {
+        failures.push("colliding insert did not create a distinct record".to_string());
+    }
+    if id_a == id_b {
+        failures.push(format!("collision collapsed to one record id: {id_a}"));
+    }
+    if new_a2 {
+        failures.push("byte-identical duplicate created a new record".to_string());
+    }
+    if id_a2 != id_a {
+        failures.push(format!(
+            "duplicate returned {id_a2}, want the original {id_a}"
+        ));
+    }
+    if store.record_count() != 2 {
+        failures.push(format!("record_count {} != 2", store.record_count()));
+    }
+    let titles: Vec<&str> = records.iter().map(|r| r.title.as_str()).collect();
+    let b_preserved = titles.contains(&"title-A")
+        && titles.contains(&"title-B")
+        && id_a != id_b
+        && store.record_count() == 2;
+    if !b_preserved {
+        failures.push(format!("both contents not preserved: {titles:?}"));
+    }
+    for r in records {
+        let want_obs = if r.title == "title-A" { 2 } else { 1 };
+        if r.observation_count != want_obs {
+            failures.push(format!(
+                "{} ({:?}): observation_count {} != {want_obs}",
+                r.id, r.title, r.observation_count
+            ));
+        }
+    }
+    (failures, b_preserved)
 }
 
 /// Run one driver case by name.

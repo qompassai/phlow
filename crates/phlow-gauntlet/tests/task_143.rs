@@ -6,7 +6,8 @@
 //! and in quarantine with evidence intact; the quarantine is queryable
 //! for operator audit; an FP differing from a TP only in the evidence
 //! field is rejected on exactly `evidence-present`; re-submitting a
-//! rejected FP next cycle stays rejected (sticky by fingerprint).
+//! rejected FP next cycle stays rejected (sticky by (fingerprint,
+//! content-hash)).
 
 use phlow_gauntlet::TaskKind;
 use phlow_gauntlet::skillopt::driver::CaseReport;
@@ -73,7 +74,7 @@ fn empty_evidence_rejected() {
 
 /// A2: re-submitting the rejected FP next cycle creates no new record,
 /// returns the original id, and the record stays Rejected with its
-/// reason intact — rejection is sticky by fingerprint.
+/// reason intact — rejection is sticky by (fingerprint, content-hash).
 #[test]
 fn rejection_sticky_across_cycles() {
     let report = check_case("rejection_sticky_across_cycles");
@@ -87,7 +88,7 @@ fn rejection_sticky_across_cycles() {
     assert_eq!(m["reason"].as_str().unwrap(), "not-reproducible");
     let joined = report.evidence.join("\n");
     assert!(
-        joined.contains("sticky by fingerprint"),
+        joined.contains("sticky by (fingerprint, content-hash)"),
         "evidence must state the stickiness mechanism:\n{joined}"
     );
 }
