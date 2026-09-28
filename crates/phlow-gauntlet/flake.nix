@@ -7,20 +7,20 @@
 #
 # ROSTER SCHEME (two levels — read this before extending):
 # - `gauntletRoster` declares EVERY task as pure data: { id, name, kind },
-#   split into `tasks01to65` (drivers landed in this crate) and
-#   `tasks66to70` (designed; driver not yet written by a wave worker).
-#   Roster asserts validate ALL 70 entries, so a pending declaration is
-#   checked long before its driver lands.
+#   split into `tasks01to65` and `tasks66to70` (drivers for 01-70 all
+#   landed in this crate; wave 66-70 completed the range). Roster
+#   asserts validate ALL 70 entries.
 # - Apps (`apps.task-NN`), the `gauntlet` runner, and `checks.task-list`
 #   cover IMPLEMENTED tasks only. The flake never claims an app for a
 #   task without a driver. This deliberately deviates from the design
 #   doc's flake plan ("assert all 70 apps exist"): the plan is data-right
 #   but honesty-wrong while drivers 21-70 do not exist.
-# - When a wave worker lands a driver, move that task's entry from
-#   `tasks66to70` to the implemented side (`rosterImplemented` grows,
+# - When a wave worker lands a driver, move that task's entry from the
+#   pending side to the implemented side (`rosterImplemented` grows,
 #   `rosterPending` shrinks). The asserts, app generation, runner, and
 #   checks all consume the two segments via `gauntletRoster` and
-#   `implementedTasks` — no other edits needed.
+#   `implementedTasks` — no other edits needed. Waves through 66-70
+#   have landed every designed task, so `rosterPending` is empty.
 # - Tasks 71-100 slot in as a third segment: add `tasks71to100 = [ ... ];`
 #   and extend the pending concatenation below; raise `taskCountMax` and
 #   the generated `expectedIds` grow with it. Nothing is hardcoded to 70
@@ -428,9 +428,8 @@
       ];
 
       # Roster segment: tasks 66-70. Designed in
-      # ~/workspace/gauntlet-design-tasks-21-70.md; drivers NOT yet
-      # written — declared as data only, no apps. Same { id, name, kind }
-      # contract as above.
+      # ~/workspace/gauntlet-design-tasks-21-70.md; drivers landed in
+      # wave 66-70. Same { id, name, kind } contract as above.
       tasks66to70 = [
         {
           id = "task-66";
@@ -462,10 +461,11 @@
       # Segment membership IS the implemented/pending signal: a task with
       # a driver lives in `rosterImplemented`, a designed-but-driverless
       # task in `rosterPending`. Tasks 71-100 slot in by appending a third
-      # segment to `rosterPending` (e.g. `tasks66to70 ++ tasks71to100`).
+      # segment to `rosterPending` (e.g. `rosterPending ++ tasks71to100`).
       tasks01to65 = tasks01to60 ++ tasks61to65;
-      rosterImplemented = tasks01to65;
-      rosterPending = tasks66to70;
+      tasks01to70 = tasks01to65 ++ tasks66to70;
+      rosterImplemented = tasks01to70;
+      rosterPending = [];
 
       # Full declared roster: segments concatenated, nothing hardcoded.
       gauntletRoster = rosterImplemented ++ rosterPending;

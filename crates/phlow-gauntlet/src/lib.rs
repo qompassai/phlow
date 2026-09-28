@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-//! Gauntlet: the 60-task agent-orchestration proving ground for phlow.
+//! Gauntlet: the 70-task agent-orchestration proving ground for phlow.
 //!
 //! # Status: EXPERIMENTAL
 //!
@@ -22,7 +22,7 @@
 //!
 //! # Layout
 //!
-//! - [`tasks`]: the 50 task modules, one per file, disjoint ownership.
+//! - [`tasks`]: the 70 task modules, one per file, disjoint ownership.
 //! - `lua/gauntlet/`: the Neovim-side drivers for `nvim-lua` tasks.
 //! - `docs/gauntlet/`: the per-task learning corpus (ELI5 + cited + depth).
 
@@ -33,8 +33,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 /// Maximum number of tasks in the gauntlet. The task list is closed: adding
-/// a 51st task is a design change, not an iteration.
-pub const TASK_COUNT_MAX: usize = 60;
+/// a 71st task is a design change, not an iteration.
+pub const TASK_COUNT_MAX: usize = 70;
 
 /// Maximum length in characters of a single evidence line in a report.
 /// Evidence is diagnostic text, not bulk data; oversized lines are truncated

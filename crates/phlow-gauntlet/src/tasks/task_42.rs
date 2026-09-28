@@ -140,18 +140,6 @@ fn workspace_root() -> Result<PathBuf, DriverError> {
     Ok(root.to_path_buf())
 }
 
-/// This probe's own source file, excluded from scan hits by exact path:
-/// the task NAME (`audit log append-only`) contains the design
-/// vocabulary, so the file would otherwise self-match. The probe prose
-/// avoids the literal tokens as well; the exclusion is a path-scoped
-/// guard, not a content allowlist.
-fn own_source_file() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("src")
-        .join("tasks")
-        .join("task_42.rs")
-}
-
 /// Integrity-mechanism tokens, assembled at runtime from halves so the
 /// probe's own source never contains the literal tokens it scans for.
 /// These name the design's required machinery: entry linking between
@@ -182,10 +170,11 @@ fn grow_tokens() -> Vec<String> {
 
 /// Walk `crates/` under the workspace root and return every
 /// `path: token` hit for `.rs` files inside a `src` tree, skipping the
-/// probe's own source file. Bounded: files over [`SOURCE_BYTES_MAX`]
+/// whole phlow-gauntlet probe harness (it is the scanner, not the
+/// product — its prose discusses other tasks' audit vocabulary).
+/// Bounded: files over [`SOURCE_BYTES_MAX`]
 /// are skipped, and the walk stops after [`SOURCE_FILES_MAX`] files.
 fn scan_sources(root: &Path, tokens: &[String]) -> Result<Vec<String>, DriverError> {
-    let own = own_source_file();
     let crates_dir = root.join("crates");
     let mut hits = Vec::new();
     let mut files_seen = 0usize;
@@ -196,11 +185,13 @@ fn scan_sources(root: &Path, tokens: &[String]) -> Result<Vec<String>, DriverErr
         for entry in entries {
             let entry = entry.map_err(|e| fixture_error("source walk", e))?;
             let path = entry.path();
+            if path.components().any(|c| c.as_os_str() == "phlow-gauntlet") {
+                continue;
+            }
             if path.is_dir() {
                 stack.push(path);
             } else if path.extension().is_some_and(|e| e == "rs")
                 && path.components().any(|c| c.as_os_str() == "src")
-                && path != own
             {
                 files_seen += 1;
                 if files_seen > SOURCE_FILES_MAX {
@@ -279,7 +270,7 @@ fn case_no_integrity_tokens_in_sources() -> Result<CaseReport, DriverError> {
     let tokens = mechanism_tokens();
     let hits = scan_sources(&root, &tokens)?;
     evidence.push(format!(
-        "scanned {} integrity-mechanism tokens over crates/*/src (own file path-excluded); hits: {}",
+        "scanned {} integrity-mechanism tokens over crates/*/src (phlow-gauntlet harness excluded); hits: {}",
         tokens.len(),
         hits.len()
     ));
@@ -317,7 +308,7 @@ fn case_grow_only_stores_lack_verification() -> Result<CaseReport, DriverError> 
     let tokens = grow_tokens();
     let hits = scan_sources(&root, &tokens)?;
     evidence.push(format!(
-        "grow-only vocabulary hits (own file path-excluded): {}",
+        "grow-only vocabulary hits (phlow-gauntlet harness excluded): {}",
         hits.len()
     ));
     for hit in &hits {
