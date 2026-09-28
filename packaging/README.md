@@ -1,7 +1,6 @@
 # Packaging phlow
 
-How to install and run the Rust port's binaries (`phlow`, plus the `flow`
-compatibility alias) on each platform. Every section states what was
+How to install and run the Rust port's binary (`phlow`) on each platform. Every section states what was
 **validated in this environment** versus what is **target-only**
 (instructions for the target machine, not run here).
 
@@ -38,7 +37,6 @@ Files: `packaging/phlow.socket`, `packaging/phlow@.service`.
 # target-only: install and enable
 cargo build --release
 install -m755 target/release/phlow ~/.local/bin/phlow
-ln -s target/release/flow ~/.local/bin/flow   # or: install -m755 target/release/flow ~/.local/bin/flow
 mkdir -p ~/.config/systemd/user
 cp packaging/phlow.socket 'packaging/phlow@.service' ~/.config/systemd/user/
 systemctl --user daemon-reload
@@ -58,7 +56,6 @@ Files: `packaging/phlow-system.socket`, `packaging/phlow-system@.service`.
 # target-only: everything below needs root on the target machine
 cargo build --release
 sudo install -m755 target/release/phlow /usr/local/bin/phlow
-sudo install -m755 target/release/flow /usr/local/bin/flow
 sudo useradd --system --home-dir /var/lib/phlow --create-home \
      --shell /usr/sbin/nologin phlow
 sudo cp packaging/phlow-system.socket 'packaging/phlow-system@.service' \
@@ -78,12 +75,12 @@ Both services set `NoNewPrivileges=yes`, `ProtectSystem=strict`,
 `--trusted` is off: the system instance never enables workspace writes
 or named checks by itself.
 
-### Relation to `systemd/flow.service`
+### Relation to `systemd/phlow.service`
 
 The old `systemd/flow.service` (a `flow status` oneshot against the
-Python tree) is **superseded** by these units for the Rust port. It is
-left byte-identical in place — the Python tree is not touched — but it
-must not be enabled alongside the new units.
+Python tree) has been renamed to `systemd/phlow.service` and retargeted
+at the Rust binary. It is **superseded** by the socket-activated units
+above and must not be enabled alongside them.
 
 ## Linux: desktop entry
 
@@ -117,15 +114,13 @@ is needed — it is documented below but not pursued first.
 **Target-only** (every step needs a Windows host or CI runner):
 
 1. `cargo build --release` on Windows (`x86_64-pc-windows-msvc`).
-   The `flow` compatibility binary is the same `main.rs` built as the
-   second `[[bin]]`; ship both, or ship `phlow.exe` and document `flow`
-   as `phlow` invoked under that name.
-2. Publish both `.exe` files to a GitHub release
+   Ship `phlow.exe` from that build.
+2. Publish the `.exe` to a GitHub release
    (`qompassai/phlow`, tag per release).
 3. Submit a manifest to `microsoft/winget-pkgs`
    (`qompassai.phlow`, version, installer URL + SHA256, `winget install
    qompassai.phlow`).
-4. Verify on a clean Windows VM: `phlow --version` prints `Flow 0.2.0`,
+4. Verify on a clean Windows VM: `phlow --version` prints `Phlow 0.2.0`,
    `phlow status` prints one JSON line.
 
 WiX route (if ever needed): `cargo wix` on the same release build,
@@ -145,8 +140,8 @@ this environment has no Android SDK/NDK, so no APK/AAB was built or
 validated here.
 
 Realistic route today: **Termux**. `cargo` runs on-device in Termux
-(aarch64); `cargo build --release -p phlow-cli` produces working
-`phlow`/`flow` binaries there, and the TUI's headless line loop
+(aarch64); `cargo build --release -p phlow-cli` produces a working
+`phlow` binary there, and the TUI's headless line loop
 (`run_line_mode`) is the sane frontend until terminal-widget support on
 Android is proven. An F-Droid listing would package this Termux build
 path, not a native APK.
@@ -159,7 +154,7 @@ not claim Play readiness.
 
 ## macOS
 
-`cargo build --release` on the Mac produces both binaries; install to
+`cargo build --release` on the Mac produces the `phlow` binary; install to
 `/usr/local/bin` or `~/.local/bin`. No launchd plist is shipped: the
 socket-activation model is systemd-specific. For an always-on macOS
 setup, run `phlow serve` under a supervisor that holds its stdio pipes

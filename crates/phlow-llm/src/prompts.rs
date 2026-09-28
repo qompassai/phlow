@@ -1,16 +1,19 @@
 //! System prompt templates and prompt builders.
 //!
-//! Byte-exact port of `flow/llm/prompts.py`. The templates below reproduce
-//! the Python source character-for-character, including the rendered JSON
-//! example (Python's `{{`/`}}` escapes are already expanded here) and the
-//! trailing newline. `{tool_descriptions}` and `{language_profile}` are the
-//! only placeholders; `str::replace` substitutes them so the literal braces
+//! Byte-exact port of `flow/llm/prompts.py`, with one deliberate rename:
+//! the product name in the default template is `Phlow` (Python says
+//! `Flow`). The templates otherwise reproduce the Python source
+//! character-for-character, including the rendered JSON example (Python's
+//! `{{`/`}}` escapes are already expanded here) and the trailing newline.
+//! `{tool_descriptions}` and `{language_profile}` are the only
+//! placeholders; `str::replace` substitutes them so the literal braces
 //! in the JSON example need no escaping.
 
 use serde_json::Value;
 
 /// The default system prompt template, before placeholder substitution.
-/// Byte-exact with `prompts.DEFAULT_SYSTEM_PROMPT`.
+/// Matches `prompts.DEFAULT_SYSTEM_PROMPT` except the product name: the
+/// Python tree says `Flow`, the Rust port says `Phlow`.
 pub const DEFAULT_SYSTEM_PROMPT_TEMPLATE: &str = "You are Phlow, an expert AI software engineering assistant running fully locally.\nYou help the user build, debug, and improve software applications.\n\n## Your Capabilities\n- Generate complete application code in any language\n- Select and use appropriate LSPs, linters, formatters, and frameworks\n- Call only supplied workspace file tools, configured named checks and optional native editor tools\n- Validate code by running LSP diagnostics and feeding errors back to yourself\n- Ask the user for clarification when you encounter uncertainty or decision points\n\n## Behavior Rules\n1. Think step-by-step before acting. Use <think>...</think> tags internally.\n2. Explain uncertainty; do not invent permission or capabilities.\n3. Always validate generated code with LSP diagnostics before declaring success.\n4. When calling a tool, output ONLY the tool call JSON \u{2014} no surrounding text.\n5. After each code generation, check for errors and iterate until clean.\n6. Be concise in output. Show diffs for edits rather than full files when possible.\n\n## Tool Calling Format\nTo call a tool, output exactly this JSON (no markdown fences):\n{\"tool\": \"tool_name\", \"args\": {\"key\": \"value\"}}\n\n## Available Tools\n{tool_descriptions}\n\n## Current Language Profile\n{language_profile}\n";
 
 /// Render the default system prompt. Empty descriptions fall back to
@@ -169,9 +172,12 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn default_prompt_matches_python_fallback_byte_for_byte() {
-        // This pins only the DEFAULT_SYSTEM_PROMPT fallback constant. The
-        // production path prefers flow/skills/system_prompt.md; see
+    fn default_prompt_uses_renamed_template_byte_for_byte() {
+        // Pins only the DEFAULT_SYSTEM_PROMPT fallback constant. The
+        // product name in the template is `Phlow` (Python's is `Flow`); the
+        // fixture holds the renamed template so this still pins the
+        // placeholder-substitution machinery byte-for-byte. The production
+        // path prefers flow/skills/system_prompt.md; see
         // system_prompt_prefers_skills_file_byte_for_byte below.
         let fixture = include_str!("../tests/fixtures/llm_golden.json");
         let golden: serde_json::Value = serde_json::from_str(fixture).unwrap();

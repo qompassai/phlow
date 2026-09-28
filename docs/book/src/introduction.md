@@ -14,7 +14,7 @@ multi-agent coding runtime. The name is the design brief in one word:
 
 In practice phlow is one shared safe runtime with three faces:
 
-- a **CLI** (`phlow` / `flow`): `run`, `serve`, `check`, `status`, `tui`;
+- a **CLI** (`phlow`): `run`, `serve`, `check`, `status`, `tui`;
 - a **TUI**: an interactive terminal frontend over the same runtime;
 - an **MCP server** (`phlow serve`): newline-delimited JSON-RPC over
   stdin/stdout, so editors (rose.nvim) and other agents can drive it.

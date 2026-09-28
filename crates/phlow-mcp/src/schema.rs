@@ -87,7 +87,7 @@ fn format_python_str_list(items: &[String]) -> String {
     out
 }
 
-/// Validate `args` against the JSON-Schema subset Flow uses.
+/// Validate `args` against the JSON-Schema subset Phlow uses.
 ///
 /// Faithful to `flow/runtime.py::validate_arguments`: `type` is checked
 /// against the seven JSON types (with the Python caveat that a boolean is

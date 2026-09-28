@@ -1,0 +1,12 @@
+[Unit]
+Description=Phlow local capability snapshot (not an MCP daemon)
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/phlow status --workspace %h/projects
+WorkingDirectory=%h/projects
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

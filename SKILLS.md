@@ -1,4 +1,4 @@
-# Flow Engineering Playbook
+# Phlow Engineering Playbook
 
 This is a repository playbook explicitly referenced by `AGENTS.md` and `CLAUDE.md`.
 It is not an automatically loaded Agent Skill or a new runtime plugin. Read only the
@@ -34,11 +34,11 @@ Use the relevant tests in `tests/test_security_config.py`, `tests/test_limits.py
 Preserve explicit operator configuration, fixed approved argv, containment, atomic writes,
 freshness and output bounds. Test missing tools, permission/containment rejection, timeout,
 stale buffers and invalid completion where relevant. Use fakes for unit tests; label actual
-Neovim integration separately. Do not require Rose or Diver for unrelated Flow development.
+Neovim integration separately. Do not require Rose or Diver for unrelated Phlow development.
 
 ## Lua additions or shared Lua review
 
-Flow's Python checks do not validate Lua. If Lua is changed, use LuaJIT parsing and the
+Phlow's Python checks do not validate Lua. If Lua is changed, use LuaJIT parsing and the
 strict settings in
 [Diver's LuaLS profile](https://github.com/qompassai/Diver/blob/main/lsp/lua_ls.lua):
 

@@ -1,5 +1,5 @@
 {
-  description = "Flow — Local AI Workflow System";
+  description = "Phlow — Local AI Workflow System";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -22,7 +22,7 @@
         ]);
 
         flowPkg = python.pkgs.buildPythonPackage {
-          pname = "flow";
+          pname = "phlow";
           version = "0.1.0";
           src = ./.;
           format = "pyproject";
@@ -37,16 +37,16 @@
       in {
         packages = {
           default = flowPkg;
-          flow = flowPkg;
+          phlow = flowPkg;
         };
 
         apps.default = {
           type = "app";
-          program = "${flowPkg}/bin/flow";
+          program = "${flowPkg}/bin/phlow";
         };
 
         devShells.default = pkgs.mkShell {
-          name = "flow-dev";
+          name = "phlow-dev";
           buildInputs = [
             pythonEnv
             pkgs.ollama
@@ -65,7 +65,7 @@
           ];
 
           shellHook = ''
-            echo "Flow dev environment loaded"
+            echo "Phlow dev environment loaded"
             echo "Python: $(python --version)"
             echo "Run: uv venv .venv && uv pip install --python .venv/bin/python -e '.[editor,dev]'"
           '';

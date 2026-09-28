@@ -1,4 +1,4 @@
-//! Subprocess contract tests for the `phlow`/`flow` binaries.
+//! Subprocess contract tests for the `phlow` binary.
 //!
 //! These spawn the real binaries Cargo just built, so exit codes, stdout
 //! bytes, stderr bytes, and signal behavior are the actual process
@@ -97,7 +97,7 @@ fn editor_timeout_out_of_range_exits_2_with_python_message() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert_eq!(
             stderr.as_ref(),
-            "Flow: --editor-timeout must be between 0.1 and 660 seconds\n",
+            "Phlow: --editor-timeout must be between 0.1 and 660 seconds\n",
             "value: {value}"
         );
     }
@@ -294,7 +294,7 @@ fn sigterm_during_serve_exits_130_with_python_message() {
     assert_eq!(output.status.code(), Some(130));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("Flow interrupted; changes already written are not rolled back."),
+        stderr.contains("Phlow interrupted; changes already written are not rolled back."),
         "stderr: {stderr}"
     );
 }

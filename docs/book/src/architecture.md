@@ -34,7 +34,7 @@ is an existing supporting crate, documented separately below.)
 | `phlow-codegen` | Code generation profiles (8 effective profiles, 256-file cap) |
 | `phlow-self-improve` | Feedback records and prompt evolution (disabled by default) |
 | `phlow-tui` | The terminal frontend: ratatui when there's a TTY, line mode otherwise |
-| `phlow-cli` | The `phlow`/`flow` binaries: flags, exit codes, signals, wiring |
+| `phlow-cli` | The `phlow` binary: flags, exit codes, signals, wiring |
 
 `phlow-inference` is a pre-existing workspace crate from before the port
 began. It is not one of the 14 port crates and is not covered by the
@@ -45,7 +45,7 @@ Python-parity gates; it stays in the workspace as a supporting library.
 1. **Parse.** `phlow run "fix the typo"` → clap parses flags (accepted
    before *or* after the subcommand, like argparse's `parents=[common]`).
 2. **Load config.** Explicit `--config` TOML only; project-local config
-   is never auto-loaded. Invalid config → `Flow: <reason>`, exit 2.
+   is never auto-loaded. Invalid config → `Phlow: <reason>`, exit 2.
 3. **Build the runtime.** One `Runtime` owns the Ollama transport, the
    editor bridge, the check runner, and the workspace. Exactly one owner
    for every handle; everything closes exactly once.

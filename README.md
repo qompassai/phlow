@@ -1,4 +1,4 @@
-# Flow
+# Phlow
 
 Local, bounded planner → coder → reviewer workflows, with real file tools and a
 host-enforced verification gate. Ollama is the default backend. CLI, terminal UI

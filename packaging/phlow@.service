@@ -1,8 +1,7 @@
 # phlow agent runtime, user instance (socket-activated).
 #
 # Runs `phlow serve`: the Rust port's MCP server. Supersedes
-# systemd/flow.service, which invoked the legacy Python `flow status`
-# oneshot; that file is left untouched for the Python tree.
+# systemd/phlow.service (the `phlow status` oneshot); do not enable both.
 #
 # Lifecycle: phlow.socket accepts a connection -> systemd spawns one
 # instance of this unit with the connection on stdin/stdout -> `phlow

@@ -60,7 +60,7 @@ Python allows.
 ## Timeouts
 
 `--editor-timeout` is validated twice: the CLI rejects anything outside
-0.1–660 s with `Flow: --editor-timeout must be between 0.1 and 660
+0.1–660 s with `Phlow: --editor-timeout must be between 0.1 and 660
 seconds` (exit 2), and the bridge constructor enforces the same window.
 The bridge also enforces a worker-join grace period on shutdown so a
 stuck reverse request cannot hold the process open.

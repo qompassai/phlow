@@ -1,8 +1,7 @@
 # The CLI
 
-Two binaries, one `main.rs`: `phlow` (primary) and `flow` (compatibility
-alias). They differ only in the argv[0]-derived name on the `--help`
-usage line; `--version` output is byte-identical.
+One binary: `phlow`. The legacy `flow` compatibility alias was removed;
+the crate builds a single `phlow` binary from one `main.rs`.
 
 ## Commands
 
@@ -25,18 +24,18 @@ after** the subcommand, exactly like argparse's `parents=[common]`.
 |---|---|
 | 0 | Success (`status == "ok"`, or the TUI/MCP session ended cleanly) |
 | 1 | The command ran but the report status is not `"ok"` |
-| 2 | Usage or config error (`Flow: <reason>` on stderr) |
+| 2 | Usage or config error (`Phlow: <reason>` on stderr) |
 | 130 | Interrupted (SIGTERM → the interruption message, exit 130) |
 
 Notes that bite:
 
-- `--version` prints `Flow 0.2.0` and exits 0. It is root-only:
+- `--version` prints `Phlow 0.2.0` and exits 0. It is root-only:
   `phlow run --version` is a usage error (exit 2), like argparse.
 - `check --name X` wins over a positional name (`args.check_name or
   args.name`).
 - `--editor-timeout` must be within 0.1–660 s; anything else (including
   `nan`, `inf`, and negative numbers) is exit 2 with the exact message
-  `Flow: --editor-timeout must be between 0.1 and 660 seconds`.
+  `Phlow: --editor-timeout must be between 0.1 and 660 seconds`.
 - Reports are one ASCII-escaped JSON line, byte-compatible with Python's
   `json.dumps(result, ensure_ascii=True)` — including surrogate-pair
   escaping and nested empty containers.
@@ -63,7 +62,7 @@ continuing the loop as Python does. See [Porting notes](porting-notes.md).
 
 SIGTERM is watched on a dedicated thread (unix only, mirroring Python's
 `hasattr(signal, "SIGTERM")` guard). Delivery prints
-`Flow interrupted; changes already written are not rolled back.` to
+`Phlow interrupted; changes already written are not rolled back.` to
 stderr and exits 130 — the same observable contract as Python's
 SIGTERM→KeyboardInterrupt handler, including during a blocked `serve`
 (the watcher owns signal delivery; the serve loop owns stdin; neither

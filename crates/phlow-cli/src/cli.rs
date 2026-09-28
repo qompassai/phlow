@@ -21,8 +21,6 @@ fn parse_workspace_path(raw: &str) -> Result<PathBuf, std::convert::Infallible> 
 ///
 /// Exit codes mirror `flow/main.py`: 0 success, 1 the command ran but the
 /// report status is not `ok`, 2 usage/config error, 130 interrupted.
-/// (Kept bin-neutral on purpose: this same parser serves both the `phlow`
-/// binary and the `flow` compatibility alias.)
 #[derive(Parser, Debug)]
 #[command(name = "phlow", disable_version_flag = true)]
 pub struct Cli {
@@ -57,7 +55,7 @@ pub struct Cli {
     #[arg(long, global = true, allow_negative_numbers = true, value_parser = parse_python_float)]
     pub editor_timeout: Option<f64>,
 
-    /// Print `Flow 0.2.0` and exit. Root-only, like Python's version action.
+    /// Print `Phlow 0.2.0` and exit. Root-only, like Python's version action.
     #[arg(long, action = ArgAction::SetTrue)]
     pub version: bool,
 
@@ -316,8 +314,8 @@ mod tests {
 
     #[test]
     fn about_text_is_bin_neutral() {
-        // The same parser serves `phlow` and the `flow` alias; the about
-        // text must not claim the binary is phlow when invoked as flow.
+        // The about text must not hardcode a binary name: only `phlow`
+        // ships now, and the text must stay accurate if that changes.
         let about = Cli::command()
             .get_about()
             .map(|s| s.to_string())

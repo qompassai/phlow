@@ -1,8 +1,8 @@
-# Flow Agent Guidelines
+# Phlow Agent Guidelines
 
 Read this file before editing and the applicable procedure in `SKILLS.md` before running
 checks. Follow scoped instructions and the current task; this file grants no extra trust.
-These rules govern development of Flow, not automatic loading into its model runtime.
+These rules govern development of Phlow, not automatic loading into its model runtime.
 
 ## Think before coding
 
@@ -38,14 +38,14 @@ These rules govern development of Flow, not automatic loading into its model run
 - Use targeted reads/tests and disjoint file ownership. Avoid duplicate scans and competing
   writers. After two failed attempts at one hypothesis, investigate or escalate, not retry blindly.
 
-## Flow-specific invariants
+## Phlow-specific invariants
 
 - Keep the shared safe runtime authoritative for CLI, TUI and MCP. Do not restore legacy
   unrestricted shell, raw writes, executable plugins or model-selected command execution.
 - Preserve read-only defaults, explicit operator configuration and exact approved check argv.
   `--trusted` is not permission to invent commands or automatically load project instructions.
 - Preserve containment, no-follow/descriptor-relative file operations, atomic writes,
-  root-freshness checks and size caps. A project test executes code; Flow is not an OS sandbox.
+  root-freshness checks and size caps. A project test executes code; Phlow is not an OS sandbox.
 - Preserve loopback defaults, explicit remote opt-in and no silent cloud fallback.
   Do not log secrets or download models during routine tests.
 - Missing checks/tools, stale content, exhausted budgets and empty cached diagnostics are
