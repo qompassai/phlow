@@ -13,8 +13,9 @@
 #   split into `tasks01to105` (implemented: drivers for 01-105 all landed
 #   in this crate, waves 01-20), `tasks116to130` (implemented: diver
 #   harness Phase-2 acceptance probes, waves 116-120, 121-125, and
-#   126-130), and `tasks106to115` (pending: designed in the extension
-#   docs, wave 21, drivers not yet landed).
+#   126-130), `tasks106to110` (implemented: SkillOpt wave 21, drivers
+#   landed), and `tasks111to115` (pending: designed in the extension
+#   docs, wave 22, drivers not yet landed).
 #   Roster asserts validate ALL 130 entries.
 # - Apps (`apps.task-NN`), the `gauntlet` runner, and `checks.task-list`
 #   cover IMPLEMENTED tasks only. The flake never claims an app for a
@@ -775,7 +776,7 @@
         }
       ];
 
-      tasks106to115 = [
+      tasks106to110 = [
         {
           id = "task-106";
           name = "loop convergence dynamics";
@@ -801,6 +802,9 @@
           name = "poisoned rollout evidence";
           kind = "rust";
         }
+      ];
+
+      tasks111to115 = [
         {
           id = "task-111";
           name = "selection-split overfitting";
@@ -845,8 +849,8 @@
       tasks01to105 = tasks01to100 ++ tasks101to105;
       tasks116to125 = tasks116to120 ++ tasks121to125;
       tasks116to130 = tasks116to125 ++ tasks126to130;
-      rosterImplemented = tasks01to105 ++ tasks116to130;
-      rosterPending = tasks106to115;
+      rosterImplemented = tasks01to105 ++ tasks106to110 ++ tasks116to130;
+      rosterPending = tasks111to115;
 
       # Full declared roster: segments concatenated, nothing hardcoded.
       gauntletRoster = rosterImplemented ++ rosterPending;
