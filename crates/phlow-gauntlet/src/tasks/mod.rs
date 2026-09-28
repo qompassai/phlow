@@ -1,6 +1,11 @@
 //! The 130 gauntlet tasks. One module per task; each file has a single
 //! owning worker during implementation (disjoint ownership).
 
+/// Shared subprocess harness for the wave-32 (CLI UX doctrine) task
+/// drivers. Crate-visible only: integration tests go through the
+/// drivers, never the harness directly.
+pub(crate) mod cli_harness;
+
 pub mod task_01;
 pub mod task_02;
 pub mod task_03;
@@ -117,7 +122,11 @@ pub mod task_193;
 pub mod task_194;
 pub mod task_195;
 pub mod task_196;
+pub mod task_197;
+pub mod task_198;
+pub mod task_199;
 pub mod task_20;
+pub mod task_200;
 pub mod task_21;
 pub mod task_22;
 pub mod task_23;
@@ -223,7 +232,12 @@ pub const TASK_IDS: [&str; crate::TASK_COUNT_MAX] = [
     "task-129", "task-130", "task-131", "task-132", "task-133", "task-134", "task-135", "task-136",
     "task-137", "task-138", "task-139", "task-140", "task-141", "task-142", "task-143", "task-144",
     "task-145", "task-146", "task-147", "task-148", "task-149", "task-150", "task-151", "task-152",
-    "task-153", "task-154", "task-155", "task-156", "task-157", "task-158",
+    "task-153", "task-154", "task-155", "task-156", "task-157", "task-158", "task-159", "task-160",
+    "task-161", "task-162", "task-163", "task-164", "task-165", "task-166", "task-167", "task-168",
+    "task-169", "task-170", "task-171", "task-172", "task-173", "task-174", "task-175", "task-176",
+    "task-177", "task-178", "task-179", "task-180", "task-181", "task-182", "task-183", "task-184",
+    "task-185", "task-186", "task-187", "task-188", "task-189", "task-190", "task-191", "task-192",
+    "task-193", "task-194", "task-195", "task-196", "task-197", "task-198", "task-199", "task-200",
 ];
 
 /// Run one task by id and record a `TaskReport`.
@@ -767,6 +781,30 @@ pub fn run_task(id: &str, ctx: &Ctx) -> Result<TaskReport, GauntletError> {
             task_196::KIND,
             task_196::run(ctx),
         ),
+        task_197::ID => (
+            task_197::ID,
+            task_197::NAME,
+            task_197::KIND,
+            task_197::run(ctx),
+        ),
+        task_198::ID => (
+            task_198::ID,
+            task_198::NAME,
+            task_198::KIND,
+            task_198::run(ctx),
+        ),
+        task_199::ID => (
+            task_199::ID,
+            task_199::NAME,
+            task_199::KIND,
+            task_199::run(ctx),
+        ),
+        task_200::ID => (
+            task_200::ID,
+            task_200::NAME,
+            task_200::KIND,
+            task_200::run(ctx),
+        ),
         task_136::ID => (
             task_136::ID,
             task_136::NAME,
@@ -1050,6 +1088,10 @@ pub fn task_meta(id: &str) -> Option<(&'static str, TaskKind)> {
         task_194::ID => Some((task_194::NAME, task_194::KIND)),
         task_195::ID => Some((task_195::NAME, task_195::KIND)),
         task_196::ID => Some((task_196::NAME, task_196::KIND)),
+        task_197::ID => Some((task_197::NAME, task_197::KIND)),
+        task_198::ID => Some((task_198::NAME, task_198::KIND)),
+        task_199::ID => Some((task_199::NAME, task_199::KIND)),
+        task_200::ID => Some((task_200::NAME, task_200::KIND)),
         task_136::ID => Some((task_136::NAME, task_136::KIND)),
         task_137::ID => Some((task_137::NAME, task_137::KIND)),
         task_138::ID => Some((task_138::NAME, task_138::KIND)),

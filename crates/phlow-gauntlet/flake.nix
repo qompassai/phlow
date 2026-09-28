@@ -33,8 +33,10 @@
 #   drivers landed),
 #   `tasks193to196` (implemented: Ghostex adaptation wave 31,
 #   drivers landed),
-#   `tasks151to200` (pending: Ghostex adaptation wave 32,
-#   designed in the extension docs, drivers not yet landed),
+#   `tasks197to200` (implemented: Ghostex adaptation wave 32,
+#   drivers landed),
+#   `tasks151to200` (empty: all Ghostex adaptation tasks 151-200
+#   implemented; segment retained for roster shape),
 #   `tasks201to250` (pending: zeroclaw adaptation waves 33-36,
 #   designed in the extension docs, drivers not yet landed), and
 #   `tasks251to280` (pending: verification-against-adaptation waves
@@ -1169,10 +1171,8 @@
         }
       ];
 
-      # Pending: Ghostex adaptation wave 32 (tasks 197-200).
-      # Designed in ~/workspace/gauntlet-design-tasks-151-200.md;
-      # drivers not yet landed. Runs after tasks193to196.
-      tasks151to200 = [
+      # Implemented: Ghostex adaptation wave 32 (tasks 197-200); drivers landed.
+      tasks197to200 = [
         {
           id = "task-197";
           name = "help-first commands";
@@ -1193,6 +1193,10 @@
           name = "hostile output sanitization";
           kind = "rust";
         }
+      ];
+
+      # No Ghostex adaptation tasks remain pending (151-200 all implemented).
+      tasks151to200 = [
       ];
 
       # Pending: zeroclaw adaptation waves 33-36 (tasks 201-250).
@@ -1696,7 +1700,8 @@
         ++ tasks170to177
         ++ tasks178to185
         ++ tasks186to192
-        ++ tasks193to196;
+        ++ tasks193to196
+        ++ tasks197to200;
       rosterPending = tasks151to200 ++ tasks201to250 ++ tasks251to280;
 
       # Full declared roster: segments concatenated, nothing hardcoded.

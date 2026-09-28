@@ -1,0 +1,86 @@
+{
+  "fields": {
+    "changed_files": {
+      "items": {
+        "type": "null"
+      },
+      "type": "array"
+    },
+    "checks": {
+      "items": {
+        "type": "null"
+      },
+      "type": "array"
+    },
+    "cycles": {
+      "type": "number"
+    },
+    "error": {
+      "type": "string"
+    },
+    "events": {
+      "items": {
+        "type": "null"
+      },
+      "type": "array"
+    },
+    "model_calls": {
+      "type": "number"
+    },
+    "roles": {
+      "items": {
+        "fields": {
+          "error": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "tool_errors": {
+            "type": "number"
+          },
+          "turns": {
+            "type": "number"
+          }
+        },
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "status": {
+      "type": "string"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "task": {
+      "type": "string"
+    },
+    "tool_calls": {
+      "type": "number"
+    },
+    "verification": {
+      "fields": {},
+      "type": "object"
+    },
+    "verification_history": {
+      "items": {
+        "type": "null"
+      },
+      "type": "array"
+    },
+    "verified": {
+      "type": "boolean"
+    }
+  },
+  "type": "object"
+}

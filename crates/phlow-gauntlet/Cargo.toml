@@ -85,3 +85,11 @@ serde_json = "1"
 ml-dsa = "=0.1.1"
 ed25519-dalek = "=3.0.0"
 sha2 = "=0.10.9"
+
+[dev-dependencies]
+# phlow-cli: the wave-32 (CLI UX doctrine) drivers spawn the real `phlow`
+# binary as a subprocess (help/--json/sanitization). The dev-dependency
+# makes Cargo build the binary for integration tests and exposes
+# `CARGO_BIN_EXE_phlow` to the wave-32 harness. Path dependency, same
+# workspace.
+phlow-cli = { path = "../phlow-cli" }

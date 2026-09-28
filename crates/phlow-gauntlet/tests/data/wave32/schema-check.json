@@ -1,0 +1,76 @@
+{
+  "fields": {
+    "checks": {
+      "items": {
+        "fields": {
+          "cmd": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "duration_ms": {
+            "type": "number"
+          },
+          "error": {
+            "type": "string"
+          },
+          "filetypes": {
+            "items": {
+              "type": "null"
+            },
+            "type": "array"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "revision": {
+            "type": "number"
+          },
+          "source": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "stderr": {
+            "type": "string"
+          },
+          "stderr_truncated": {
+            "type": "boolean"
+          },
+          "stdout": {
+            "type": "string"
+          },
+          "stdout_truncated": {
+            "type": "boolean"
+          },
+          "timeout": {
+            "type": "number"
+          },
+          "workspace": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "verified": {
+      "type": "boolean"
+    }
+  },
+  "type": "object"
+}

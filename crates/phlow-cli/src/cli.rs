@@ -1,4 +1,13 @@
+// Copyright (c) maddada
+// Ghostex concept adapted from maddada/Ghostex @ c91146607205ac49303d1bcfe2fd6f9a86741500
+// Re-implemented for phlow in Tiger Style Rust; not a verbatim port.
+
 //! Command-line surface, ported from `flow/main.py`'s `parser()`.
+//!
+//! CLI UX doctrine (adapted from Ghostex's `skills/ghostex-cli`):
+//! help-first discovery (every subcommand documents itself), `--json`
+//! machine output (valid JSON always, stable field names, stable ids),
+//! verify-after-act for mutating commands. Attribution: see header.
 //!
 //! Python builds a `common` parent parser with suppressed defaults so the
 //! global flags are accepted before **or** after the subcommand; clap's
@@ -58,6 +67,14 @@ pub struct Cli {
     /// Print `Phlow 0.2.0` and exit. Root-only, like Python's version action.
     #[arg(long, action = ArgAction::SetTrue)]
     pub version: bool,
+
+    /// Machine-readable output contract (Ghostex `--json` doctrine, adapted).
+    /// Report commands (`status`, `check`, `run`) already emit one JSON
+    /// line; this flag asserts that contract. Commands that cannot honor
+    /// it (the interactive TUI) refuse with a usage error instead of
+    /// printing human text.
+    #[arg(long, global = true, action = ArgAction::SetTrue)]
+    pub json: bool,
 
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -345,5 +362,116 @@ mod tests {
         ] {
             assert!(Cli::try_parse_from(argv).is_ok());
         }
+    }
+
+    #[test]
+    fn json_flag_is_global_like_other_flags() {
+        // --json is accepted before or after the subcommand, like the
+        // other global flags (Python-parity convention).
+        let cli = parse(&["phlow", "--json", "status"]);
+        assert!(cli.json);
+        let cli = parse(&["phlow", "status", "--json"]);
+        assert!(cli.json);
+        let cli = parse(&["phlow"]);
+        assert!(!cli.json);
+    }
+
+    #[test]
+    fn every_subcommand_has_help_string() {
+        // Static scan (gauntlet task-197 V2): the help-first doctrine
+        // requires every subcommand to document itself. A new Commands
+        // variant without a doc comment fails the build here.
+        let mut count = 0;
+        for sub in Cli::command().get_subcommands() {
+            count += 1;
+            let name = sub.get_name();
+            let about = sub.get_about().map(|s| s.to_string()).unwrap_or_default();
+            let long_about = sub
+                .get_long_about()
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            assert!(
+                !about.trim().is_empty() || !long_about.trim().is_empty(),
+                "subcommand '{name}' has no help text: add a doc comment \
+                 to the Commands variant"
+            );
+        }
+        assert!(count > 0, "expected at least one subcommand");
+    }
+
+    /// Fail when any help/about string in the CLI definition contains a
+    /// raw control byte. The tree is two levels deep (root + subcommands),
+    /// so no recursion is needed.
+    fn assert_help_text_clean(label: &str, text: &str) {
+        for (offset, byte) in text.bytes().enumerate() {
+            assert!(
+                byte == b'\n' || byte >= 0x20,
+                "{label}: raw control byte 0x{byte:02x} at offset {offset}"
+            );
+        }
+    }
+
+    #[test]
+    fn all_help_strings_are_control_byte_free() {
+        // Static scan (gauntlet task-200 A2): help text is static,
+        // compile-time literals; untrusted data is never interpolated
+        // into it. This test enforces the literal half at build time.
+        let root = Cli::command();
+        let mut commands: Vec<(String, &clap::Command)> = vec![("phlow".to_string(), &root)];
+        // Two levels only: root, then each subcommand's own strings.
+        for sub in root.get_subcommands() {
+            commands.push((format!("phlow {}", sub.get_name()), sub));
+        }
+        for (label, cmd) in &commands {
+            if let Some(about) = cmd.get_about() {
+                assert_help_text_clean(&format!("{label} about"), &about.to_string());
+            }
+            if let Some(long_about) = cmd.get_long_about() {
+                assert_help_text_clean(&format!("{label} long_about"), &long_about.to_string());
+            }
+            for arg in cmd.get_arguments() {
+                let arg_label = format!("{label} --{}", arg.get_id());
+                if let Some(help) = arg.get_help() {
+                    assert_help_text_clean(&arg_label, &help.to_string());
+                }
+                if let Some(long_help) = arg.get_long_help() {
+                    assert_help_text_clean(&arg_label, &long_help.to_string());
+                }
+            }
+        }
+        assert!(
+            commands.len() > 1,
+            "expected subcommands under the root command"
+        );
+    }
+
+    #[test]
+    fn hostile_about_is_sanitized_by_clap() {
+        // Declared contract, verified empirically (not assumed): clap
+        // strips ANSI escape sequences and control bytes from help
+        // text, keeping `\n` as legitimate formatting. A hostile
+        // `about` containing `\x1b[2J` renders with the whole sequence
+        // removed — the terminal-injection half of task-200's contract
+        // is enforced by clap itself (strip, not escape). The
+        // `all_help_strings_are_control_byte_free` scan above is the
+        // defense-in-depth half: help literals must be clean at the
+        // source, so the contract never depends on one library's
+        // behavior alone. If clap ever changes its sanitization, this
+        // test fails and the contract is revisited.
+        let mut hostile = clap::Command::new("demo").about("wipe\x1b[2Jscreen\x07bell");
+        let mut rendered = Vec::new();
+        hostile.write_help(&mut rendered).expect("help must render");
+        assert!(
+            !rendered.contains(&0x1b),
+            "clap must not render a raw ESC byte into help output"
+        );
+        assert!(
+            !rendered.contains(&0x07),
+            "clap must not render a raw BEL byte into help output"
+        );
+        assert!(
+            !String::from_utf8_lossy(&rendered).contains("[2J"),
+            "the ANSI clear-screen sequence must not survive rendering"
+        );
     }
 }

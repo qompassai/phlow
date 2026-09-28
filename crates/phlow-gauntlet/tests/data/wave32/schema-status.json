@@ -1,0 +1,120 @@
+{
+  "fields": {
+    "backend": {
+      "fields": {
+        "base_url": {
+          "type": "string"
+        },
+        "connectivity": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "busy": {
+      "type": "boolean"
+    },
+    "capabilities": {
+      "fields": {
+        "arbitrary_commands": {
+          "type": "boolean"
+        },
+        "file_io": {
+          "type": "string"
+        },
+        "plugins": {
+          "type": "boolean"
+        },
+        "read_only_concurrency": {
+          "type": "number"
+        },
+        "single_writer": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "checks": {
+      "items": {
+        "fields": {
+          "filetypes": {
+            "items": {
+              "type": "null"
+            },
+            "type": "array"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "editor": {
+      "fields": {
+        "attached": {
+          "type": "boolean"
+        },
+        "error": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "tools": {
+          "items": {
+            "type": "null"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "last_report": {
+      "type": "null"
+    },
+    "models": {
+      "fields": {
+        "coder": {
+          "type": "string"
+        },
+        "planner": {
+          "type": "string"
+        },
+        "reviewer": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "status": {
+      "type": "string"
+    },
+    "trusted": {
+      "type": "boolean"
+    },
+    "warnings": {
+      "items": {
+        "type": "null"
+      },
+      "type": "array"
+    },
+    "workspace": {
+      "type": "string"
+    }
+  },
+  "type": "object"
+}

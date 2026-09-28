@@ -1,3 +1,7 @@
+// Copyright (c) maddada
+// Ghostex concept adapted from maddada/Ghostex @ c91146607205ac49303d1bcfe2fd6f9a86741500
+// Re-implemented for phlow in Tiger Style Rust; not a verbatim port.
+
 //! `phlow`: the command-line surface of the safe agent runtime, ported
 //! from `flow/main.py`.
 //!
@@ -5,6 +9,14 @@
 //! the report status is not `ok`, 2 usage/config error, 130 interrupted
 //! (SIGTERM). Reports print as one ASCII-escaped JSON line, byte-compatible
 //! with Python's `json.dumps(result, ensure_ascii=True)`.
+//!
+//! Machine-output contract (CLI UX doctrine adapted from Ghostex's
+//! `skills/ghostex-cli`, attribution above): `--json` asserts that every
+//! byte on stdout is valid JSON — report commands always emit one JSON
+//! line, and commands that cannot honor machine output refuse the flag.
+//! Field names and entity ids are stable across runs; help text is
+//! static, compile-time literals (never interpolated from untrusted
+//! data), so no raw control bytes reach the terminal.
 //!
 //! The `phlow` binary (`src/bin/phlow.rs`) is a thin shim over [`run`];
 //! clap renders the help's Usage line from the actual `argv[0]`.
@@ -55,7 +67,16 @@ pub fn run() -> i32 {
     if cli.version {
         // argparse's version action fires during parsing, winning over any
         // subcommand on the same command line.
-        println!("Phlow {VERSION}");
+        if cli.json {
+            // --json asserts the machine-output contract: the version is
+            // a JSON object, not the human string.
+            println!(
+                "{}",
+                python_json_dumps(&serde_json::json!({"version": VERSION}))
+            );
+        } else {
+            println!("Phlow {VERSION}");
+        }
         return 0;
     }
     match dispatch(&cli) {
@@ -89,7 +110,21 @@ fn reject_bare_double_dash() {
 /// Build the runtime and run the selected command. `Err` is always a
 /// startup failure (config, transport, timeout, runtime construction);
 /// command-level failures are encoded in the report's `status` field.
+/// Reject `--json` for commands that cannot honor machine output.
+/// An argv-level contradiction fails before any environment is read:
+/// `--json` asserts machine output, and the TUI is interactive-only,
+/// so asking for both is a usage error, never a silent human dump.
+fn reject_json_for_interactive(cli: &Cli) -> Result<(), String> {
+    if cli.json && matches!(cli.command, Some(Commands::Tui) | None) {
+        return Err(
+            "--json requires machine output; the tui command is interactive-only".to_string(),
+        );
+    }
+    Ok(())
+}
+
 fn dispatch(cli: &Cli) -> Result<i32, String> {
+    reject_json_for_interactive(cli)?;
     // Order mirrors Python's main(): load_config first, then the
     // --editor-timeout range check, so a bad config wins over a bad
     // timeout like Python's.
