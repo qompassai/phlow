@@ -14,5 +14,8 @@ name = "gauntlet"
 path = "src/bin/gauntlet.rs"
 
 [dependencies]
+# phlow-experiment: the real evaluator under test (evaluator.rs budget
+# discipline). Path dependency, same workspace.
+phlow-experiment = { path = "../phlow-experiment" }
 # serde_json: build the JSON verdict/report objects. No derive-based validation.
 serde_json = "1"
