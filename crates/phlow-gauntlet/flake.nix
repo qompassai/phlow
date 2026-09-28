@@ -250,7 +250,8 @@
           name = "duplicate delivery dedup";
           kind = "rust";
         }
-      ] ++ [
+      ]
+      ++ [
 
         {
           id = "task-36";
