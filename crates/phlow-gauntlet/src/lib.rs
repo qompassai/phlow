@@ -32,6 +32,7 @@
 pub mod bounty;
 pub mod daemon_client;
 pub mod skillopt;
+pub mod state_machine;
 pub mod tasks;
 pub mod wire;
 
