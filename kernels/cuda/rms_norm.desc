@@ -1,0 +1,5 @@
+# Example cubin-backed descriptor: pre-compiled code, no JIT at load.
+name = rms_norm
+entry = rms_norm_kernel
+arch = sm_90
+source = cubin:kernels/cuda/rms_norm.sm_90.cubin

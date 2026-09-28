@@ -1431,11 +1431,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "phlow-compute"
+version = "0.1.0"
+
+[[package]]
+name = "phlow-compute-cuda"
+version = "0.1.0"
+
+[[package]]
 name = "phlow-config"
 version = "0.1.0"
 dependencies = [
  "toml",
 ]
+
+[[package]]
+name = "phlow-council"
+version = "0.1.0"
 
 [[package]]
 name = "phlow-editor"
@@ -1444,6 +1456,13 @@ dependencies = [
  "phlow-json",
  "rustix",
  "serde_json",
+]
+
+[[package]]
+name = "phlow-gpu-worker"
+version = "0.1.0"
+dependencies = [
+ "phlow-compute-cuda",
 ]
 
 [[package]]

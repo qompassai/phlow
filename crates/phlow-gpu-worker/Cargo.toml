@@ -1,0 +1,13 @@
+[package]
+name = "phlow-gpu-worker"
+version = "0.1.0"
+edition = "2024"
+description = "Bounded GPU work dispatcher: lifecycle state machine, generation-based cancellation (cuda-oxide host-runtime concepts, CPU-only)"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "phlow_gpu_worker"
+path = "src/lib.rs"
+
+[dependencies]
+phlow-compute-cuda = { path = "../phlow-compute-cuda" }

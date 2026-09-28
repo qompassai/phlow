@@ -1,0 +1,10 @@
+[package]
+name = "phlow-council"
+version = "0.1.0"
+edition = "2024"
+description = "Candidate workflow for phlow: task contracts, candidate lineage, evidence, and council review with keep/revise/reject iteration (workflow methodology adapted from NVlabs kda)"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "phlow_council"
+path = "src/lib.rs"

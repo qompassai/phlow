@@ -20,9 +20,10 @@ grep -rn 'path = "\.\./' crates/*/Cargo.toml
 ls crates/*/src
 ```
 
-The workspace is 16 crates: the 14 port crates plus `phlow-inference` and
-`phlow-tuios`, supporting crates that are not part of the port and are not
-covered by the Python-parity gates.
+The workspace is 20 crates: the 14 port crates plus `phlow-inference`,
+`phlow-tuios`, `phlow-compute`, `phlow-compute-cuda`, `phlow-gpu-worker`,
+and `phlow-council`, supporting crates that are not part of the port and are
+not covered by the Python-parity gates.
 
 ## System architecture
 
@@ -156,6 +157,9 @@ graph TB
         inf["phlow-inference"]
         tui["phlow-tui"]
         tio["phlow-tuios"]
+        cmp["phlow-compute"]
+        cda["phlow-compute-cuda"]
+        cnc["phlow-council"]
     end
 
     subgraph L1["Layer 1 — foundation only"]
@@ -164,6 +168,7 @@ graph TB
         mcp["phlow-mcp"]
         edt["phlow-editor"]
         sim["phlow-self-improve"]
+        gpw["phlow-gpu-worker"]
     end
 
     subgraph L2["Layer 2 — composed capabilities"]
@@ -194,6 +199,7 @@ graph TB
     tls --> mcp
     tls --> wsp
     sim --> wsp
+    gpw --> cda
 
     rt --> chk
     rt --> cfg
@@ -221,8 +227,8 @@ graph TB
     cli --> tls
     cli --> tui
 
-    class cfg,jsn,wsp,inf,tui l0
-    class chk,llm,mcp,edt,sim l1
+    class cfg,jsn,wsp,inf,tui,tio,cmp,cda,cnc l0
+    class chk,llm,mcp,edt,sim,gpw l1
     class tls l2
     class rt l3
     class agt,cgen l4
@@ -234,7 +240,9 @@ Reading the layers:
 - **Layer 0** is the bedrock: validated config, checked JSON, the contained
   workspace. `phlow-tui` and `phlow-inference` sit here because nothing in the
   workspace depends on their internals — the TUI is driven through its facade
-  by `phlow-cli`, inference is standalone.
+  by `phlow-cli`, inference is standalone. `phlow-compute`,
+  `phlow-compute-cuda`, and `phlow-council` are also dependency-free;
+  `phlow-tuios` likewise has no workspace dependents.
 - **Layer 1** holds the crates whose only path dependencies are foundation:
   checks, the LLM backend, the MCP server, the editor bridge — and
   `phlow-self-improve`, whose single path dependency is `phlow-workspace`.
@@ -363,6 +371,10 @@ Derived from each crate's `src/` module list.
 | `phlow-self-improve` | `feedback`, `prompt_evolver`, `skill_store`, `error` | Feedback records and prompt evolution; disabled by default |
 | `phlow-inference` | `kv_policy`, `speculative`, `tiered_cache`, `two_stage`, `projection`, `vector_arena` | Inference-serving primitives (DeepSeek-V4.1-Flash ideas); projection-head trait + bounded vector-arena embedding cache (CLM-adapted); supporting crate |
 | `phlow-tuios` | `state`, `mailbox`, `hooks`, `protocol`, `server`, `daemon`, `tape`, `error` | Session multiplexing for agents: agent-state machine, bounded per-session inbox ring with ask graph, daemon/client hook split, JSON-line Unix-socket control protocol, declarative tapes; supporting crate (tuios concepts adapted, no tuios code ported) |
+| `phlow-compute` | `tile`, `partition`, `program`, `error` | Host-side tile ownership: tile shapes, exact partitions, disjoint origins, exclusive-output/shared-input launch ownership, deterministic CPU tile executor; supporting crate (cutile-rs concepts adapted) |
+| `phlow-compute-cuda` | `arch`, `backend`, `descriptor_file`, `error` | CUDA kernel-target model: `ComputeArch` (sm_80/90/100), structural PTX validation, kernel descriptors, launch-config validation, specialization `KernelPolicy`, bounded `CudaBackend` trait + deterministic CPU simulator; no CUDA driver binding; supporting crate (cuda-oxide concepts adapted) |
+| `phlow-gpu-worker` | `worker`, `job`, `error` | One-job-at-a-time lifecycle dispatcher over `CudaBackend`: Idle/Busy/Stopped state machine, job ids, generation-based cancellation; supporting crate |
+| `phlow-council` | `contract`, `candidate`, `evidence`, `review`, `workflow`, `error` | Domain-free candidate workflow: task contract, candidate lineage, per-candidate evidence, keep/revise/reject council review; keep promotes only verified candidates; supporting crate (kda methodology adapted; kda is NOASSERTION — no kda material copied) |
 
 ## Trust boundaries
 
@@ -396,7 +408,13 @@ Derived from each crate's `src/` module list.
   reducer, online context compact); all four are opt-in and disabled by
   default, per the upstream rule "a missing configuration leaves every
   mechanism disabled".
+- The NVlabs GPU-compute adaptations have landed as four supporting crates:
+  `phlow-compute` (cutile-rs tile/partition concepts), `phlow-compute-cuda`
+  (cuda-oxide kernel-target model + bounded backend trait + deterministic CPU
+  simulator; no CUDA driver binding), `phlow-gpu-worker` (lifecycle
+  dispatcher), and `phlow-council` (kda candidate-workflow methodology;
+  kda is NOASSERTION — methodology only, no kda material copied).
 - Remaining planned work: Mojo workers (`workers/phlow-mojo-worker`,
-  `kernels/mojo`), NVlabs GPU-compute adaptations.
+  `kernels/mojo`).
 - The mdbook chapter `docs/book/src/architecture.md` is the ELI5 companion;
   keep the two consistent on crate roles and product naming.

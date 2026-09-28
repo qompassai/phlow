@@ -1,0 +1,7 @@
+# Example kernel descriptor for phlow-compute-cuda.
+# Format: one `key = value` per line; `#` comments and blank lines ignored.
+# Keys: name, entry, arch, source (ptx:<path> or cubin:<path>).
+name = vector_add
+entry = vector_add_kernel
+arch = sm_80
+source = ptx:kernels/ptx/valid_add.ptx

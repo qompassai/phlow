@@ -7,6 +7,31 @@ All notable changes to phlow are documented here. Format follows
 
 ### Added
 
+- NVlabs GPU-compute concepts, re-expressed in Tiger Style Rust as four new
+  CPU-only supporting crates with `#![forbid(unsafe_code)]` and no CUDA
+  dependency (upstream concepts only — no verbatim ports; kda is NOASSERTION,
+  so only its research → implement → verify/profile → iterate methodology was
+  adapted, with no kda docs/prose/prompts/skill text copied):
+  `phlow-compute` (cutile-rs concepts: tile shapes, exact partitions, disjoint
+  origins, exclusive-output/shared-input launch ownership, deterministic CPU
+  `TileExecutor`), `phlow-compute-cuda` (cuda-oxide concepts: `ComputeArch`
+  sm_80/90/100, structural PTX validation, kernel descriptors, launch-config
+  validation, specialization `KernelPolicy`, bounded `CudaBackend` trait with a
+  deterministic CPU `SimulatedBackend`; original PTX/descriptor fixtures under
+  `kernels/`), `phlow-gpu-worker` (one-job-at-a-time Idle/Busy/Stopped
+  lifecycle dispatcher with job ids and generation-based cancellation),
+  `phlow-council` (domain-free candidate workflow: `TaskContract`, candidate
+  lineage, per-candidate `Evidence`, keep/revise/reject `CouncilReview`; keep
+  promotes only verified candidates). Upstream: cuda-oxide
+  (github.com/nvlabs/cuda-oxide, Apache-2.0), cutile-rs
+  (github.com/nvlabs/cutile-rs, Apache-2.0), kda (github.com/nvlabs/kda,
+  NOASSERTION). 108 tests, exactly 54 validation / 54 adversarial
+  (`tests/validation.rs` + `tests/adversarial.rs` per crate). Per-crate design
+  records in `crates/phlow-*/docs/decisions.md`. Validated on Primo:
+  `cargo +nightly-2026-09-25 test --workspace` green,
+  `clippy --workspace --all-targets -- -D warnings` clean,
+  `rustfmt --check` clean.
+
 - NVlabs/SoL-Pi agent-harness features, re-expressed in Tiger Style Rust as
   opt-in, disabled-by-default modules (upstream: MIT; "every mechanism is
   opt-in and disabled by default", "a missing configuration leaves every

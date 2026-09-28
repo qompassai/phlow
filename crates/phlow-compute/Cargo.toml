@@ -1,0 +1,10 @@
+[package]
+name = "phlow-compute"
+version = "0.1.0"
+edition = "2024"
+description = "Tile-based compute abstractions for phlow: validated tile shapes, disjoint partitions, and launch-ownership discipline (concepts adapted from NVlabs cutile-rs)"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "phlow_compute"
+path = "src/lib.rs"

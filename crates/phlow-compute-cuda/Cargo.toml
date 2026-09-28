@@ -1,0 +1,10 @@
+[package]
+name = "phlow-compute-cuda"
+version = "0.1.0"
+edition = "2024"
+description = "CUDA kernel-target model for phlow: validated PTX modules, kernel descriptors, launch configs, compile-time specialization policies, and a bounded CudaBackend trait with a deterministic CPU simulator (concepts adapted from NVlabs cuda-oxide)"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "phlow_compute_cuda"
+path = "src/lib.rs"

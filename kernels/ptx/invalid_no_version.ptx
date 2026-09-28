@@ -1,0 +1,10 @@
+// Adversarial fixture: no .version directive.
+.target sm_80
+.address_size 64
+
+.visible .entry broken_kernel(
+    .param .u32 broken_kernel_param_0
+)
+{
+    ret;
+}
