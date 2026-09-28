@@ -3,11 +3,22 @@
 //! write time.
 
 /// In-memory-only credential vault. Deliberately has no `Serialize`
-/// impl and no method that returns all secrets at once: the only way
-/// out is per-key `get` for the authenticated submit call.
-#[derive(Debug, Default)]
+/// impl and its `Debug` impl prints only the entry count, never
+/// values: Debug output routinely lands in logs. The only ways out
+/// are per-key `get` for the authenticated submit call, and
+/// `secret_values`, which clones values solely to feed the
+/// redaction list that scrubs text surfaces.
+#[derive(Default)]
 pub struct SecretVault {
     secrets: Vec<(String, String)>,
+}
+
+impl std::fmt::Debug for SecretVault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecretVault")
+            .field("entries", &self.secrets.len())
+            .finish()
+    }
 }
 
 impl SecretVault {

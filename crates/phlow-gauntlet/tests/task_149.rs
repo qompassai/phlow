@@ -96,3 +96,28 @@ fn error_message_redacted_at_boundary() {
         "the logged error must not carry the fixture secret"
     );
 }
+
+/// Regression (scaffold fix, 2026-09-28): `SecretVault` used to
+/// `#[derive(Debug)]`, so `format!("{:?}", vault)` printed raw
+/// secret values — and Debug output routinely lands in logs. The
+/// manual impl prints only the entry count.
+#[test]
+fn debug_impl_never_discloses_secret_values() {
+    use phlow_gauntlet::bounty::secret::SecretVault;
+    let mut vault = SecretVault::new();
+    vault.insert("api_key", "sk-live-F4K3t0k3n9x2q7m");
+    vault.insert("password", "hunt3r2-f4k3-pw-2026");
+    let rendered = format!("{vault:?}");
+    assert!(
+        !rendered.contains("sk-live-F4K3t0k3n9x2q7m"),
+        "Debug output must not contain the secret value:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("hunt3r2-f4k3-pw-2026"),
+        "Debug output must not contain the secret value:\n{rendered}"
+    );
+    assert!(
+        rendered.contains('2'),
+        "Debug output should still show the entry count:\n{rendered}"
+    );
+}
