@@ -1,0 +1,98 @@
+# Language tiers for the staged experiment. Read-only contract: candidates must
+# never be able to write this file. A language is promoted from experimental
+# only after its toolchain is pinned, every required check is operator-approved,
+# hidden tests pass, and at least one clean-room replay succeeds.
+
+schema_version = 1
+
+[[tier]]
+tier = "A"
+description = "Core languages: full gates from the first trial."
+
+[[tier.language]]
+name = "rust"
+min_app = "CLI, library, parser, or local service with typed configuration."
+required_checks = ["fmt", "clippy", "tests"]
+adversarial_focus = "overflow, unsafe/FFI, cancellation, process cleanup"
+
+[[tier.language]]
+name = "python"
+min_app = "CLI, service, or package."
+required_checks = ["ruff", "typecheck", "pytest"]
+adversarial_focus = "path handling, subprocesses, async cancellation, packaging"
+
+[[tier.language]]
+name = "lua"
+min_app = "Neovim-compatible module or CLI."
+required_checks = ["stylua", "selene", "luacheck", "busted"]
+adversarial_focus = "global leakage, runtime versions, async callbacks, DAP framing"
+
+[[tier]]
+tier = "B"
+description = "Second wave: native formatter/linter/compiler/test tools with pinned environments."
+
+[[tier.language]]
+name = "typescript"
+min_app = "CLI or local service."
+required_checks = ["formatter", "eslint", "typecheck", "tests"]
+adversarial_focus = "dependency scripts, prototype hazards, event-loop leaks"
+
+[[tier.language]]
+name = "go"
+min_app = "CLI or service."
+required_checks = ["format", "vet", "staticcheck", "tests"]
+adversarial_focus = "goroutine leaks, cancellation, races, path/process safety"
+
+[[tier.language]]
+name = "c"
+min_app = "Bounded parser or systems utility."
+required_checks = ["format", "warnings", "tests", "sanitizers"]
+adversarial_focus = "memory safety, integer overflow, malformed input"
+
+[[tier.language]]
+name = "bash"
+min_app = "Deterministic maintenance utility."
+required_checks = ["shellcheck", "parse", "integration-tests"]
+adversarial_focus = "quoting, injection, destructive expansion, privilege"
+
+[[tier.language]]
+name = "nix"
+min_app = "Package or dev-shell definition."
+required_checks = ["format", "eval", "build"]
+adversarial_focus = "impurity, unpinned sources, unexpected builds"
+
+[[tier]]
+tier = "C"
+description = "Android: only after reviewed language profiles and pinned local toolchains exist."
+
+[[tier.language]]
+name = "kotlin"
+min_app = "Small offline application component (Android)."
+required_checks = ["format", "lint", "unit-tests", "assemble"]
+adversarial_focus = "lifecycle, permissions, storage, concurrency"
+
+[[tier.language]]
+name = "java"
+min_app = "Small library for Android."
+required_checks = ["format", "lint", "unit-tests"]
+adversarial_focus = "lifecycle, permissions, storage, concurrency"
+
+[[tier]]
+tier = "D"
+description = "Mojo: experimental until the real toolchain and hardware gates are available."
+
+[[tier.language]]
+name = "mojo"
+min_app = "Bounded CPU kernel; GPU only when available."
+required_checks = ["format", "compile", "tests"]
+adversarial_focus = "ownership, bounds, numeric edge cases, device lifetime"
+
+[[tier]]
+tier = "E"
+description = "CUDA/GPU: never inferred as passing from source review or CPU-only tests."
+
+[[tier.language]]
+name = "cuda"
+min_app = "Small kernel plus host validation."
+required_checks = ["compile", "run", "sanitizer", "reference-comparison"]
+adversarial_focus = "hardware-specific behavior, explicit skip when unavailable"

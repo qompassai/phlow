@@ -1,0 +1,19 @@
+[package]
+name = "phlow-experiment"
+version = "0.1.0"
+edition = "2024"
+description = "Staged supervised-self-improvement experiment scaffolding for phlow: control-plane types, lifecycle and promotion gates, evaluator skeletons, manifest validators, and evaluation records. EXPERIMENTAL — no behavior enabled."
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "phlow_experiment"
+path = "src/lib.rs"
+
+[dependencies]
+# toml: manifest parsing via toml::Value with explicit validation control
+# flow, mirroring phlow-config. No derive macros for validation.
+toml = "0.8"
+# serde/serde_json: Serialize derives for the EvaluationRecord JSON report
+# schema only. Validation never relies on derive.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

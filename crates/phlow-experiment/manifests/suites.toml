@@ -1,0 +1,34 @@
+# Test suites for the staged experiment. Read-only contract: candidates must
+# never be able to write this file. Unknown keys are rejected by the parser.
+
+schema_version = 1
+
+[[suite]]
+id = "unit"
+description = "Deterministic component contracts: types, state machines, budgets, parsing."
+required = true
+
+[[suite]]
+id = "integration"
+description = "Runtime, MCP, editor, checks, and storage integration."
+required = true
+
+[[suite]]
+id = "adversarial"
+description = "Prompt injection, poisoning, path and protocol abuse."
+required = true
+
+[[suite]]
+id = "orchestration"
+description = "Worker lifecycle, scheduling, cancellation, reconciliation."
+required = true
+
+[[suite]]
+id = "self_edit"
+description = "Isolated self-modification trials with external promotion control."
+required = true
+
+[[suite]]
+id = "performance"
+description = "Fixed-size workloads and resource budgets."
+required = true

@@ -1,0 +1,45 @@
+# rust-cli-parse-001 — example public task manifest
+#
+# Follows the plan's test-case contract. Budgets are the initial experimental
+# limits. Check argv entries are operator-approved placeholders: the Phase 1
+# harness runs exactly these commands, and the candidate cannot edit them.
+
+schema_version = 1
+id = "rust-cli-parse-001"
+language = "rust"
+kind = "cli"
+risk = "normal"
+workspace_fixture = "crates/phlow-experiment/fixtures/apps/rust-cli-hello"
+task = "Implement bounded argument parsing for the fixture CLI."
+
+[budget]
+wall_ms = 300000
+model_turns = 12
+tool_calls = 64
+changed_files = 8
+changed_bytes = 131072
+workers = 1
+queue_depth = 4
+
+[[checks]]
+name = "format"
+argv = ["cargo", "fmt", "--all", "--", "--check"]
+required = true
+kind = "format"
+
+[[checks]]
+name = "clippy"
+argv = ["cargo", "clippy", "--all-targets", "--locked", "--", "-D", "warnings"]
+required = true
+kind = "lint"
+
+[[checks]]
+name = "tests"
+argv = ["cargo", "test", "--locked"]
+required = true
+kind = "test"
+
+[acceptance]
+required_files = ["src/main.rs"]
+forbidden_paths = [".git", ".github/workflows", "crates/phlow-experiment/evals/holdout"]
+max_new_dependencies = 0

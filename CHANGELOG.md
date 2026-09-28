@@ -7,6 +7,43 @@ All notable changes to phlow are documented here. Format follows
 
 ### Added
 
+- Staged supervised-self-improvement experiment scaffolding: new workspace
+  member `crates/phlow-experiment` (`phlow-experiment` 0.1.0, edition 2024,
+  `#![forbid(unsafe_code)]`, no new external dependencies — only `toml 0.8`,
+  `serde`, `serde_json`, all already in `Cargo.lock`). Types, manifests,
+  fixtures, skeletons, and docs only: control-plane types (`NodeState` as one
+  exhaustive enum, eight `WorkerRole`s with no production write for any role,
+  `CapabilitySet` with strict-subset delegation, `SchedulerNode` with all
+  plan-required fields, `SchedulerLimits`, and a pure-logic `Scheduler`
+  enforcing bounded admission, generation-checked at-most-once publication,
+  and terminal cancellation); promotion pipeline (`Lifecycle` transitions per
+  the plan's diagram, opaque `HumanApproval` constructible only from a
+  shape-validated operator record with no model-output constructor path,
+  `ImprovementProposal`, protected-surface policy, and a fail-closed
+  `PromotionGate`); evaluator skeleton (`EvalStage` order, fail-closed
+  `BudgetTracker`, `EvidenceBundle::is_complete()`); `EvaluationRecord`
+  matching the plan's JSON schema with `verified`/`eligible`/`human_approved`
+  starting false and movable only on complete evidence or a real approval
+  token; `toml::Value` + explicit-control-flow validators (no derive) for the
+  four shipped manifests (`manifests/suites.toml`, `languages.toml` with
+  tiers A–E, `budgets.toml` with the initial experimental limits,
+  `promotion.toml` with the 100%-safety / 10%-latency / 20%-cost / rollback-
+  rehearsal thresholds) and the task-manifest contract. Data: `evals/`
+  (public/holdout/safety/regressions split contracts; holdout and safety are
+  not candidate-writable, safety is immutable) with one example task manifest
+  each for public (`rust-cli-parse-001`) and safety (`prompt-injection-001`);
+  `fixtures/` (apps with one trivial inert fixture, attacks with one clearly
+  labeled INERT injection-attempt fixture, mcp, failures). Docs:
+  `docs/experiments/PHLOW_EXPERIMENTAL_SELF_IMPROVEMENT.md` (plan backlog
+  item 1). Hard constraints enforced by types: no autonomous
+  self-modification, no self-approval/self-promotion, promotion gates stay
+  human, read-only default, fail-closed on missing evidence/timeout/budget
+  exhaustion. 48 tests, exactly 24 validation / 24 adversarial. No behavior
+  was enabled: no runtime concurrency, no scheduler execution, no
+  self-editing, `PromptEvolver::evolve()` untouched and still disabled, no
+  changes to existing crates or CI. Not yet validated with cargo in this
+  environment; gates run on primo.
+
 - Experimental Mojo worker support, re-expressed as Rust-side contracts in
   Tiger Style Rust (two new workspace members, `#![forbid(unsafe_code)]`, no
   new external dependencies). Mojo cannot compile in this workspace, so both

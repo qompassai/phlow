@@ -1,0 +1,20 @@
+# Budget defaults for the staged experiment. Read-only contract: candidates must
+# never be able to write this file.
+#
+# These are INITIAL EXPERIMENTAL LIMITS, not universal defaults. Calibrate them
+# from measured runs, changing one budget at a time and recording the reason.
+
+schema_version = 1
+
+[defaults]
+workers_max = 4
+queue_capacity = 16
+children_per_task_max = 8
+depth_max = 3
+task_deadline_ms = 300000
+tool_calls_max = 64
+output_bytes_max = 1048576
+memory_bytes_max = 1073741824
+model_turns_max = 12
+changed_files_max = 8
+changed_bytes_max = 131072
