@@ -9,9 +9,9 @@
 #
 # ROSTER SCHEME (two levels — read this before extending):
 # - `gauntletRoster` declares EVERY task as pure data: { id, name, kind },
-#   split into `tasks01to75` (implemented: drivers for 01-75 all landed
-#   in this crate, waves 01-14) and `tasks76to115` (pending: designed in
-#   the two extension docs above, waves 15-22, drivers not yet landed).
+#   split into `tasks01to80` (implemented: drivers for 01-80 all landed
+#   in this crate, waves 01-15) and `tasks81to115` (pending: designed in
+#   the two extension docs above, waves 16-22, drivers not yet landed).
 #   Roster asserts validate ALL 115 entries.
 # - Apps (`apps.task-NN`), the `gauntlet` runner, and `checks.task-list`
 #   cover IMPLEMENTED tasks only. The flake never claims an app for a
@@ -22,9 +22,9 @@
 #   pending side to the implemented side (`rosterImplemented` grows,
 #   `rosterPending` shrinks). The asserts, app generation, runner, and
 #   checks all consume the two segments via `gauntletRoster` and
-#   `implementedTasks` — no other edits needed. Waves through 71-75
+#   `implementedTasks` — no other edits needed. Waves through 76-80
 #   landed every designed task, so the implemented side is complete
-#   through task-75; the pending side holds tasks 76-115 until their
+#   through task-80; the pending side holds tasks 81-115 until their
 #   drivers land.
 # - `tasks01to60` was once referenced but never defined (dangling binding
 #   in the 70-task flake); it is defined here so the implemented
@@ -497,11 +497,11 @@
         }
       ];
 
-      # Roster segment: tasks 76-100. Designed in
-      # ~/workspace/gauntlet-design-tasks-71-100.md (waves 15-19);
-      # drivers have not landed, so this segment is PENDING. Same
-      # { id, name, kind } contract as above.
-      tasks76to100 = [
+      # Roster segment: tasks 76-80. Designed in
+      # ~/workspace/gauntlet-design-tasks-71-100.md (wave 15);
+      # drivers landed in the wave 76-80 commit, so this segment is
+      # IMPLEMENTED. Same { id, name, kind } contract as above.
+      tasks76to80 = [
         {
           id = "task-76";
           name = "tokenizer boundary mismatch";
@@ -527,6 +527,13 @@
           name = "local model selection tradeoffs";
           kind = "nvim-lua";
         }
+      ];
+
+      # Roster segment: tasks 81-100. Designed in
+      # ~/workspace/gauntlet-design-tasks-71-100.md (waves 16-19);
+      # drivers have not landed, so this segment is PENDING. Same
+      # { id, name, kind } contract as above.
+      tasks81to100 = [
         {
           id = "task-81";
           name = "provider auth failure modes";
@@ -720,9 +727,10 @@
       tasks01to65 = tasks01to60 ++ tasks61to65;
       tasks01to70 = tasks01to65 ++ tasks66to70;
       tasks01to75 = tasks01to70 ++ tasks71to75;
-      tasks76to115 = tasks76to100 ++ tasks101to115;
-      rosterImplemented = tasks01to75;
-      rosterPending = tasks76to115;
+      tasks01to80 = tasks01to75 ++ tasks76to80;
+      tasks81to115 = tasks81to100 ++ tasks101to115;
+      rosterImplemented = tasks01to80;
+      rosterPending = tasks81to115;
 
       # Full declared roster: segments concatenated, nothing hardcoded.
       gauntletRoster = rosterImplemented ++ rosterPending;
