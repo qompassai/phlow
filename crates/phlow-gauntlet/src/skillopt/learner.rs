@@ -15,7 +15,10 @@
 
 use super::doc::{Edit, Provenance, SkillDoc};
 use super::gate::{GateMode, decide};
-use super::optimizer::{CatStats, Optimizer, OptimizerError, ReflectCtx, TrajSummary};
+use super::optimizer::{
+    CatStats, Optimizer, OptimizerError, ReflectCtx, TrajSummary, render_meta_canonical, sign_meta,
+    verify_meta,
+};
 use super::rng::XorShift;
 use super::target::{
     Family, MixedTarget, ScriptedTarget, SplitSpec, Splits, Target, TaskCase, initial_skill,
@@ -39,14 +42,32 @@ pub enum LtSchedule {
     /// No bound: every proposed edit is applied, no gate (task-101's
     /// "removing the bound entirely" arm).
     Unbounded,
+    /// The loop sets its own bound each step (task-113's
+    /// "autonomous" schedule): a bounded additive controller on the
+    /// trailing gate signal — after an accepted step the bound rises
+    /// by one (up to `cap`), after a rejected step it falls by one
+    /// (down to 1), starting at `cap`. The cap is the advertised
+    /// ceiling; [`LtSchedule::bound`] returns it so the schedule
+    /// still answers the pure query. This is task-113's
+    /// operationalization of "autonomous": the design names the
+    /// schedule but not the mechanism.
+    Autonomous {
+        /// Ceiling (and starting value) for the adaptive bound.
+        cap: usize,
+    },
 }
 
 impl LtSchedule {
     /// Bound for `step` of `total_steps`. `usize::MAX` = unbounded.
+    /// For [`LtSchedule::Autonomous`] this returns the cap (the
+    /// advertised ceiling); the adaptive per-step value is computed by
+    /// the loop's controller, which sees the trailing gate signal that
+    /// this pure query cannot.
     pub fn bound(&self, step: usize, total_steps: usize) -> usize {
         match *self {
             Self::Constant(n) => n,
             Self::Unbounded => usize::MAX,
+            Self::Autonomous { cap } => cap.max(1),
             Self::Cosine { from, to } => {
                 if total_steps <= 1 {
                     return from.max(1);
@@ -56,6 +77,25 @@ impl LtSchedule {
                 let value = to as f64 + (from as f64 - to as f64) * cosine;
                 (value.round() as usize).max(1)
             }
+        }
+    }
+
+    /// One step of the autonomous controller (task-113): bounded
+    /// additive increase/decrease on the trailing gate signal.
+    ///
+    /// - `None` (first step): start at the cap.
+    /// - `Some(true)` (previous step accepted): raise by one, capped.
+    /// - `Some(false)` (previous step rejected): lower by one, floored
+    ///   at 1.
+    ///
+    /// Pure and total, so the task-113 audit can replay it from the
+    /// step logs and the unit test can pin the boundary behavior.
+    pub fn autonomous_next(cap: usize, current: usize, prev_accepted: Option<bool>) -> usize {
+        let cap = cap.max(1);
+        match prev_accepted {
+            None => cap,
+            Some(true) => (current + 1).min(cap),
+            Some(false) => current.saturating_sub(1).max(1),
         }
     }
 }
@@ -163,6 +203,31 @@ pub struct LearnerConfig {
     /// failure reported as a success). 0.0 = no poisoning. The optimizer
     /// is NOT told; it must fall for the poisoned evidence.
     pub poison_rate: f64,
+    /// Seal D_test during training (task-111). When true, the seed
+    /// setup does NOT score D_test (the current scaffold otherwise
+    /// reads it to populate the initial baseline — a training-time
+    /// read the paper's protocol forbids); both D_test evaluations
+    /// (initial skill and final skill) happen post-hoc in
+    /// [`SeedState::seed_log`], after the last step. Every
+    /// training-time D_test read is counted in
+    /// [`SeedLog::d_test_reads`]: 0 means the seal held.
+    pub sealed_d_test: bool,
+    /// Three-split confirmation (task-111). When true, D_sel is split
+    /// into two independent halves: D_selA (accept) and D_selB
+    /// (confirm). A candidate is accepted only when strictly better on
+    /// BOTH (with [`GateMode::Strict`]). The per-step B scores are
+    /// recorded in [`StepRecord::confirm_before`]/`confirm_after`.
+    pub confirm_split: bool,
+    /// Poisoned slow update (task-114, adversarial). When true, the
+    /// epoch-end slow update writes wrong `ORDER[p]:` guidance lines
+    /// (rotated tool orders, the adversary's best shot at harmful
+    /// ungated guidance) instead of KEEP lines.
+    pub slow_update_poison: bool,
+    /// Gated slow update (task-114). When true, the epoch-end slow
+    /// update is a prototype gate: the candidate protected content is
+    /// scored on D_sel against the current protected content, and
+    /// harmful writes (candidate scores lower) are blocked.
+    pub slow_update_gate: bool,
 }
 
 /// One recorded step.
@@ -198,6 +263,16 @@ pub struct StepRecord {
     pub reproposal_within3: usize,
     /// Optimizer error text, if the step failed to propose.
     pub error: Option<String>,
+    /// Largest per-edit token cost among this step's candidate edits
+    /// (0 when the candidate was empty). Task-113's accounting
+    /// invariant asserts this never exceeds
+    /// [`super::doc::PER_EDIT_TOKENS_MAX`] on any step.
+    pub max_edit_tokens: usize,
+    /// D_selB score before the candidate (three-split confirmation,
+    /// task-111). `None` unless `confirm_split` is on.
+    pub confirm_before: Option<f64>,
+    /// D_selB score after the candidate. `None` unless `confirm_split`.
+    pub confirm_after: Option<f64>,
     /// Which component decided the step's fate (task-106 edit ledger):
     /// `accepted:gate-strict` / `accepted:gate-off` when the gate applied
     /// the candidate, `rejected:gate-strict` when the gate vetoed a
@@ -228,11 +303,25 @@ pub struct SeedLog {
     /// `final_body` this is the exact frozen artifact bytes for
     /// cross-harness transfer (task-108).
     pub final_protected: String,
+    /// Training-time D_test reads during this seed (task-111's access
+    /// log). The current scaffold reads D_test once at seed setup to
+    /// populate the initial baseline; with `sealed_d_test` that read is
+    /// deferred to post-hoc evaluation and this is 0. Any future
+    /// training-time read must increment this — the seal test fails
+    /// closed if it is nonzero on a sealed arm.
+    pub d_test_reads: u64,
     /// Canonical lines accepted during epoch 1 (retention baseline).
     pub epoch1_canonical: Vec<String>,
     /// Every accepted edit line across the run, in acceptance order
     /// (task-106 single-edit-gain analysis).
     pub accepted_edits: Vec<String>,
+    /// Final meta category stats (task-114): the real helped/hurt
+    /// record the tamper-evident signature covers.
+    pub meta_cats: HashMap<String, CatStats>,
+    /// Slow-update gate allows (task-114).
+    pub slow_gate_allows: u64,
+    /// Slow-update gate blocks (task-114).
+    pub slow_gate_blocks: u64,
 }
 
 /// Learner failures: configuration or safety, never silent.
@@ -248,6 +337,12 @@ pub enum LearnerError {
     SafetyBoundary,
     /// The optimizer backend failed.
     Optimizer(OptimizerError),
+    /// Tamper-evident meta record failed verification (task-114).
+    /// Fail closed: the run aborts, never continues silently.
+    MetaTampered {
+        /// What failed to verify.
+        detail: String,
+    },
 }
 
 impl fmt::Display for LearnerError {
@@ -258,6 +353,9 @@ impl fmt::Display for LearnerError {
                 write!(f, "learner refused: skill document is not experiment-state")
             }
             Self::Optimizer(e) => write!(f, "learner: optimizer failed: {e}"),
+            Self::MetaTampered { detail } => {
+                write!(f, "learner: meta record tampered, aborting: {detail}")
+            }
         }
     }
 }
@@ -361,7 +459,7 @@ impl Learner {
             for batch in &batches {
                 st.step(optimizer, batch, epoch)?;
             }
-            st.epoch_end(epoch, &skill_start);
+            st.epoch_end(epoch, &skill_start)?;
         }
         Ok(st.seed_log(seed))
     }
@@ -374,15 +472,27 @@ struct SeedState<'a> {
     /// The seed this state runs (task-110: binds attribution to a seed).
     seed: u64,
     splits: Splits,
+    /// D_selB (confirm) cases when `confirm_split` is on; empty
+    /// otherwise. `splits.d_sel` is then D_selA (accept).
+    d_sel_b: Vec<TaskCase>,
     total_steps: usize,
     unbounded: bool,
+    /// Current adaptive bound for [`LtSchedule::Autonomous`]
+    /// (task-113). Initialized to the cap; the controller in
+    /// [`SeedState::step`] moves it on the trailing gate signal.
+    auto_l_t: usize,
     skill: SkillDoc,
     rng: XorShift,
     buffer: RejectedBuffer,
     /// Mode-independent (direction, step) log of rejected proposals —
     /// feeds task-103's re-proposal metric for every buffer mode.
     rejected_log: Vec<(String, usize)>,
+    /// Per-category outcome stats (task-114: tamper-evident).
     meta_cats: HashMap<String, CatStats>,
+    /// Slow-update gate decisions (task-114): allowed writes.
+    slow_gate_allows: u64,
+    /// Slow-update gate decisions (task-114): blocked writes.
+    slow_gate_blocks: u64,
     epoch_accepted: Vec<String>,
     /// Every accepted edit line across the whole run (unlike
     /// `epoch_accepted`, never cleared) — feeds task-106's
@@ -394,6 +504,11 @@ struct SeedState<'a> {
     epoch1_canonical: Vec<String>,
     d_sel_initial: f64,
     d_test_initial: f64,
+    /// Training-time D_test reads (task-111's seal access log).
+    d_test_reads: u64,
+    /// The initial skill, retained iff `sealed_d_test` so the initial
+    /// D_test baseline can be scored post-hoc (after training).
+    initial_skill: Option<SkillDoc>,
 }
 
 /// A direction counts as recently rejected iff it was logged at or
@@ -404,7 +519,7 @@ fn rejected_recently(log: &[(String, usize)], direction: &str, lo: usize) -> boo
 
 impl<'a> SeedState<'a> {
     fn new(cfg: &'a LearnerConfig, seed: u64, skill: SkillDoc) -> Result<Self, LearnerError> {
-        let splits = if cfg.mixed {
+        let mut splits = if cfg.mixed {
             make_mixed_splits(seed, cfg.d_tr_frac, &cfg.spec)
         } else {
             make_splits(cfg.families[0], seed, cfg.d_tr_frac, &cfg.spec)
@@ -414,20 +529,52 @@ impl<'a> SeedState<'a> {
                 detail: "empty D_tr or D_sel".to_string(),
             });
         }
+        // Three-split confirmation (task-111): D_selA accepts, D_selB
+        // confirms. The halves are independent by construction (the
+        // split is seeded); each half keeps the profile mix in
+        // expectation. A degenerate half (fewer than 2 cases) cannot
+        // confirm anything — fail the configuration instead.
+        let d_sel_b = if cfg.confirm_split {
+            if splits.d_sel.len() < 4 {
+                return Err(LearnerError::Config {
+                    detail: "confirm_split needs D_sel with at least 4 cases".to_string(),
+                });
+            }
+            let mid = splits.d_sel.len() / 2;
+            splits.d_sel.split_off(mid)
+        } else {
+            Vec::new()
+        };
         let target = MixedTarget;
         let d_sel_initial = target.score(&skill, &splits.d_sel);
-        let d_test_initial = target.score(&skill, &splits.d_test);
+        // Sealed D_test (task-111): no training-time read. The initial
+        // baseline is scored post-hoc in seed_log, after the last step;
+        // the retained clone is the only D_test-adjacent state the
+        // training loop carries.
+        let (d_test_initial, d_test_reads, initial_skill) = if cfg.sealed_d_test {
+            (f64::NAN, 0, Some(skill.clone()))
+        } else {
+            (target.score(&skill, &splits.d_test), 1, None)
+        };
+        let auto_l_t = match cfg.schedule {
+            LtSchedule::Autonomous { cap } => cap.max(1),
+            _ => 0,
+        };
         Ok(Self {
             seed,
             total_steps: cfg.epochs * splits.d_tr.len().div_ceil(cfg.batch_size).max(1),
             unbounded: matches!(cfg.schedule, LtSchedule::Unbounded),
+            auto_l_t,
             rng: XorShift::new(seed ^ 0x10EA_0001),
             cfg,
             splits,
+            d_sel_b,
             skill,
             buffer: RejectedBuffer::default(),
             rejected_log: Vec::new(),
             meta_cats: HashMap::new(),
+            slow_gate_allows: 0,
+            slow_gate_blocks: 0,
             epoch_accepted: Vec::new(),
             all_accepted: Vec::new(),
             epoch_obs: Vec::new(),
@@ -436,6 +583,8 @@ impl<'a> SeedState<'a> {
             epoch1_canonical: Vec::new(),
             d_sel_initial,
             d_test_initial,
+            d_test_reads,
+            initial_skill,
         })
     }
 
@@ -446,7 +595,21 @@ impl<'a> SeedState<'a> {
         batch: &[TaskCase],
         epoch: usize,
     ) -> Result<(), LearnerError> {
-        let l_t = self.cfg.schedule.bound(self.step_idx, self.total_steps);
+        // Task-113's autonomous schedule: the loop sets its own bound
+        // from the trailing gate signal (bounded additive controller).
+        // All other schedules answer the pure `bound()` query.
+        let l_t = match self.cfg.schedule {
+            LtSchedule::Autonomous { cap } => {
+                let next = LtSchedule::autonomous_next(
+                    cap,
+                    self.auto_l_t,
+                    self.steps.last().map(|r| r.accepted),
+                );
+                self.auto_l_t = next;
+                next
+            }
+            _ => self.cfg.schedule.bound(self.step_idx, self.total_steps),
+        };
         let (ctx, d_sel_before) = self.reflect(batch, l_t, epoch);
         let mut record = StepRecord {
             step: self.step_idx,
@@ -463,6 +626,9 @@ impl<'a> SeedState<'a> {
             buffer_suppressed: 0,
             reproposal_within3: 0,
             error: None,
+            max_edit_tokens: 0,
+            confirm_before: None,
+            confirm_after: None,
             veto: String::new(),
         };
         match optimizer.propose(&self.skill, &ctx, &mut self.rng) {
@@ -629,6 +795,35 @@ impl<'a> SeedState<'a> {
             proposals.len().min(record.l_t)
         };
         let candidate: Vec<Edit> = proposals.into_iter().take(take).collect();
+        // Task-113 accounting invariant, asserted on EVERY step: the
+        // truncation above is the only path from proposals to applied
+        // edits, so applied_ops ≤ L_t holds by construction; the assert
+        // makes it a checked invariant rather than a convention.
+        // (`record.l_t` is `usize::MAX` when unbounded.)
+        assert!(
+            candidate.len() <= record.l_t,
+            "L_t truncation violated: {} > {}",
+            candidate.len(),
+            record.l_t
+        );
+        // Per-edit token accounting (task-113): the largest token cost
+        // among this step's candidate edits, for the audit that every
+        // step satisfies tokens_per_edit ≤ PER_EDIT_TOKENS_MAX.
+        // `SkillDoc::apply` additionally rejects oversized payloads
+        // with a typed error; this records what the step considered.
+        record.max_edit_tokens = candidate.iter().map(Edit::tokens).max().unwrap_or(0);
+        // Three-split confirmation (task-111): score the candidate on
+        // D_selB alongside D_selA. Acceptance needs strict improvement
+        // on both; the B scores are recorded for the confirmation
+        // analysis either way.
+        let confirm = self.cfg.confirm_split;
+        let mut probe_b = self.skill.clone();
+        let mut running_b = if confirm {
+            target.score(&self.skill, &self.d_sel_b)
+        } else {
+            0.0
+        };
+        record.confirm_before = confirm.then_some(running_b);
         // Incremental per-edit D_sel deltas (evidence for meta and for
         // post-hoc harm measurement).
         let mut probe = self.skill.clone();
@@ -637,19 +832,35 @@ impl<'a> SeedState<'a> {
             let before = running;
             if probe.apply(edit).is_ok() {
                 running = target.score(&probe, &self.splits.d_sel);
+                if confirm && probe_b.apply(edit).is_ok() {
+                    running_b = target.score(&probe_b, &self.d_sel_b);
+                }
             }
             record.per_edit_delta.push(running - before);
         }
         // The bound varies only the truncation: acceptance still goes
         // through the configured gate (task-101 isolates the bound;
-        // task-102 isolates the gate).
-        let accepted = if candidate.is_empty() {
+        // task-102 isolates the gate). With three-split confirmation
+        // (task-111) the gate must also clear D_selB: strictly better
+        // on both, no partial credit.
+        let accepted_a = if candidate.is_empty() {
             false
         } else if self.cfg.gate == GateMode::Off {
             true
         } else {
             decide(self.cfg.gate, record.d_sel_before, running)
         };
+        let accepted = if confirm {
+            accepted_a
+                && decide(
+                    self.cfg.gate,
+                    record.confirm_before.unwrap_or(0.0),
+                    running_b,
+                )
+        } else {
+            accepted_a
+        };
+        record.confirm_after = confirm.then_some(running_b);
         // The candidate applies cleanly iff the probe did.
         let mut cand_skill = self.skill.clone();
         let applies = cand_skill.apply_all(&candidate).is_ok();
@@ -697,38 +908,96 @@ impl<'a> SeedState<'a> {
 
     /// Epoch-end: snapshot epoch-1 canonical rules, then slow/meta
     /// updates (paper §II.6).
-    fn epoch_end(&mut self, epoch: usize, skill_start: &SkillDoc) {
+    /// Verify the persisted meta record (task-114). The skill doc's
+    /// meta section carries the signed record from the previous
+    /// epoch-end; a checksum mismatch means the persisted guidance was
+    /// modified out-of-band. Fail closed: return
+    /// [`LearnerError::MetaTampered`], never continue silently. A doc
+    /// with no signed record yet (bootstrap) has nothing to verify.
+    fn verify_meta_record(&self) -> Result<(), LearnerError> {
+        let record = self.skill.meta();
+        if !record.lines().any(|l| l.starts_with("SIG:")) {
+            return Ok(());
+        }
+        verify_meta(record)
+            .map(|_| ())
+            .map_err(|e| LearnerError::MetaTampered {
+                detail: format!("epoch-start meta verification failed: {e}"),
+            })
+    }
+
+    fn epoch_end(&mut self, epoch: usize, skill_start: &SkillDoc) -> Result<(), LearnerError> {
         if epoch == 0 {
             self.epoch1_canonical = canonical_lines(&self.skill, &self.cfg.families);
         }
+        // Tamper-evident meta (task-114): verify the record the
+        // previous epoch-end persisted before doing anything else.
+        self.verify_meta_record()?;
         if self.cfg.slow {
-            slow_update(&mut self.skill, skill_start, &self.splits.d_sel, epoch);
+            let candidate = slow_update_lines(
+                &self.skill,
+                skill_start,
+                &self.splits.d_sel,
+                epoch,
+                self.cfg.slow_update_poison,
+            );
+            if self.cfg.slow_update_gate {
+                // Prototype gate: score the candidate protected content
+                // on D_sel against the current content; block harmful
+                // writes.
+                let target = MixedTarget;
+                let before = target.score(&self.skill, &self.splits.d_sel);
+                let mut probe = self.skill.clone();
+                probe.set_protected(&candidate.join("\n"));
+                let after = target.score(&probe, &self.splits.d_sel);
+                if after < before {
+                    self.slow_gate_blocks += 1;
+                } else {
+                    self.slow_gate_allows += 1;
+                    self.skill.set_protected(&candidate.join("\n"));
+                }
+            } else {
+                self.skill.set_protected(&candidate.join("\n"));
+            }
         }
         if self.cfg.meta {
             for (cat, delta) in self.epoch_obs.drain(..) {
                 self.meta_cats.entry(cat).or_default().observe(delta);
             }
-            let meta = render_meta(&self.meta_cats);
+            let meta = sign_meta(&self.meta_cats);
             self.skill.set_meta(&meta);
         } else {
             self.epoch_obs.clear();
         }
+        Ok(())
     }
 
     /// Assemble the seed evidence.
     fn seed_log(self, seed: u64) -> SeedLog {
         let target = MixedTarget;
+        // Sealed D_test (task-111): the initial baseline is scored here,
+        // after the last training step — never during training. The
+        // training-time read count stays 0; these post-hoc evaluations
+        // are the seal's one legitimate exception.
+        let d_test_initial = match &self.initial_skill {
+            Some(init) => target.score(init, &self.splits.d_test),
+            None => self.d_test_initial,
+        };
         SeedLog {
             seed: seed as usize,
             steps: self.steps,
             d_test: target.score(&self.skill, &self.splits.d_test),
-            d_test_initial: self.d_test_initial,
+            d_test_initial,
             d_sel_final: target.score(&self.skill, &self.splits.d_sel),
             d_sel_initial: self.d_sel_initial,
             final_body: self.skill.body().to_string(),
             final_protected: self.skill.protected().to_string(),
             epoch1_canonical: self.epoch1_canonical,
             accepted_edits: self.all_accepted,
+            d_test_reads: self.d_test_reads,
+            meta_cats: self.meta_cats,
+            slow_gate_allows: self.slow_gate_allows,
+            slow_gate_blocks: self.slow_gate_blocks,
         }
     }
 }
@@ -765,6 +1034,11 @@ fn validate(cfg: &LearnerConfig) -> Result<(), LearnerError> {
             detail: "L_t constant 0 learns nothing".to_string(),
         });
     }
+    if let LtSchedule::Autonomous { cap: 0 } = cfg.schedule {
+        return Err(LearnerError::Config {
+            detail: "autonomous cap 0 learns nothing".to_string(),
+        });
+    }
     Ok(())
 }
 
@@ -791,20 +1065,10 @@ fn canonical_lines(skill: &SkillDoc, families: &[Family]) -> Vec<String> {
 }
 
 /// Render meta category stats as optimizer-readable text.
+/// Render meta category stats as optimizer-readable text (unsigned;
+/// the persisted doc record uses [`sign_meta`]).
 fn render_meta(cats: &HashMap<String, CatStats>) -> String {
-    if cats.is_empty() {
-        return String::new();
-    }
-    let mut kinds: Vec<&String> = cats.keys().collect();
-    kinds.sort();
-    let parts: Vec<String> = kinds
-        .iter()
-        .map(|k| {
-            let s = &cats[*k];
-            format!("{} n={} mean={:+.3} var={:.3}", k, s.n, s.mean, s.var)
-        })
-        .collect();
-    format!("META: {}", parts.join(" | "))
+    render_meta_canonical(cats)
 }
 
 /// Epoch-end slow update (paper §II.6): replay D_sel under the
@@ -813,7 +1077,20 @@ fn render_meta(cats: &HashMap<String, CatStats>) -> String {
 /// and write longitudinal guidance to the protected section:
 /// KEEP lines for canonical rules behind newly-fixed cases, GUIDE
 /// lines naming persistently-broken twist kinds.
-fn slow_update(skill: &mut SkillDoc, prev: &SkillDoc, d_sel: &[TaskCase], epoch: usize) {
+/// Epoch-end slow update (paper §II.6), refactored for task-114 to
+/// return the candidate protected lines instead of writing them: the
+/// caller applies them directly, or scores them on D_sel first when
+/// the prototype gate (`slow_update_gate`) is on. When `poison` is
+/// true, the update writes the adversary's best shot at harmful
+/// ungated guidance — wrong `ORDER[p]:` lines (rotated tool orders)
+/// for every profile — instead of KEEP lines.
+fn slow_update_lines(
+    skill: &SkillDoc,
+    prev: &SkillDoc,
+    d_sel: &[TaskCase],
+    epoch: usize,
+    poison: bool,
+) -> Vec<String> {
     let mut newly_fixed = 0usize;
     let mut newly_regressed = 0usize;
     let mut cons_correct = 0usize;
@@ -838,25 +1115,39 @@ fn slow_update(skill: &mut SkillDoc, prev: &SkillDoc, d_sel: &[TaskCase], epoch:
     // new since the epoch start (they are behind the newly-fixed cases
     // by construction: nothing else changed the skill).
     let mut lines: Vec<String> = skill.protected().lines().map(str::to_string).collect();
-    for line in skill.body().lines() {
-        if super::target::is_canonical_line(Family::FOrder, line)
-            || super::target::is_canonical_line(Family::FBind, line)
-            || super::target::is_canonical_line(Family::FLedger, line)
-        {
-            let keep = format!("KEEP: {line}");
-            if !prev.has_line(line) && !lines.iter().any(|l| l == &keep) {
-                lines.push(keep);
+    if poison {
+        // Adversarial: the poisoned epoch-end batch. Wrong ORDER[p]
+        // guidance for every profile (rotated tool orders, the same
+        // wrong orders the optimizer's own distractors use). This is
+        // the adversary's best shot at harmful ungated guidance: a
+        // protected ORDER[p] line is the first match for any case
+        // whose profile the body has not learned yet.
+        for (p, req) in super::target::ORDER_REQUIRED.iter().enumerate() {
+            let mut wrong: Vec<&str> = req.to_vec();
+            wrong.rotate_left(1);
+            lines.push(format!("ORDER[{p}]: {}", wrong.join(" ")));
+        }
+    } else {
+        for line in skill.body().lines() {
+            if super::target::is_canonical_line(Family::FOrder, line)
+                || super::target::is_canonical_line(Family::FBind, line)
+                || super::target::is_canonical_line(Family::FLedger, line)
+            {
+                let keep = format!("KEEP: {line}");
+                if !prev.has_line(line) && !lines.iter().any(|l| l == &keep) {
+                    lines.push(keep);
+                }
             }
         }
-    }
-    if twist_wrong
-        && !lines
-            .iter()
-            .any(|l| l.starts_with("GUIDE:") && l.contains("twist"))
-    {
-        lines.push(
-            "GUIDE: twist cases (empty-frontier, revisit) stay broken; propose dedicated LEDGER twist rules".to_string(),
-        );
+        if twist_wrong
+            && !lines
+                .iter()
+                .any(|l| l.starts_with("GUIDE:") && l.contains("twist"))
+        {
+            lines.push(
+                "GUIDE: twist cases (empty-frontier, revisit) stay broken; propose dedicated LEDGER twist rules".to_string(),
+            );
+        }
     }
     lines.push(format!(
         "CYCLE {epoch}: newly_fixed={newly_fixed} newly_regressed={newly_regressed} consistent_ok={cons_correct} consistent_bad={cons_wrong}"
@@ -867,7 +1158,7 @@ fn slow_update(skill: &mut SkillDoc, prev: &SkillDoc, d_sel: &[TaskCase], epoch:
         let drop = lines.len() - PROTECTED_LINES_MAX;
         lines.drain(0..drop);
     }
-    skill.set_protected(&lines.join("\n"));
+    lines
 }
 
 #[cfg(test)]
@@ -902,6 +1193,10 @@ mod tests {
             seeds: vec![101, 102, 103],
             d_tr_frac: 1.0,
             poison_rate: 0.0,
+            sealed_d_test: false,
+            confirm_split: false,
+            slow_update_poison: false,
+            slow_update_gate: false,
         }
     }
 
@@ -992,6 +1287,65 @@ mod tests {
             (Verdict::Indeterminate, "indeterminate"),
         ] {
             assert_eq!(v.to_string(), s);
+        }
+    }
+
+    /// Task-114: the learner fails closed when the persisted meta
+    /// record is tampered with. Uses private access to flip the doc's
+    /// meta under a valid signature, then verifies the epoch-end check
+    /// aborts with MetaTampered instead of continuing silently.
+    #[test]
+    fn tampered_meta_fails_closed() {
+        use super::{sign_meta, verify_meta};
+        use crate::skillopt::optimizer::CatStats;
+        use std::collections::HashMap;
+        let cfg = arm(Family::FOrder);
+        let skill = SkillDoc::experiment("body");
+        let mut st = super::SeedState::new(&cfg, 1, skill).unwrap();
+        // Write a valid signed record.
+        let mut cats = HashMap::new();
+        cats.insert(
+            "append".to_string(),
+            CatStats {
+                n: 5,
+                mean: 0.05,
+                var: 0.001,
+            },
+        );
+        let record = sign_meta(&cats);
+        st.skill.set_meta(&record);
+        // Sanity: untampered verifies.
+        assert!(st.verify_meta_record().is_ok());
+        // Tamper: flip the mean, keep the signature.
+        let sig = record.lines().last().unwrap();
+        let tampered = format!("META: append n=5 mean=-0.050 var=0.001\n{sig}");
+        st.skill.set_meta(&tampered);
+        let err = st.verify_meta_record().unwrap_err();
+        assert!(
+            matches!(err, LearnerError::MetaTampered { .. }),
+            "expected MetaTampered, got {err}"
+        );
+        // And the raw verify API agrees.
+        assert!(verify_meta(&tampered).is_err());
+    }
+
+    /// Task-114: poisoned slow-update lines contain wrong ORDER[p]
+    /// guidance for every profile (the adversary's best shot).
+    #[test]
+    fn poisoned_slow_update_writes_wrong_orders() {
+        use super::slow_update_lines;
+        let skill = SkillDoc::experiment("body");
+        let prev = SkillDoc::experiment("body");
+        let lines = slow_update_lines(&skill, &prev, &[], 0, true);
+        let orders: Vec<&String> = lines.iter().filter(|l| l.starts_with("ORDER[")).collect();
+        assert_eq!(orders.len(), 10);
+        // None may match the canonical required orders.
+        for (p, line) in orders.iter().enumerate() {
+            let required = format!(
+                "ORDER[{p}]: {}",
+                crate::skillopt::target::ORDER_REQUIRED[p].join(" ")
+            );
+            assert_ne!(*line, &required, "poison wrote a correct line for {p}");
         }
     }
 }

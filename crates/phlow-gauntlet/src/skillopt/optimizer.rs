@@ -119,6 +119,115 @@ impl CatStats {
     }
 }
 
+/// Tamper-evident meta record (task-114): the meta category stats are
+/// a persisted artifact (the skill doc's meta section). [`sign_meta`]
+/// appends a SHA-256 checksum; [`verify_meta`] recomputes it and fails
+/// closed on mismatch — it never returns unverified stats. A flipped
+/// helped/hurt record is caught here, before it can skew proposals.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MetaError {
+    /// Checksum mismatch: the record was modified after signing.
+    /// Fail closed; never continue with the tampered stats.
+    Tampered,
+    /// The record is malformed (not a signed meta record at all).
+    Corrupt,
+}
+
+impl fmt::Display for MetaError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MetaError::Tampered => write!(f, "meta record checksum mismatch: tampered"),
+            MetaError::Corrupt => write!(f, "meta record malformed: corrupt"),
+        }
+    }
+}
+
+impl std::error::Error for MetaError {}
+
+/// Canonical meta text: the exact bytes the checksum covers. Sorted
+/// keys, fixed float precision — byte-stable across runs.
+pub fn render_meta_canonical(cats: &HashMap<String, CatStats>) -> String {
+    if cats.is_empty() {
+        return String::new();
+    }
+    let mut kinds: Vec<&String> = cats.keys().collect();
+    kinds.sort();
+    let parts: Vec<String> = kinds
+        .iter()
+        .map(|k| {
+            let s = &cats[*k];
+            format!("{} n={} mean={:+.3} var={:.3}", k, s.n, s.mean, s.var)
+        })
+        .collect();
+    format!("META: {}", parts.join(" | "))
+}
+
+/// Sign the meta stats: canonical text plus a SHA-256 checksum line.
+/// This is what the learner persists to the skill doc's meta section.
+pub fn sign_meta(cats: &HashMap<String, CatStats>) -> String {
+    use sha2::{Digest, Sha256};
+    let body = render_meta_canonical(cats);
+    let mut hasher = Sha256::new();
+    hasher.update(body.as_bytes());
+    let sig = format!("{:x}", hasher.finalize());
+    format!("{body}\nSIG:{sig}")
+}
+
+/// Verify a signed meta record and parse it back. Fails closed:
+/// [`MetaError::Tampered`] on checksum mismatch,
+/// [`MetaError::Corrupt`] on malformed input. Never returns stats
+/// from an unverified record.
+pub fn verify_meta(record: &str) -> Result<HashMap<String, CatStats>, MetaError> {
+    use sha2::{Digest, Sha256};
+    let mut lines: Vec<&str> = record.lines().collect();
+    let sig_line = lines.pop().ok_or(MetaError::Corrupt)?;
+    let sig = sig_line.strip_prefix("SIG:").ok_or(MetaError::Corrupt)?;
+    if sig.len() != 64 || !sig.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(MetaError::Corrupt);
+    }
+    let body = lines.join("\n");
+    let mut hasher = Sha256::new();
+    hasher.update(body.as_bytes());
+    let expect = format!("{:x}", hasher.finalize());
+    if sig != expect {
+        return Err(MetaError::Tampered);
+    }
+    // Checksum valid: parse the canonical body.
+    let mut cats = HashMap::new();
+    if body.is_empty() {
+        return Ok(cats);
+    }
+    let inner = body.strip_prefix("META: ").ok_or(MetaError::Corrupt)?;
+    if inner.is_empty() {
+        return Ok(cats);
+    }
+    for part in inner.split(" | ") {
+        let mut words = part.split_whitespace();
+        let key = words.next().ok_or(MetaError::Corrupt)?.to_string();
+        let mut n: Option<u64> = None;
+        let mut mean: Option<f64> = None;
+        let mut var: Option<f64> = None;
+        for w in words {
+            let (k, v) = w.split_once('=').ok_or(MetaError::Corrupt)?;
+            match k {
+                "n" => n = Some(v.parse().map_err(|_| MetaError::Corrupt)?),
+                "mean" => mean = Some(v.parse().map_err(|_| MetaError::Corrupt)?),
+                "var" => var = Some(v.parse().map_err(|_| MetaError::Corrupt)?),
+                _ => return Err(MetaError::Corrupt),
+            }
+        }
+        cats.insert(
+            key,
+            CatStats {
+                n: n.ok_or(MetaError::Corrupt)?,
+                mean: mean.ok_or(MetaError::Corrupt)?,
+                var: var.ok_or(MetaError::Corrupt)?,
+            },
+        );
+    }
+    Ok(cats)
+}
+
 /// Optimizer failures: the harness's fault or the model's, never the
 /// task's. Unreachable model → typed error; tests skip, never fake.
 #[derive(Debug, Clone)]
@@ -1034,13 +1143,68 @@ fn direction_key(payload: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        ModelOptimizer, Optimizer, OptimizerError, PER_EDIT_CHARS_MAX, PROPOSALS_MAX, ReflectCtx,
-        ScriptedOptimizer,
+        CatStats, MetaError, ModelOptimizer, Optimizer, OptimizerError, PER_EDIT_CHARS_MAX,
+        PROPOSALS_MAX, ReflectCtx, ScriptedOptimizer, sign_meta, verify_meta,
     };
     use crate::skillopt::doc::SkillDoc;
     use crate::skillopt::rng::XorShift;
     use crate::skillopt::target::{Family, initial_skill};
     use std::collections::HashMap;
+
+    /// Tamper-evident meta (task-114): sign → verify round-trips.
+    #[test]
+    fn meta_sign_verify_roundtrip() {
+        let mut cats = HashMap::new();
+        cats.insert(
+            "append".to_string(),
+            CatStats {
+                n: 20,
+                mean: 0.08,
+                var: 0.004,
+            },
+        );
+        let record = sign_meta(&cats);
+        let parsed = verify_meta(&record).unwrap();
+        assert_eq!(parsed.len(), 1);
+        let s = &parsed["append"];
+        assert_eq!(s.n, 20);
+        assert!((s.mean - 0.08).abs() < 1e-9);
+    }
+
+    /// Tamper-evident meta (task-114): a flipped helped/hurt record
+    /// under the original signature fails closed with Tampered — never
+    /// returns the tampered stats.
+    #[test]
+    fn meta_flip_fails_closed() {
+        let mut cats = HashMap::new();
+        cats.insert(
+            "append".to_string(),
+            CatStats {
+                n: 20,
+                mean: 0.08,
+                var: 0.004,
+            },
+        );
+        let record = sign_meta(&cats);
+        let sig = record.lines().last().unwrap().to_string();
+        // Flip helped/hurt, keep the original signature.
+        let tampered = format!("META: append n=20 mean=-0.080 var=0.004\n{sig}");
+        assert!(matches!(verify_meta(&tampered), Err(MetaError::Tampered)));
+    }
+
+    /// Tamper-evident meta (task-114): malformed records are Corrupt,
+    /// not silently accepted.
+    #[test]
+    fn meta_corrupt_rejected() {
+        assert!(matches!(
+            verify_meta("not a meta record"),
+            Err(MetaError::Corrupt)
+        ));
+        assert!(matches!(
+            verify_meta("META: append n=20 mean=+0.080 var=0.004\nSIG:xyz"),
+            Err(MetaError::Corrupt)
+        ));
+    }
 
     fn ctx_for(skill: &SkillDoc) -> ReflectCtx {
         ReflectCtx {

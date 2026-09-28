@@ -26,7 +26,16 @@ pub const SLOW_UPDATE_START: &str = "<!-- SLOW_UPDATE_START -->";
 pub const SLOW_UPDATE_END: &str = "<!-- SLOW_UPDATE_END -->";
 /// Per-edit payload bound in chars (task-113's territory; enforced here).
 /// An edit larger than this is rejected before it touches the document.
+/// This is the hard safety floor; the paper's unit is tokens
+/// ([`PER_EDIT_TOKENS_MAX`]), enforced alongside it.
 pub const PER_EDIT_CHARS_MAX: usize = 400;
+/// Per-edit payload bound in tokens (paper §II.4 counts the textual
+/// learning rate in tokens; task-113). The harness approximates one
+/// token as four chars ([`Edit::tokens`]), so this bound is the
+/// token-unit restatement of the 400-char floor: 400 chars ≈ 100
+/// tokens. Both bounds are enforced; the token bound is the one the
+/// per-edit accounting invariant is stated in.
+pub const PER_EDIT_TOKENS_MAX: usize = 100;
 
 /// Where a skill document comes from. The learner only optimizes
 /// [`Provenance::Experiment`] documents.
@@ -97,6 +106,16 @@ impl Edit {
         }
     }
 
+    /// Payload size in tokens, for the per-edit accounting invariant
+    /// (task-113): every step's edits must satisfy
+    /// `tokens ≤ PER_EDIT_TOKENS_MAX`. The estimate is deliberately
+    /// crude — one token per four chars, rounding up — and documented
+    /// as such: it is an accounting bound, not a tokenizer. Anchors
+    /// count: a whole-document anchor is a whole-document payload.
+    pub fn tokens(&self) -> usize {
+        self.chars().div_ceil(4)
+    }
+
     /// The op category, for meta-update bookkeeping.
     pub fn category(&self) -> &'static str {
         match &self.op {
@@ -129,10 +148,42 @@ pub enum EditError {
         /// Measured payload chars.
         chars: usize,
     },
+    /// Payload larger than [`PER_EDIT_TOKENS_MAX`] tokens
+    /// (task-113: the per-edit accounting bound). This is the error a
+    /// newline-joined multi-edit smuggle hits: several logical edits in
+    /// one payload still count as one payload.
+    PayloadTooLarge {
+        /// Measured payload tokens.
+        tokens: usize,
+    },
+    /// An edit text field contains a newline: one [`Edit`] is one line.
+    /// A newline-joined "payload" of several logical edits is an edit-
+    /// budget evasion (task-113 attack 3), not one edit.
+    MultiLinePayload {
+        /// Which field carried the newline (e.g. "append line").
+        what: String,
+        /// How many lines the field held.
+        lines: usize,
+    },
     /// Anchor/span not found in the body.
     NotFound {
         /// What was searched for (truncated).
         what: String,
+    },
+    /// The anchor (or replaced span) is empty: an empty anchor game —
+    /// matching "nothing" is not a location.
+    EmptySpan {
+        /// Which op carried the empty span (truncated).
+        what: String,
+    },
+    /// The insert anchor matches more than one body line: the edit does
+    /// not name a unique location, so it is refused rather than applied
+    /// to the first match (task-113: duplicate-anchor games).
+    AnchorAmbiguous {
+        /// The ambiguous anchor (truncated).
+        anchor: String,
+        /// How many body lines it matched.
+        matches: usize,
     },
     /// The edit touches the protected section, or tries to forge the
     /// protected markers into the body. Step-level edits can never do
@@ -147,7 +198,22 @@ impl fmt::Display for EditError {
                 f,
                 "edit payload {chars} chars exceeds PER_EDIT_CHARS_MAX={PER_EDIT_CHARS_MAX}"
             ),
+            Self::PayloadTooLarge { tokens } => write!(
+                f,
+                "edit payload {tokens} tokens exceeds PER_EDIT_TOKENS_MAX={PER_EDIT_TOKENS_MAX}"
+            ),
+            Self::MultiLinePayload { what, lines } => write!(
+                f,
+                "edit field {what} holds {lines} lines: one edit is one line (newline-joined smuggle rejected)"
+            ),
             Self::NotFound { what } => write!(f, "edit span not found in skill body: {what}"),
+            Self::EmptySpan { what } => {
+                write!(f, "edit span is empty (empty anchor/span game): {what}")
+            }
+            Self::AnchorAmbiguous { anchor, matches } => write!(
+                f,
+                "anchor matches {matches} body lines, refusing ambiguous insert: {anchor}"
+            ),
             Self::ProtectedRegion => write!(
                 f,
                 "edit touches the protected slow-update section or forges its markers"
@@ -264,21 +330,43 @@ impl SkillDoc {
     /// any edit whose span/anchor is protected, or whose payload forges
     /// the markers, is rejected with [`EditError::ProtectedRegion`].
     pub fn apply(&mut self, edit: &Edit) -> Result<(), EditError> {
+        // Per-edit accounting bound first (task-113): the paper's unit
+        // is tokens; a newline-joined smuggle of several logical edits
+        // is still one payload and is measured as one.
+        if edit.tokens() > PER_EDIT_TOKENS_MAX {
+            return Err(EditError::PayloadTooLarge {
+                tokens: edit.tokens(),
+            });
+        }
         if edit.chars() > PER_EDIT_CHARS_MAX {
             return Err(EditError::TooLarge {
                 chars: edit.chars(),
             });
         }
         // Marker forgery: step edits may not introduce the markers.
-        let payloads: Vec<&str> = match &edit.op {
-            EditOp::Append { line } => vec![line],
-            EditOp::InsertAfter { anchor, line } => vec![anchor, line],
-            EditOp::Replace { old, new } => vec![old, new],
-            EditOp::Delete { line } => vec![line],
+        let payloads: Vec<(&str, &str)> = match &edit.op {
+            EditOp::Append { line } => vec![("append line", line)],
+            EditOp::InsertAfter { anchor, line } => {
+                vec![("insert_after anchor", anchor), ("insert_after line", line)]
+            }
+            EditOp::Replace { old, new } => vec![("replace old", old), ("replace new", new)],
+            EditOp::Delete { line } => vec![("delete line", line)],
         };
-        for payload in &payloads {
+        for (_what, payload) in &payloads {
             if payload.contains(SLOW_UPDATE_START) || payload.contains(SLOW_UPDATE_END) {
                 return Err(EditError::ProtectedRegion);
+            }
+        }
+        // One edit is one line (task-113): a newline-joined bundle of
+        // several logical edits in a single payload is an edit-budget
+        // evasion, rejected before it can dodge the per-step op count.
+        for (what, payload) in &payloads {
+            let lines = payload.lines().count();
+            if lines > 1 {
+                return Err(EditError::MultiLinePayload {
+                    what: what.to_string(),
+                    lines,
+                });
             }
         }
         // Span/anchor inside the protected section: reject.
@@ -303,14 +391,31 @@ impl SkillDoc {
                 if touches_protected(anchor) {
                     return Err(EditError::ProtectedRegion);
                 }
+                // Empty-anchor game: matching "nothing" is not a location.
+                if anchor.is_empty() {
+                    return Err(EditError::EmptySpan {
+                        what: "insert_after anchor".to_string(),
+                    });
+                }
                 let mut lines: Vec<String> = self.body.lines().map(str::to_string).collect();
-                let pos =
-                    lines
-                        .iter()
-                        .position(|l| l == anchor)
-                        .ok_or_else(|| EditError::NotFound {
-                            what: truncate(anchor, 80),
-                        })?;
+                let matches = lines.iter().filter(|l| *l == anchor).count();
+                if matches == 0 {
+                    return Err(EditError::NotFound {
+                        what: truncate(anchor, 80),
+                    });
+                }
+                // Duplicate-anchor game: refuse rather than silently
+                // taking the first match (task-113).
+                if matches > 1 {
+                    return Err(EditError::AnchorAmbiguous {
+                        anchor: truncate(anchor, 80),
+                        matches,
+                    });
+                }
+                let pos = lines
+                    .iter()
+                    .position(|l| l == anchor)
+                    .expect("anchor counted exactly once above");
                 lines.insert(pos + 1, line.clone());
                 self.body = join_lines(&lines);
                 Ok(())
@@ -318,6 +423,12 @@ impl SkillDoc {
             EditOp::Replace { old, new } => {
                 if touches_protected(old) {
                     return Err(EditError::ProtectedRegion);
+                }
+                // Empty-span game: replacing "nothing" is not an edit.
+                if old.is_empty() {
+                    return Err(EditError::EmptySpan {
+                        what: "replace old span".to_string(),
+                    });
                 }
                 let lines: Vec<String> = self.body.lines().map(str::to_string).collect();
                 let old_lines: Vec<&str> = old.lines().collect();
@@ -393,6 +504,28 @@ mod tests {
         let mut d = SkillDoc::experiment("line one\nline two");
         d.set_protected("KEEP: nothing yet");
         d
+    }
+
+    /// Task-114: the protected-region structure is exact. The render
+    /// places the protected section between the markers, after the
+    /// body; the body and protected accessors return their own
+    /// sections, never each other's.
+    #[test]
+    fn protected_region_structure() {
+        let d = doc();
+        let rendered = d.render_for_target();
+        let start = rendered.find(SLOW_UPDATE_START).unwrap();
+        let end = rendered.find(SLOW_UPDATE_END).unwrap();
+        assert!(start < end);
+        // Body lines are before the start marker.
+        assert!(rendered[..start].contains("line one"));
+        // Protected lines are between the markers.
+        assert!(rendered[start..end].contains("KEEP: nothing yet"));
+        // After the end marker: nothing (no trailing protected leak).
+        assert!(!rendered[end..].contains("KEEP: nothing yet"));
+        // Accessors are disjoint.
+        assert!(!d.body().contains("KEEP: nothing yet"));
+        assert!(!d.protected().contains("line one"));
     }
 
     /// Validation: append/replace/delete/insert-after happy paths.

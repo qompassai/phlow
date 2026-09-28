@@ -127,6 +127,10 @@ pub fn base_config() -> LearnerConfig {
         seeds: SEEDS5.to_vec(),
         d_tr_frac: 1.0,
         poison_rate: 0.0,
+        sealed_d_test: false,
+        confirm_split: false,
+        slow_update_poison: false,
+        slow_update_gate: false,
     }
 }
 

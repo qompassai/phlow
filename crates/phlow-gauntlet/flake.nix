@@ -849,8 +849,8 @@
       tasks01to105 = tasks01to100 ++ tasks101to105;
       tasks116to125 = tasks116to120 ++ tasks121to125;
       tasks116to130 = tasks116to125 ++ tasks126to130;
-      rosterImplemented = tasks01to105 ++ tasks106to110 ++ tasks116to130;
-      rosterPending = tasks111to115;
+      rosterImplemented = tasks01to105 ++ tasks106to110 ++ tasks111to115 ++ tasks116to130;
+      rosterPending = [ ];
 
       # Full declared roster: segments concatenated, nothing hardcoded.
       gauntletRoster = rosterImplemented ++ rosterPending;
