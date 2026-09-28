@@ -41,8 +41,18 @@ All notable changes to phlow are documented here. Format follows
   exhaustion. 48 tests, exactly 24 validation / 24 adversarial. No behavior
   was enabled: no runtime concurrency, no scheduler execution, no
   self-editing, `PromptEvolver::evolve()` untouched and still disabled, no
-  changes to existing crates or CI. Not yet validated with cargo in this
-  environment; gates run on primo.
+  changes to existing crates or CI. Validated on primo 2026-09-28
+  (`flock /tmp/phlow-gate.lock`, nightly-2026-09-25): `cargo fmt --check`
+  clean, `cargo clippy --workspace --all-targets --locked -- -D warnings`
+  clean, `cargo test --workspace --locked` and `--release` each 993 passed
+  / 0 failed (945 baseline + 48 new experiment tests, exactly 24 validation
+  / 24 adversarial). Python gates unchanged from baseline: `pytest` 100
+  passed / 1 failed (`test_validator_rejects_nonfinite_and_malformed_schema`,
+  pre-existing) and 11 pre-existing ruff findings in `flow/`/`tests/`
+  (B905, E501, SIM105×2, SIM300×5, UP035, UP037 — identical count and set to
+  the df06903 baseline log); compileall and
+  wheel build clean. No runtime behavior enabled: no concurrency, no
+  scheduler execution, no self-editing, no promotion performed.
 
 - Experimental Mojo worker support, re-expressed as Rust-side contracts in
   Tiger Style Rust (two new workspace members, `#![forbid(unsafe_code)]`, no
