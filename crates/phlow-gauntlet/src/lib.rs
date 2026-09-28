@@ -1,0 +1,488 @@
+#![forbid(unsafe_code)]
+
+//! Gauntlet: the 20-task agent-orchestration proving ground for phlow.
+//!
+//! # Status: EXPERIMENTAL
+//!
+//! Each task in [`tasks`] attempts one difficult orchestration scenario
+//! against either phlow's Rust crates or Matt's Neovim config (diver's
+//! `lua/ai/harness`, driven through headless Neovim). Tasks are allowed to
+//! fail — that is the point. Every attempt records a [`TaskReport`] with
+//! evidence; failures name exactly where and how the task went wrong so the
+//! fix between iterations can cite them.
+//!
+//! # Hard constraints (inherited, unchanged)
+//!
+//! - No autonomous self-modification; no self-approval or self-promotion.
+//! - Human promotion gates stay mandatory; read-only defaults.
+//! - Fail closed on missing evidence, timeouts, and exhausted budgets.
+//! - The `nvim-lua` tasks execute only the crate's own `lua/gauntlet/`
+//!   drivers plus diver's harness modules. They never touch Matt's live
+//!   editor, plugins, or files outside the task scratch directory.
+//!
+//! # Layout
+//!
+//! - [`tasks`]: the 20 task modules, one per file, disjoint ownership.
+//! - `lua/gauntlet/`: the Neovim-side drivers for `nvim-lua` tasks.
+//! - `docs/gauntlet/`: the per-task learning corpus (ELI5 + cited + depth).
+
+pub mod tasks;
+
+use std::fmt;
+use std::path::PathBuf;
+use std::time::Duration;
+
+/// Maximum number of tasks in the gauntlet. The task list is closed: adding
+/// a 21st task is a design change, not an iteration.
+pub const TASK_COUNT_MAX: usize = 20;
+
+/// Maximum length in characters of a single evidence line in a report.
+/// Evidence is diagnostic text, not bulk data; oversized lines are truncated
+/// by the recorder, never by silent drop.
+pub const EVIDENCE_LINE_CHARS_MAX: usize = 2000;
+
+/// Maximum number of evidence lines kept per task report.
+pub const EVIDENCE_LINES_MAX: usize = 64;
+
+/// Default per-task wall-clock budget in milliseconds.
+pub const TASK_TIMEOUT_MS_DEFAULT: u64 = 120_000;
+
+/// How a task is driven.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskKind {
+    /// Driven through headless Neovim running diver's `lua/ai/harness`.
+    NvimLua,
+    /// Driven directly against phlow's Rust crates.
+    Rust,
+}
+
+impl fmt::Display for TaskKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TaskKind::NvimLua => write!(f, "nvim-lua"),
+            TaskKind::Rust => write!(f, "rust"),
+        }
+    }
+}
+
+/// Execution context handed to every task.
+#[derive(Debug, Clone)]
+pub struct Ctx {
+    /// Headless Neovim binary used by `nvim-lua` tasks.
+    pub nvim_bin: PathBuf,
+    /// Diver's `lua/` directory, put on the runtimepath so
+    /// `require("ai.harness")` loads Matt's actual config code.
+    pub diver_lua_dir: PathBuf,
+    /// This crate's `lua/gauntlet/` directory with the task drivers.
+    pub gauntlet_lua_dir: PathBuf,
+    /// Scratch directory the task may write to. Nothing else is writable.
+    pub work_dir: PathBuf,
+    /// Wall-clock budget for the task attempt.
+    pub timeout: Duration,
+}
+
+impl Ctx {
+    /// Build a context from the crate layout plus explicit overrides.
+    ///
+    /// `nvim_bin` and `diver_lua_dir` must be supplied: the gauntlet never
+    /// guesses where Matt's editor or config live.
+    pub fn new(
+        nvim_bin: PathBuf,
+        diver_lua_dir: PathBuf,
+        work_dir: PathBuf,
+    ) -> Result<Self, GauntletError> {
+        if nvim_bin.as_os_str().is_empty() {
+            return Err(GauntletError::EmptyField { field: "nvim_bin" });
+        }
+        if diver_lua_dir.as_os_str().is_empty() {
+            return Err(GauntletError::EmptyField {
+                field: "diver_lua_dir",
+            });
+        }
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        Ok(Ctx {
+            nvim_bin,
+            diver_lua_dir,
+            gauntlet_lua_dir: manifest_dir.join("lua").join("gauntlet"),
+            work_dir,
+            timeout: Duration::from_millis(TASK_TIMEOUT_MS_DEFAULT),
+        })
+    }
+}
+
+/// The outcome of one task attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskOutcome {
+    /// The task did what its spec claims. Evidence shows the mechanism.
+    Pass {
+        /// Bounded diagnostic lines (see [`EVIDENCE_LINES_MAX`]).
+        evidence: Vec<String>,
+    },
+    /// The task went wrong. Names where and how, with evidence.
+    Fail {
+        /// Which stage or component went wrong, e.g. `"fan-in"`.
+        where_: String,
+        /// What happened, in one or two sentences.
+        how: String,
+        /// Bounded diagnostic lines supporting the diagnosis.
+        evidence: Vec<String>,
+    },
+}
+
+/// One recorded task attempt.
+#[derive(Debug, Clone)]
+pub struct TaskReport {
+    /// e.g. `"task-01"`.
+    pub id: &'static str,
+    /// Human-readable name.
+    pub name: &'static str,
+    /// How the task is driven.
+    pub kind: TaskKind,
+    /// What happened.
+    pub outcome: TaskOutcome,
+    /// Wall-clock time of the attempt in milliseconds.
+    pub duration_ms: u64,
+}
+
+impl TaskReport {
+    /// True when the task passed.
+    pub fn passed(&self) -> bool {
+        matches!(self.outcome, TaskOutcome::Pass { .. })
+    }
+}
+
+/// Failures of the gauntlet framework itself (not of tasks under test).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GauntletError {
+    /// A required text field was empty.
+    EmptyField {
+        /// Which field was empty.
+        field: &'static str,
+    },
+    /// An unknown task id was requested.
+    UnknownTask {
+        /// The id that was requested.
+        id: String,
+    },
+    /// A task id failed its `task-NN` shape check.
+    BadTaskId {
+        /// The offered id.
+        id: String,
+    },
+}
+
+impl fmt::Display for GauntletError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            GauntletError::EmptyField { field } => {
+                write!(f, "gauntlet: required field '{field}' was empty")
+            }
+            GauntletError::UnknownTask { id } => {
+                write!(f, "gauntlet: unknown task id '{id}'")
+            }
+            GauntletError::BadTaskId { id } => {
+                write!(f, "gauntlet: malformed task id '{id}' (want task-NN)")
+            }
+        }
+    }
+}
+
+impl std::error::Error for GauntletError {}
+
+/// Truncate an evidence line to [`EVIDENCE_LINE_CHARS_MAX`] characters and
+/// cap the vector at [`EVIDENCE_LINES_MAX`] lines. Truncation is marked with
+/// `…[truncated]` so it is never silent.
+pub fn bound_evidence(lines: Vec<String>) -> Vec<String> {
+    lines
+        .into_iter()
+        .take(EVIDENCE_LINES_MAX)
+        .map(|line| {
+            if line.chars().count() > EVIDENCE_LINE_CHARS_MAX {
+                let kept: String = line.chars().take(EVIDENCE_LINE_CHARS_MAX).collect();
+                format!("{kept}…[truncated]")
+            } else {
+                line
+            }
+        })
+        .collect()
+}
+
+/// Run a headless-Neovim task driver and parse its JSON verdict.
+///
+/// Spawns `ctx.nvim_bin --headless -l <gauntlet_lua_dir>/<script>` with
+/// `DIVER_LUA_DIR` and `GAUNTLET_WORK_DIR` in the environment. The driver
+/// must print exactly one JSON verdict line to stdout:
+///
+/// ```json
+/// {"id":"task-01","outcome":"pass","evidence":["..."]}
+/// {"id":"task-01","outcome":"fail","where":"fan-in","how":"...","evidence":["..."]}
+/// ```
+///
+/// `script` must have the shape `task-NN.lua` (no path separators); anything
+/// else is rejected before spawning. `ctx.timeout` is enforced by killing
+/// the child on expiry. This function never panics: spawn failures,
+/// timeouts, and unparseable output all become `TaskOutcome::Fail`.
+pub fn run_nvim_lua_driver(ctx: &Ctx, script: &str, expected_id: &'static str) -> TaskOutcome {
+    run_nvim_lua_driver_with_env(ctx, script, expected_id, &[])
+}
+
+/// [`run_nvim_lua_driver`] with extra environment variables for the driver
+/// child (e.g. `GAUNTLET_SCENARIO`). Names and values are passed through
+/// unchanged; the caller owns their meaning.
+pub fn run_nvim_lua_driver_with_env(
+    ctx: &Ctx,
+    script: &str,
+    expected_id: &'static str,
+    extra_env: &[(&str, &str)],
+) -> TaskOutcome {
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    if !is_driver_script_name(script) {
+        return TaskOutcome::Fail {
+            where_: "spawn".to_string(),
+            how: format!("rejected driver script name '{script}' (want task-NN.lua)"),
+            evidence: vec![],
+        };
+    }
+    let script_path = ctx.gauntlet_lua_dir.join(script);
+    let work_dir = ctx.work_dir.join(expected_id);
+    if let Err(e) = std::fs::create_dir_all(&work_dir) {
+        return TaskOutcome::Fail {
+            where_: "spawn".to_string(),
+            how: format!("cannot create work dir: {e}"),
+            evidence: vec![],
+        };
+    }
+
+    let mut cmd = Command::new(&ctx.nvim_bin);
+    cmd.arg("--headless")
+        .arg("-l")
+        .arg(&script_path)
+        .env("DIVER_LUA_DIR", &ctx.diver_lua_dir)
+        .env("GAUNTLET_WORK_DIR", &work_dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    for (k, v) in extra_env {
+        cmd.env(k, v);
+    }
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            return TaskOutcome::Fail {
+                where_: "spawn".to_string(),
+                how: format!("cannot spawn nvim: {e}"),
+                evidence: vec![],
+            };
+        }
+    };
+
+    // Bounded wait: poll try_wait, kill on expiry. No blocking wait without
+    // a deadline — a wedged driver must not wedge the gauntlet.
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) => {
+                if started.elapsed() > ctx.timeout {
+                    let _ = child.kill();
+                    break None;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => {
+                return TaskOutcome::Fail {
+                    where_: "wait".to_string(),
+                    how: format!("cannot wait on nvim child: {e}"),
+                    evidence: vec![],
+                };
+            }
+        }
+    };
+    let output = child.wait_with_output().map_err(|e| e.to_string());
+    match (status, output) {
+        (None, _) => TaskOutcome::Fail {
+            where_: "timeout".to_string(),
+            how: format!(
+                "nvim driver exceeded {} ms and was killed",
+                ctx.timeout.as_millis()
+            ),
+            evidence: vec![],
+        },
+        (Some(_), Err(e)) => TaskOutcome::Fail {
+            where_: "output".to_string(),
+            how: format!("cannot read nvim output: {e}"),
+            evidence: vec![],
+        },
+        (Some(st), Ok(out)) => parse_driver_verdict(&out, expected_id, st.code()),
+    }
+}
+
+/// Accept only `task_NN.lua`: no directories, no surprises on the command line.
+/// The underscore matches the on-disk driver names (`lua/gauntlet/task_01.lua`).
+fn is_driver_script_name(script: &str) -> bool {
+    let bytes = script.as_bytes();
+    bytes.len() == 11
+        && &bytes[0..5] == b"task_"
+        && bytes[5].is_ascii_digit()
+        && bytes[6].is_ascii_digit()
+        && &bytes[7..11] == b".lua"
+}
+
+/// Find the verdict line: stdout first, then stderr.
+///
+/// Rationale (empirically verified 2026-09-28): `nvim --headless -l` routes
+/// Lua `print()` to stderr, while `io.stdout:write` reaches stdout. Drivers
+/// written either way are heard; when the verdict comes from stderr the
+/// report says so, so the stream choice stays visible instead of silently
+/// accepted.
+fn find_verdict_line<'a>(stdout: &'a str, stderr: &'a str) -> Option<(&'a str, &'static str)> {
+    if let Some(line) = stdout.lines().find(|l| l.trim_start().starts_with('{')) {
+        return Some((line, "stdout"));
+    }
+    stderr
+        .lines()
+        .find(|l| l.trim_start().starts_with('{'))
+        .map(|line| (line, "stderr"))
+}
+
+/// Parse the driver's single JSON verdict line from captured output.
+fn parse_driver_verdict(
+    out: &std::process::Output,
+    expected_id: &'static str,
+    exit_code: Option<i32>,
+) -> TaskOutcome {
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let Some((line, stream)) = find_verdict_line(&stdout, &stderr) else {
+        return TaskOutcome::Fail {
+            where_: "verdict".to_string(),
+            how: format!("no JSON verdict line on stdout or stderr (exit={exit_code:?})",),
+            evidence: bound_evidence(vec![format!("stderr: {stderr}")]),
+        };
+    };
+    let value: serde_json::Value = match serde_json::from_str(line) {
+        Ok(v) => v,
+        Err(e) => {
+            return TaskOutcome::Fail {
+                where_: "verdict".to_string(),
+                how: format!("verdict line is not JSON: {e}"),
+                evidence: bound_evidence(vec![format!("line: {line}")]),
+            };
+        }
+    };
+    let id = value.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    if id != expected_id {
+        return TaskOutcome::Fail {
+            where_: "verdict".to_string(),
+            how: format!("verdict id '{id}' does not match '{expected_id}'"),
+            evidence: vec![],
+        };
+    }
+    let mut evidence: Vec<String> = value
+        .get("evidence")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    if stream == "stderr" {
+        evidence.insert(
+            0,
+            "note: verdict read from stderr (nvim -l routes print() there); prefer io.stdout:write"
+                .to_string(),
+        );
+    }
+    match value.get("outcome").and_then(|v| v.as_str()) {
+        Some("pass") => TaskOutcome::Pass {
+            evidence: bound_evidence(evidence),
+        },
+        Some("fail") => {
+            let where_ = value
+                .get("where")
+                .and_then(|v| v.as_str())
+                .unwrap_or("lua-driver")
+                .to_string();
+            let how = value
+                .get("how")
+                .and_then(|v| v.as_str())
+                .unwrap_or("driver reported failure")
+                .to_string();
+            TaskOutcome::Fail {
+                where_,
+                how,
+                evidence: bound_evidence(evidence),
+            }
+        }
+        other => TaskOutcome::Fail {
+            where_: "verdict".to_string(),
+            how: format!("bad outcome value: {other:?}"),
+            evidence: bound_evidence(vec![format!("stderr: {stderr}")]),
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{find_verdict_line, is_driver_script_name};
+
+    /// Validation: every real driver name is accepted.
+    #[test]
+    fn driver_names_valid() {
+        for nn in ["00", "01", "09", "10", "20", "99"] {
+            assert!(
+                is_driver_script_name(&format!("task_{nn}.lua")),
+                "task_{nn}.lua should be accepted"
+            );
+        }
+    }
+
+    /// Adversarial: hostile or malformed names are all rejected. Each of
+    /// these must never reach the nvim command line.
+    #[test]
+    fn driver_names_rejected() {
+        let hostile = [
+            "../task_01.lua",  // path traversal
+            "task_01.lua ",    // trailing space
+            " task_01.lua",    // leading space
+            "TASK_01.LUA",     // wrong case
+            "task-01.lua",     // dash instead of underscore
+            "task_1.lua",      // short index
+            "task_011.lua",    // long index
+            "task_01.luax",    // wrong extension
+            "task_01lua",      // missing dot
+            "",                // empty
+            "task_01.lua\n",   // embedded newline
+            "sub/task_01.lua", // subdirectory
+        ];
+        for name in hostile {
+            assert!(!is_driver_script_name(name), "{name:?} should be rejected");
+        }
+    }
+
+    /// Validation: stdout wins when both streams carry a verdict line.
+    #[test]
+    fn verdict_prefers_stdout() {
+        let (line, stream) = find_verdict_line("{\"a\":1}", "{\"b\":2}").unwrap();
+        assert_eq!(line, "{\"a\":1}");
+        assert_eq!(stream, "stdout");
+    }
+
+    /// Validation: a print()-style driver (verdict on stderr) is still heard.
+    #[test]
+    fn verdict_falls_back_to_stderr() {
+        let (line, stream) = find_verdict_line("startup noise\n", "{\"b\":2}").unwrap();
+        assert_eq!(line, "{\"b\":2}");
+        assert_eq!(stream, "stderr");
+    }
+
+    /// Adversarial: lines that merely contain braces are not verdicts; a
+    /// missing verdict on both streams is None, not a guess.
+    #[test]
+    fn verdict_absent_is_none() {
+        assert!(find_verdict_line("no json here", "lua error: boom").is_none());
+        assert!(find_verdict_line("x = {1,2}", "traceback...").is_none());
+    }
+}

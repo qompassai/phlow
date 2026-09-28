@@ -1468,6 +1468,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "phlow-gauntlet"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "phlow-gpu-worker"
 version = "0.1.0"
 dependencies = [

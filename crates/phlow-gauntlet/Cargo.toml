@@ -1,0 +1,18 @@
+[package]
+name = "phlow-gauntlet"
+version = "0.1.0"
+edition = "2024"
+description = "20-task agent-orchestration proving ground for phlow: task drivers, failure recorder, and report CLI. EXPERIMENTAL — drives only test doubles and headless Neovim; enables no production behavior."
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "phlow_gauntlet"
+path = "src/lib.rs"
+
+[[bin]]
+name = "gauntlet"
+path = "src/bin/gauntlet.rs"
+
+[dependencies]
+# serde_json: build the JSON verdict/report objects. No derive-based validation.
+serde_json = "1"
