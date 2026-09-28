@@ -8,6 +8,10 @@ edition = "2024"
 phlow-runtime = { path = "../phlow-runtime" }
 # Transport traits bound the orchestrator's generics, like Runtime's own.
 phlow-llm = { path = "../phlow-llm" }
+# phlow-inference: ProjectionHead trait and VectorArena for the System-1
+# contrastive scorer (system1 module). No dependency cycle: phlow-inference
+# depends on no workspace crates.
+phlow-inference = { path = "../phlow-inference" }
 phlow-editor = { path = "../phlow-editor" }
 # serde_json: conversation and memory payloads are JSON, like Python.
 serde_json = "1"

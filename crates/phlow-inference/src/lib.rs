@@ -16,6 +16,13 @@
 //!   (DSpark's serving idea, without the trained drafter).
 //! - [`kv_policy`]: quantization precision policy as data: 4-bit is fine for
 //!   global KV, local/SWA KV stays at higher precision, quantize after RoPE.
+//! - [`projection`]: the projection-head contract for contrastive System-1
+//!   scoring (CLM, Contrastive-LM/CLM): a `ProjectionHead` trait mapping
+//!   encoder embeddings to a space where cosine means "this action fits this
+//!   state", plus a deterministic test double. No torch is ported.
+//! - [`vector_arena`]: a fixed-size preallocated vector arena with per-width
+//!   LRU pools and generation-aware namespaces (CLM's `VectorArena`), for
+//!   the state/action vectors an agent loop keeps asking about again.
 //!
 //! # Safety and bounds
 //!
@@ -31,6 +38,8 @@
 #![forbid(unsafe_code)]
 
 pub mod kv_policy;
+pub mod projection;
 pub mod speculative;
 pub mod tiered_cache;
 pub mod two_stage;
+pub mod vector_arena;
