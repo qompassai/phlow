@@ -33,6 +33,7 @@ pub mod bounty;
 pub mod bridge;
 pub mod daemon_client;
 pub mod pairing;
+pub mod session_find;
 pub mod skillopt;
 pub mod state_machine;
 pub mod tasks;

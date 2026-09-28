@@ -29,7 +29,9 @@
 #   adaptation wave 27, drivers landed), `tasks170to177` (implemented:
 #   Ghostex adaptation wave 28, drivers landed), `tasks178to185`
 #   (implemented: Ghostex adaptation wave 29, drivers landed),
-#   `tasks151to200` (pending: Ghostex adaptation waves 30-32,
+#   `tasks186to192` (implemented: Ghostex adaptation wave 30,
+#   drivers landed),
+#   `tasks151to200` (pending: Ghostex adaptation waves 31-32,
 #   designed in the extension docs, drivers not yet landed),
 #   `tasks201to250` (pending: zeroclaw adaptation waves 33-36,
 #   designed in the extension docs, drivers not yet landed), and
@@ -1102,10 +1104,8 @@
         }
       ];
 
-      # Pending: Ghostex adaptation waves 30-32 (tasks 186-200).
-      # Designed in ~/workspace/gauntlet-design-tasks-151-200.md;
-      # drivers not yet landed. Runs after tasks178to185.
-      tasks151to200 = [
+      # Implemented: Ghostex adaptation wave 30 (tasks 186-192); drivers landed.
+      tasks186to192 = [
         {
           id = "task-186";
           name = "scan-once sqlite index";
@@ -1141,6 +1141,12 @@
           name = "shared index concurrent readers";
           kind = "rust";
         }
+      ];
+
+      # Pending: Ghostex adaptation waves 31-32 (tasks 193-200).
+      # Designed in ~/workspace/gauntlet-design-tasks-151-200.md;
+      # drivers not yet landed. Runs after tasks186to192.
+      tasks151to200 = [
         {
           id = "task-193";
           name = "scan plan apply sync";
@@ -1682,7 +1688,8 @@
         ++ tasks159to165
         ++ tasks166to169
         ++ tasks170to177
-        ++ tasks178to185;
+        ++ tasks178to185
+        ++ tasks186to192;
       rosterPending = tasks151to200 ++ tasks201to250 ++ tasks251to280;
 
       # Full declared roster: segments concatenated, nothing hardcoded.

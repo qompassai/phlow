@@ -105,7 +105,14 @@ pub mod task_182;
 pub mod task_183;
 pub mod task_184;
 pub mod task_185;
+pub mod task_186;
+pub mod task_187;
+pub mod task_188;
+pub mod task_189;
 pub mod task_19;
+pub mod task_190;
+pub mod task_191;
+pub mod task_192;
 pub mod task_20;
 pub mod task_21;
 pub mod task_22;
@@ -690,6 +697,48 @@ pub fn run_task(id: &str, ctx: &Ctx) -> Result<TaskReport, GauntletError> {
             task_158::KIND,
             task_158::run(ctx),
         ),
+        task_186::ID => (
+            task_186::ID,
+            task_186::NAME,
+            task_186::KIND,
+            task_186::run(ctx),
+        ),
+        task_187::ID => (
+            task_187::ID,
+            task_187::NAME,
+            task_187::KIND,
+            task_187::run(ctx),
+        ),
+        task_188::ID => (
+            task_188::ID,
+            task_188::NAME,
+            task_188::KIND,
+            task_188::run(ctx),
+        ),
+        task_189::ID => (
+            task_189::ID,
+            task_189::NAME,
+            task_189::KIND,
+            task_189::run(ctx),
+        ),
+        task_190::ID => (
+            task_190::ID,
+            task_190::NAME,
+            task_190::KIND,
+            task_190::run(ctx),
+        ),
+        task_191::ID => (
+            task_191::ID,
+            task_191::NAME,
+            task_191::KIND,
+            task_191::run(ctx),
+        ),
+        task_192::ID => (
+            task_192::ID,
+            task_192::NAME,
+            task_192::KIND,
+            task_192::run(ctx),
+        ),
         task_136::ID => (
             task_136::ID,
             task_136::NAME,
@@ -962,6 +1011,13 @@ pub fn task_meta(id: &str) -> Option<(&'static str, TaskKind)> {
         task_156::ID => Some((task_156::NAME, task_156::KIND)),
         task_157::ID => Some((task_157::NAME, task_157::KIND)),
         task_158::ID => Some((task_158::NAME, task_158::KIND)),
+        task_186::ID => Some((task_186::NAME, task_186::KIND)),
+        task_187::ID => Some((task_187::NAME, task_187::KIND)),
+        task_188::ID => Some((task_188::NAME, task_188::KIND)),
+        task_189::ID => Some((task_189::NAME, task_189::KIND)),
+        task_190::ID => Some((task_190::NAME, task_190::KIND)),
+        task_191::ID => Some((task_191::NAME, task_191::KIND)),
+        task_192::ID => Some((task_192::NAME, task_192::KIND)),
         task_136::ID => Some((task_136::NAME, task_136::KIND)),
         task_137::ID => Some((task_137::NAME, task_137::KIND)),
         task_138::ID => Some((task_138::NAME, task_138::KIND)),
