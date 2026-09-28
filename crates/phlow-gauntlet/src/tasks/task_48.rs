@@ -139,24 +139,26 @@ fn workspace_root() -> Result<PathBuf, DriverError> {
     Ok(root.to_path_buf())
 }
 
-/// This probe's own source file, excluded from scan hits by exact path:
-/// the task NAME (`disk quota enforcement`) contains the design
-/// vocabulary, so the file would otherwise self-match.
-fn own_source_file() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("src")
-        .join("tasks")
-        .join("task_48.rs")
+/// The gauntlet crate's own `src` tree, excluded from scan hits by path
+/// prefix: the harness's probes legitimately use design vocabulary —
+/// task names (`disk quota enforcement`), absence discussions, and
+/// scan tokens themselves — so any probe file would otherwise
+/// self-match. Only product crates count toward the finding.
+/// (Wave 81-85: task-82's rate-limit probe discusses per-provider
+/// quota absence and broke the original own-file-only exclusion.)
+fn harness_src_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
 }
 
 /// Walk `crates/` under the workspace root and return `path:line` hits
 /// for `.rs` files inside a `src` tree whose alphanumeric-token stream
 /// contains `token` (case-insensitive, exact token — not a substring, so
-/// "quotations" never matches "quota"). Skips the probe's own source
-/// file by exact path. Bounded: files over [`SOURCE_BYTES_MAX`] are
-/// skipped, and the walk stops after [`SOURCE_FILES_MAX`] files.
+/// "quotations" never matches "quota"). Skips the gauntlet harness's
+/// own `src` tree by path prefix (see [`harness_src_dir`]). Bounded:
+/// files over [`SOURCE_BYTES_MAX`] are skipped, and the walk stops
+/// after [`SOURCE_FILES_MAX`] files.
 fn scan_sources(root: &Path, token: &str) -> Result<Vec<String>, DriverError> {
-    let own = own_source_file();
+    let excluded = harness_src_dir();
     let wanted = token.to_lowercase();
     let crates_dir = root.join("crates");
     let mut hits = Vec::new();
@@ -172,7 +174,7 @@ fn scan_sources(root: &Path, token: &str) -> Result<Vec<String>, DriverError> {
                 stack.push(path);
             } else if path.extension().is_some_and(|e| e == "rs")
                 && path.components().any(|c| c.as_os_str() == "src")
-                && path != own
+                && !path.starts_with(&excluded)
             {
                 files_seen += 1;
                 if files_seen > SOURCE_FILES_MAX {
@@ -245,15 +247,16 @@ impl CaseReport {
 
 /// V1: no standalone `quota` token anywhere in the workspace sources.
 /// Tokenized (not substring) matching, so the reducer's "quotations"
-/// vocabulary cannot false-positive; the probe's own file is
-/// path-excluded because the task NAME contains the design vocabulary.
+/// vocabulary cannot false-positive; the gauntlet harness's own `src`
+/// tree is prefix-excluded because probe files legitimately use the
+/// design vocabulary (task names, absence discussions, scan tokens).
 fn case_no_quota_tokens_in_sources() -> Result<CaseReport, DriverError> {
     const CASE: &str = "no_quota_tokens_in_sources";
     let root = workspace_root()?;
     let mut evidence = Vec::new();
     let hits = scan_sources(&root, "quota")?;
     evidence.push(format!(
-        "tokenized scan for the exact token 'quota' over crates/*/src (own file path-excluded); hits: {}",
+        "tokenized scan for the exact token 'quota' over crates/*/src (gauntlet harness src prefix-excluded); hits: {}",
         hits.len()
     ));
     for hit in &hits {
