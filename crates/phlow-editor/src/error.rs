@@ -132,7 +132,7 @@ impl fmt::Display for FreshnessError {
             }
             FreshnessError::WorkspaceMismatch { .. } => write!(
                 formatter,
-                "Rose/Flow workspace mismatch; refusing reverse tools and edits"
+                "Rose/Phlow workspace mismatch; refusing reverse tools and edits"
             ),
             FreshnessError::ApiV1Missing => write!(
                 formatter,
@@ -192,7 +192,7 @@ mod tests {
                 agent: "/a".to_owned(),
             }
             .to_string(),
-            "Rose/Flow workspace mismatch; refusing reverse tools and edits"
+            "Rose/Phlow workspace mismatch; refusing reverse tools and edits"
         );
         assert_eq!(
             FreshnessError::ApiV1Missing.to_string(),

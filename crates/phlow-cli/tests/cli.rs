@@ -17,10 +17,6 @@ fn phlow() -> Command {
     Command::new(env!("CARGO_BIN_EXE_phlow"))
 }
 
-fn flow_bin() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_flow"))
-}
-
 fn packaging_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -38,59 +34,17 @@ fn stdout_lines(output: &std::process::Output) -> Vec<String> {
 // --- version / usage ------------------------------------------------------
 
 #[test]
-fn version_prints_flow_0_2_0_and_exits_0() {
+fn version_prints_phlow_0_2_0_and_exits_0() {
     let output = phlow().arg("--version").output().expect("spawn phlow");
     assert!(output.status.success());
-    assert_eq!(output.stdout, b"Flow 0.2.0\n");
-}
-
-#[test]
-fn version_matches_python_byte_for_byte() {
-    let rust = phlow().arg("--version").output().expect("spawn phlow");
-    // `flow/__init__.py` imports without the optional httpx dependency, so
-    // the package version is readable even where the full CLI is not.
-    let python = Command::new("python3")
-        .args([
-            "-c",
-            "import sys; sys.path.insert(0, '/home/hatch/workspace/repos/phlow'); \
-             import flow; print(f'Flow {flow.__version__}')",
-        ])
-        .output()
-        .expect("spawn python3");
-    assert_eq!(rust.stdout, python.stdout);
-    assert_eq!(rust.status.code(), Some(0));
-    assert_eq!(python.status.code(), Some(0));
-}
-
-#[test]
-fn flow_binary_behaves_like_phlow() {
-    // `--version` must be byte-identical. `--help` differs only in the
-    // argv[0]-derived bin name on the Usage line (clap renders `Usage:
-    // flow ...` for the compat binary), so normalize that before comparing.
-    for args in [vec!["--version"], vec!["--help"], vec!["status", "--help"]] {
-        let a = phlow().args(&args).output().expect("spawn phlow");
-        let b = flow_bin().args(&args).output().expect("spawn flow");
-        assert_eq!(a.status.code(), b.status.code(), "args: {args:?}");
-        let normalize = |output: &[u8], name: &str| {
-            String::from_utf8_lossy(output)
-                .replace(&format!("Usage: {name}"), "Usage: BIN")
-                .into_bytes()
-        };
-        assert_eq!(
-            normalize(&a.stdout, "phlow"),
-            normalize(&b.stdout, "flow"),
-            "args: {args:?}"
-        );
-    }
+    assert_eq!(output.stdout, b"Phlow 0.2.0\n");
 }
 
 #[test]
 fn run_does_not_accept_version_like_python() {
     // Python: `flow run --version` -> argparse error, exit 2.
-    for mut binary in [phlow(), flow_bin()] {
-        let output = binary.arg("run").arg("--version").output().expect("spawn");
-        assert_eq!(output.status.code(), Some(2));
-    }
+    let output = phlow().arg("run").arg("--version").output().expect("spawn");
+    assert_eq!(output.status.code(), Some(2));
 }
 
 #[test]

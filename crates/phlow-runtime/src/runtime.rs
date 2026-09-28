@@ -936,12 +936,12 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
         let resolved =
             std::fs::canonicalize(workspace.expect("workspace is a string")).map_err(|_| {
                 RuntimeError::EditorContext(
-                    "Rose/Flow workspace mismatch; refusing reverse tools and edits".to_owned(),
+                    "Rose/Phlow workspace mismatch; refusing reverse tools and edits".to_owned(),
                 )
             })?;
         if resolved != self.workspace.root() {
             return Err(RuntimeError::EditorContext(
-                "Rose/Flow workspace mismatch; refusing reverse tools and edits".to_owned(),
+                "Rose/Phlow workspace mismatch; refusing reverse tools and edits".to_owned(),
             ));
         }
         let snapshot_v1 = context.get("workspace_snapshot_version")

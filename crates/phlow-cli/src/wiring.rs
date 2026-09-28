@@ -84,7 +84,7 @@ impl RuntimeFacade for CliRuntime {
         // The TUI rejects empty names before calling, so failure here is
         // unexpected; report it loudly rather than dropping the error.
         if let Err(error) = self.0.select_model(model) {
-            eprintln!("Flow: cannot switch model: {error}");
+            eprintln!("Phlow: cannot switch model: {error}");
         }
     }
 }

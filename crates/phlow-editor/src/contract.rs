@@ -258,7 +258,7 @@ mod tests {
         assert!(matches!(err, FreshnessError::WorkspaceMismatch { .. }));
         assert_eq!(
             err.to_string(),
-            "Rose/Flow workspace mismatch; refusing reverse tools and edits"
+            "Rose/Phlow workspace mismatch; refusing reverse tools and edits"
         );
     }
 

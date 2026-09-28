@@ -1,14 +1,13 @@
-//! `phlow` (and its `flow` compatibility alias): the command-line surface
-//! of the safe agent runtime, ported from `flow/main.py`.
+//! `phlow`: the command-line surface of the safe agent runtime, ported
+//! from `flow/main.py`.
 //!
 //! Exit codes mirror the Python exactly: 0 success, 1 the command ran but
 //! the report status is not `ok`, 2 usage/config error, 130 interrupted
 //! (SIGTERM). Reports print as one ASCII-escaped JSON line, byte-compatible
 //! with Python's `json.dumps(result, ensure_ascii=True)`.
 //!
-//! The two binaries (`src/bin/phlow.rs`, `src/bin/flow.rs`) are thin shims
-//! over [`run`]; clap renders the help's Usage line from the actual
-//! `argv[0]`, so the alias needs no separate parser.
+//! The `phlow` binary (`src/bin/phlow.rs`) is a thin shim over [`run`];
+//! clap renders the help's Usage line from the actual `argv[0]`.
 
 #![forbid(unsafe_code)]
 
@@ -33,9 +32,9 @@ use cli::{Cli, Commands};
 use signal::{EXIT_COMMAND_FAILED, EXIT_USAGE};
 use wiring::CliRuntime;
 
-/// Version string, byte-identical to Python's `Flow {flow.__version__}`.
-/// `flow/__init__.py` declares `__version__ = "0.2.0"`; the differential
-/// test below pins the two together.
+/// Version string. The legacy Python tree prints `Flow {flow.__version__}`;
+/// the Rust product is `Phlow {VERSION}` — the differential test that pinned
+/// the two together was removed when the products diverged (see tests/cli.rs).
 pub const VERSION: &str = "0.2.0";
 
 /// Run the CLI to completion and return the process exit code.
@@ -47,7 +46,7 @@ pub fn run() -> i32 {
     // Install first, like Python installing its SIGTERM handler before
     // parsing: from here on, SIGTERM means exit 130 with the message.
     if let Err(error) = signal::install_sigterm_watcher() {
-        eprintln!("Flow: {error}");
+        eprintln!("Phlow: {error}");
         return EXIT_USAGE;
     }
     reject_bare_double_dash();
@@ -56,7 +55,7 @@ pub fn run() -> i32 {
     if cli.version {
         // argparse's version action fires during parsing, winning over any
         // subcommand on the same command line.
-        println!("Flow {VERSION}");
+        println!("Phlow {VERSION}");
         return 0;
     }
     match dispatch(&cli) {
@@ -64,7 +63,7 @@ pub fn run() -> i32 {
         // Mirrors `except (ConfigError, OSError, ValueError)`: the typed
         // message, prefixed, to stderr, exit 2.
         Err(error) => {
-            eprintln!("Flow: {error}");
+            eprintln!("Phlow: {error}");
             EXIT_USAGE
         }
     }
@@ -206,7 +205,7 @@ fn tui(
     let models = match facade.list_models() {
         Ok(models) => models,
         Err(error) => {
-            eprintln!("Flow: cannot list Ollama models ({error}); /models will be empty");
+            eprintln!("Phlow: cannot list Ollama models ({error}); /models will be empty");
             Vec::new()
         }
     };
@@ -241,8 +240,8 @@ mod tests {
             .expect("python3 must run for the version cross-check");
         let python_version = String::from_utf8_lossy(&python_version.stdout);
         assert_eq!(
-            format!("Flow {}", python_version.trim()),
-            format!("Flow {VERSION}")
+            format!("Phlow {}", python_version.trim()),
+            format!("Phlow {VERSION}")
         );
         assert_eq!(VERSION, "0.2.0");
     }

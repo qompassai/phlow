@@ -331,7 +331,7 @@ fn resolved_prompt_substitutes_tools_and_profile() {
         "rust",
     );
     assert!(
-        prompt.starts_with("You are Flow"),
+        prompt.starts_with("You are Phlow"),
         "template preamble survives"
     );
     assert!(
@@ -794,7 +794,7 @@ impl RacingLlm {
             .and_then(|m| m.first())
             .and_then(|m| m.get("content"))
             .and_then(|c| c.as_str())
-            .is_some_and(|content| content.contains("You are Flow's reviewer"))
+            .is_some_and(|content| content.contains("You are Phlow's reviewer"))
     }
 }
 

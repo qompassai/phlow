@@ -237,7 +237,7 @@ impl<R: McpRuntime> McpServer<R> {
             .and_then(|name| name.as_str())
             .unwrap_or("");
         let Some(spec) = protocol::tool_spec(name) else {
-            return protocol::error_value(id, INVALID_PARAMS, "Unknown Flow tool");
+            return protocol::error_value(id, INVALID_PARAMS, "Unknown Phlow tool");
         };
         let args = params_obj
             .get("arguments")
@@ -280,7 +280,7 @@ impl<R: McpRuntime> McpServer<R> {
             }
             "flow_status" => self.runtime.status(),
             _ => {
-                return protocol::error_value(id, INVALID_PARAMS, "Unknown Flow tool");
+                return protocol::error_value(id, INVALID_PARAMS, "Unknown Phlow tool");
             }
         };
         match outcome {

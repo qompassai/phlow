@@ -1,5 +1,5 @@
 //! `phlow` binary: thin entrypoint over the shared CLI implementation in
-//! [`phlow_cli`]. The `flow` compatibility alias is `src/bin/flow.rs`.
+//! [`phlow_cli`].
 
 #![forbid(unsafe_code)]
 

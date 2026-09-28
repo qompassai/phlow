@@ -330,14 +330,14 @@ impl Workspace {
     /// never retry against the same handle.
     pub fn assert_current(&self) -> Result<(), WorkspaceError> {
         let meta = std::fs::symlink_metadata(&self.root)
-            .map_err(|_| WorkspaceError::Stale("root is unavailable; restart Flow"))?;
+            .map_err(|_| WorkspaceError::Stale("root is unavailable; restart Phlow"))?;
         if meta.file_type().is_symlink() {
-            return Err(WorkspaceError::Stale("root was replaced; restart Flow"));
+            return Err(WorkspaceError::Stale("root was replaced; restart Phlow"));
         }
         match self.identity {
             RootIdentity::DevIno { dev, ino } => {
                 let now = stat_identity(&self.root)
-                    .map_err(|_| WorkspaceError::Stale("root is unavailable; restart Flow"))?;
+                    .map_err(|_| WorkspaceError::Stale("root is unavailable; restart Phlow"))?;
                 let fresh = match now {
                     RootIdentity::DevIno {
                         dev: now_dev,
@@ -346,7 +346,7 @@ impl Workspace {
                     RootIdentity::Unpinned => true,
                 };
                 if !fresh {
-                    return Err(WorkspaceError::Stale("root was replaced; restart Flow"));
+                    return Err(WorkspaceError::Stale("root was replaced; restart Phlow"));
                 }
             }
             RootIdentity::Unpinned => {}
@@ -572,7 +572,7 @@ impl Workspace {
             rustix::fs::open(&self.root, directory_flags, Mode::empty()).map_err(syscall_err)?;
         let root_info = rustix::fs::fstat(&fd).map_err(syscall_err)?;
         if !identity_matches(&root_info, &self.identity) {
-            return Err(WorkspaceError::Stale("root was replaced; restart Flow"));
+            return Err(WorkspaceError::Stale("root was replaced; restart Phlow"));
         }
         for part in &parts {
             let child = match rustix::fs::openat(&fd, part.as_str(), directory_flags, Mode::empty())

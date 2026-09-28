@@ -3,10 +3,8 @@ name = "phlow-cli"
 version = "0.1.0"
 edition = "2024"
 
-# Two entrypoints share one implementation: `phlow` (primary) and `flow`
-# (the legacy compatibility alias). Autodiscovery maps each of
-# src/bin/phlow.rs and src/bin/flow.rs to a binary of the same name; both
-# are thin shims calling phlow_cli::run(), so no behavior is duplicated.
+# One entrypoint: `phlow`. Autodiscovery maps src/bin/phlow.rs to the
+# `phlow` binary; it is a thin shim calling phlow_cli::run().
 # The shared logic lives in src/lib.rs alongside cli/wiring/signal.
 [dependencies]
 # clap 4 (derive): CLI surface parity with Python's argparse — global flags
@@ -14,7 +12,7 @@ edition = "2024"
 # becomes `global = true`), subcommand help, exit code 2 on usage errors.
 # Derive is chosen over the builder API so flag wiring is compile-checked;
 # `--version` is a manual flag because the required string is exactly
-# "Flow 0.2.0", not clap's "{bin} {version}" rendering.
+# "Phlow 0.2.0", not clap's "{bin} {version}" rendering.
 clap = { version = "4", features = ["derive"] }
 # signal-hook 0.3: SIGTERM watcher thread (self-pipe based, no async
 # runtime needed) mapping SIGTERM to exit 130 like Python's

@@ -2,7 +2,7 @@
 //!
 //! Python installs a `SIGTERM` handler that raises `KeyboardInterrupt`,
 //! unwinding the command (including the `serve` loop) so `main` prints
-//! `Flow interrupted; changes already written are not rolled back.` and
+//! `Phlow interrupted; changes already written are not rolled back.` and
 //! exits 130. This module reproduces the observable contract — the message
 //! on stderr and exit code 130 — with a dedicated watcher thread: the
 //! thread owns signal delivery, the main thread owns the runtime, and the
@@ -26,7 +26,7 @@ pub const EXIT_COMMAND_FAILED: i32 = 1;
 
 /// The stderr line Python prints on interruption, byte for byte.
 pub const INTERRUPTED_MESSAGE: &str =
-    "Flow interrupted; changes already written are not rolled back.";
+    "Phlow interrupted; changes already written are not rolled back.";
 
 /// Install the SIGTERM watcher. On unix this spawns the watcher thread;
 /// elsewhere it is a no-op. Failure to install (a broken self-pipe) is a
@@ -84,7 +84,7 @@ mod tests {
     fn interrupted_message_matches_python_byte_for_byte() {
         assert_eq!(
             INTERRUPTED_MESSAGE,
-            "Flow interrupted; changes already written are not rolled back."
+            "Phlow interrupted; changes already written are not rolled back."
         );
     }
 

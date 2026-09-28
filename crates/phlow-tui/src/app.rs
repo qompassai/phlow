@@ -56,7 +56,7 @@ pub fn classify_line(line: &str) -> LineAction {
 /// `except EOFError: break`. (Deliberate deviation, shared with [`run`]:
 /// Ctrl-C terminates the process instead of continuing the loop.)
 pub fn run_line_mode<F: RuntimeFacade>(app: &mut FlowApp<F>) -> io::Result<()> {
-    println!("Flow · local planner / coder / reviewer");
+    println!("Phlow · local planner / coder / reviewer");
     println!("Workspace: {}", app.workspace_root());
     println!("Type /help for commands. /quit or Ctrl-D to exit.");
     if !app.trusted() {
@@ -97,7 +97,7 @@ pub fn run<F: RuntimeFacade>(app: &mut FlowApp<F>) -> io::Result<()> {
     Ok(())
 }
 
-/// The startup banner: `Flow · local planner / coder / reviewer` with the
+/// The startup banner: `Phlow · local planner / coder / reviewer` with the
 /// workspace root, as in `flow/tui.py`.
 fn draw_banner(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
@@ -107,12 +107,12 @@ fn draw_banner(
         .fg(Color::Green)
         .add_modifier(Modifier::BOLD);
     terminal.draw(|frame| {
-        let mut banner_text = String::from("Flow · local planner / coder / reviewer\n");
+        let mut banner_text = String::from("Phlow · local planner / coder / reviewer\n");
         banner_text.push_str(&format!("Workspace: {workspace_root}\n"));
         banner_text.push_str("Type /help for commands. /quit or Ctrl-D to exit.");
         let banner = Paragraph::new(banner_text).block(
             Block::bordered()
-                .title(Line::from("Flow").style(green_bold))
+                .title(Line::from("Phlow").style(green_bold))
                 .border_style(green_bold),
         );
         frame.render_widget(banner, frame.area());
@@ -120,14 +120,14 @@ fn draw_banner(
     Ok(())
 }
 
-/// Render one command result as a cyan `Flow result` panel.
+/// Render one command result as a cyan `Phlow result` panel.
 fn draw_result(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     value: &Value,
 ) -> io::Result<()> {
     let pretty = serde_json::to_string_pretty(value).unwrap_or_else(|_| "{}".to_string());
     terminal.draw(|frame| {
-        let panel = styled_panel(&pretty, "Flow result", Color::Cyan);
+        let panel = styled_panel(&pretty, "Phlow result", Color::Cyan);
         frame.render_widget(panel, frame.area());
     })?;
     Ok(())
