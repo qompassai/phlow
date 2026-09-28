@@ -1,6 +1,6 @@
 # crates/phlow-gauntlet/flake.nix
 #
-# Phlow 200-task orchestration gauntlet: Nix entry points for the task
+# Phlow 280-task orchestration gauntlet: Nix entry points for the task
 # drivers in `crates/phlow-gauntlet` (tasks 01-20 designed in
 # ~/workspace/gauntlet-design.md; tasks 21-70 designed in
 # ~/workspace/gauntlet-design-tasks-21-70.md; tasks 71-100 designed in
@@ -8,7 +8,9 @@
 # ~/workspace/gauntlet-design-tasks-101-115.md; tasks 116-130 designed in
 # ~/workspace/gauntlet-design-tasks-116-130.md; tasks 131-150 designed in
 # ~/workspace/gauntlet-design-tasks-131-150.md; tasks 151-200 designed in
-# ~/workspace/gauntlet-design-tasks-151-200.md).
+# ~/workspace/gauntlet-design-tasks-151-200.md; tasks 201-250 designed in
+# ~/workspace/gauntlet-design-tasks-201-250.md; tasks 251-280 designed in
+# ~/workspace/gauntlet-design-tasks-251-280.md).
 #
 # ROSTER SCHEME (two levels — read this before extending):
 # - `gauntletRoster` declares EVERY task as pure data: { id, name, kind },
@@ -19,9 +21,14 @@
 #   landed), `tasks111to115` (implemented: SkillOpt wave 22, drivers
 #   landed), and `tasks131to150` (pending: async bug-bounty cyclical
 #   workflow, designed in the extension docs, drivers not yet landed),
-#   and `tasks151to200` (pending: Ghostex adaptation waves 25-32,
-#   designed in the extension docs, drivers not yet landed).
-#   Roster asserts validate ALL 200 entries.
+#   `tasks151to200` (pending: Ghostex adaptation waves 25-32,
+#   designed in the extension docs, drivers not yet landed),
+#   `tasks201to250` (pending: zeroclaw adaptation waves 33-36,
+#   designed in the extension docs, drivers not yet landed), and
+#   `tasks251to280` (pending: verification-against-adaptation waves
+#   37-40, designed in the extension docs, drivers not yet landed;
+#   run after tasks201to250).
+#   Roster asserts validate ALL 280 entries.
 # - Apps (`apps.task-NN`), the `gauntlet` runner, and `checks.task-list`
 #   cover IMPLEMENTED tasks only. The flake never claims an app for a
 #   task without a driver. This deliberately deviates from the design
@@ -61,7 +68,7 @@
 # Evaluator: Nix 2.x with the `nix-command` and `flakes` experimental
 # features enabled. Nixpkgs: nixos-25.05 (locked on primo, see above).
 {
-  description = "phlow 200-task gauntlet: declared roster, apps for implemented drivers";
+  description = "phlow 280-task gauntlet: declared roster, apps for implemented drivers";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
@@ -73,9 +80,9 @@
     let
       inherit (nixpkgs) lib;
 
-      # Named bound on the declared roster: exactly 200 entries
-      # (task-01..task-200), no more.
-      taskCountMax = 200;
+      # Named bound on the declared roster: exactly 280 entries
+      # (task-01..task-280), no more.
+      taskCountMax = 280;
 
       # Roster segment: tasks 01-50. Drivers landed in this crate
       # (`src/tasks/task_01.rs` .. `src/tasks/task_50.rs`).
@@ -1139,6 +1146,419 @@
         }
       ];
 
+      # Pending: zeroclaw adaptation waves 33-36 (tasks 201-250).
+      # Designed in ~/workspace/gauntlet-design-tasks-201-250.md;
+      # drivers not yet landed. Runs after tasks151to200.
+      tasks201to250 = [
+        {
+          id = "task-201";
+          name = "jsonrpc frame validation";
+          kind = "rust";
+        }
+        {
+          id = "task-202";
+          name = "invalid frame direction inference";
+          kind = "rust";
+        }
+        {
+          id = "task-203";
+          name = "acp method-set spec diff";
+          kind = "rust";
+        }
+        {
+          id = "task-204";
+          name = "wire field constants";
+          kind = "rust";
+        }
+        {
+          id = "task-205";
+          name = "cancellation sentinel recognition";
+          kind = "rust";
+        }
+        {
+          id = "task-206";
+          name = "failure sentinel locale independence";
+          kind = "rust";
+        }
+        {
+          id = "task-207";
+          name = "session restore provenance";
+          kind = "rust";
+        }
+        {
+          id = "task-208";
+          name = "localized-text cancellation rejection";
+          kind = "rust";
+        }
+        {
+          id = "task-209";
+          name = "sentinel forgery refusal";
+          kind = "rust";
+        }
+        {
+          id = "task-210";
+          name = "pairing-gated ws upgrade";
+          kind = "rust";
+        }
+        {
+          id = "task-211";
+          name = "per-agent url alias";
+          kind = "rust";
+        }
+        {
+          id = "task-212";
+          name = "stdio-ws bridge framing";
+          kind = "rust";
+        }
+        {
+          id = "task-213";
+          name = "subprotocol version skew";
+          kind = "rust";
+        }
+        {
+          id = "task-214";
+          name = "well-known index schema";
+          kind = "rust";
+        }
+        {
+          id = "task-215";
+          name = "index size bound";
+          kind = "rust";
+        }
+        {
+          id = "task-216";
+          name = "artifact digest verification";
+          kind = "rust";
+        }
+        {
+          id = "task-217";
+          name = "dns dial pinning";
+          kind = "rust";
+        }
+        {
+          id = "task-218";
+          name = "redirect chain cap";
+          kind = "rust";
+        }
+        {
+          id = "task-219";
+          name = "traversal-safe unpack";
+          kind = "rust";
+        }
+        {
+          id = "task-220";
+          name = "archive bounds";
+          kind = "rust";
+        }
+        {
+          id = "task-221";
+          name = "hostile index policy refusal";
+          kind = "rust";
+        }
+        {
+          id = "task-222";
+          name = "dns rebinding refusal";
+          kind = "rust";
+        }
+        {
+          id = "task-223";
+          name = "artifact swap detection";
+          kind = "rust";
+        }
+        {
+          id = "task-224";
+          name = "malicious archive refusal";
+          kind = "rust";
+        }
+        {
+          id = "task-225";
+          name = "redirect loop refusal";
+          kind = "rust";
+        }
+        {
+          id = "task-226";
+          name = "transport seam testability";
+          kind = "rust";
+        }
+        {
+          id = "task-227";
+          name = "supervised unknown defaults ask";
+          kind = "rust";
+        }
+        {
+          id = "task-228";
+          name = "auto-approve always-ask lists";
+          kind = "rust";
+        }
+        {
+          id = "task-229";
+          name = "session allowlist semantics";
+          kind = "rust";
+        }
+        {
+          id = "task-230";
+          name = "approval audit log";
+          kind = "rust";
+        }
+        {
+          id = "task-231";
+          name = "autonomy level matrix";
+          kind = "rust";
+        }
+        {
+          id = "task-232";
+          name = "non-interactive approval";
+          kind = "rust";
+        }
+        {
+          id = "task-233";
+          name = "unknown tool prompt";
+          kind = "rust";
+        }
+        {
+          id = "task-234";
+          name = "autonomy escalation refusal";
+          kind = "rust";
+        }
+        {
+          id = "task-235";
+          name = "always-ask bypass refusal";
+          kind = "rust";
+        }
+        {
+          id = "task-236";
+          name = "approval expiry race";
+          kind = "rust";
+        }
+        {
+          id = "task-237";
+          name = "audit log append-only";
+          kind = "rust";
+        }
+        {
+          id = "task-238";
+          name = "approval spoof resistance";
+          kind = "rust";
+        }
+        {
+          id = "task-239";
+          name = "estop levels engage";
+          kind = "rust";
+        }
+        {
+          id = "task-240";
+          name = "estop fail-closed";
+          kind = "rust";
+        }
+        {
+          id = "task-241";
+          name = "estop selective resume";
+          kind = "rust";
+        }
+        {
+          id = "task-242";
+          name = "otp validation";
+          kind = "rust";
+        }
+        {
+          id = "task-243";
+          name = "webauthn verification";
+          kind = "rust";
+        }
+        {
+          id = "task-244";
+          name = "prompt guard";
+          kind = "rust";
+        }
+        {
+          id = "task-245";
+          name = "sandbox backend selection";
+          kind = "rust";
+        }
+        {
+          id = "task-246";
+          name = "cross-init service dispatch";
+          kind = "rust";
+        }
+        {
+          id = "task-247";
+          name = "estop under attack";
+          kind = "rust";
+        }
+        {
+          id = "task-248";
+          name = "sandbox escape containment";
+          kind = "rust";
+        }
+        {
+          id = "task-249";
+          name = "pairing guard bypass refusal";
+          kind = "rust";
+        }
+        {
+          id = "task-250";
+          name = "secrets hygiene audit";
+          kind = "rust";
+        }
+      ];
+
+      # Pending: verification-against-adaptation waves 37-40 (tasks 251-280).
+      # Designed in ~/workspace/gauntlet-design-tasks-251-280.md; drivers
+      # not yet landed. Runs AFTER tasks201to250: these tasks test the
+      # adaptations, so the adaptations must exist first.
+      tasks251to280 = [
+        {
+          id = "task-251";
+          name = "localized cancellation flood";
+          kind = "rust";
+        }
+        {
+          id = "task-252";
+          name = "lenient vs permissive parsing";
+          kind = "rust";
+        }
+        {
+          id = "task-253";
+          name = "out-of-order envelopes";
+          kind = "rust";
+        }
+        {
+          id = "task-254";
+          name = "sentinel near-miss battery";
+          kind = "rust";
+        }
+        {
+          id = "task-255";
+          name = "poisoned restore provenance";
+          kind = "rust";
+        }
+        {
+          id = "task-256";
+          name = "ws pairing-gate bypass battery";
+          kind = "rust";
+        }
+        {
+          id = "task-257";
+          name = "bridge secret hygiene";
+          kind = "rust";
+        }
+        {
+          id = "task-258";
+          name = "acp conformance and license audit";
+          kind = "rust";
+        }
+        {
+          id = "task-259";
+          name = "malicious index battery";
+          kind = "rust";
+        }
+        {
+          id = "task-260";
+          name = "dns rebinding mid-fetch";
+          kind = "rust";
+        }
+        {
+          id = "task-261";
+          name = "digest binding under attack";
+          kind = "rust";
+        }
+        {
+          id = "task-262";
+          name = "archive hostile battery";
+          kind = "rust";
+        }
+        {
+          id = "task-263";
+          name = "decompression bomb battery";
+          kind = "rust";
+        }
+        {
+          id = "task-264";
+          name = "redirect attack chains";
+          kind = "rust";
+        }
+        {
+          id = "task-265";
+          name = "index never sources policy";
+          kind = "rust";
+        }
+        {
+          id = "task-266";
+          name = "installer bounds and license audit";
+          kind = "rust";
+        }
+        {
+          id = "task-267";
+          name = "unknown-tool gauntlet";
+          kind = "rust";
+        }
+        {
+          id = "task-268";
+          name = "escalation attempt battery";
+          kind = "rust";
+        }
+        {
+          id = "task-269";
+          name = "always-ask laundering";
+          kind = "rust";
+        }
+        {
+          id = "task-270";
+          name = "expiry race exploitation";
+          kind = "rust";
+        }
+        {
+          id = "task-271";
+          name = "allowlist poisoning";
+          kind = "rust";
+        }
+        {
+          id = "task-272";
+          name = "non-interactive denial semantics";
+          kind = "rust";
+        }
+        {
+          id = "task-273";
+          name = "approval audit and license";
+          kind = "rust";
+        }
+        {
+          id = "task-274";
+          name = "estop under fire";
+          kind = "rust";
+        }
+        {
+          id = "task-275";
+          name = "sandbox escape battery";
+          kind = "rust";
+        }
+        {
+          id = "task-276";
+          name = "pairing ceremony attacks";
+          kind = "rust";
+        }
+        {
+          id = "task-277";
+          name = "otp attack battery";
+          kind = "rust";
+        }
+        {
+          id = "task-278";
+          name = "prompt-guard evasion";
+          kind = "rust";
+        }
+        {
+          id = "task-279";
+          name = "secret-zero audit";
+          kind = "rust";
+        }
+        {
+          id = "task-280";
+          name = "security posture and license audit";
+          kind = "rust";
+        }
+      ];
+
       tasks106to110 = [
         {
           id = "task-106";
@@ -1213,7 +1633,7 @@
       tasks116to125 = tasks116to120 ++ tasks121to125;
       tasks116to130 = tasks116to125 ++ tasks126to130;
       rosterImplemented = tasks01to105 ++ tasks106to110 ++ tasks111to115 ++ tasks116to130;
-      rosterPending = tasks131to150 ++ tasks151to200;
+      rosterPending = tasks131to150 ++ tasks151to200 ++ tasks201to250 ++ tasks251to280;
 
       # Full declared roster: segments concatenated, nothing hardcoded.
       gauntletRoster = rosterImplemented ++ rosterPending;
