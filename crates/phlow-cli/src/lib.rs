@@ -230,11 +230,21 @@ mod tests {
 
     #[test]
     fn version_matches_python_package() {
+        // The legacy Python tree lives at the workspace root (two levels
+        // above this crate's manifest dir). Resolved at compile time so the
+        // cross-check works on any machine the repo is synced to, instead of
+        // a hardcoded VM path.
+        let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..");
         let python_version = std::process::Command::new("python3")
             .args([
                 "-c",
-                "import sys; sys.path.insert(0, '/home/hatch/workspace/repos/phlow'); \
-                 import flow; print(flow.__version__)",
+                &format!(
+                    "import sys; sys.path.insert(0, r'{}'); \
+                     import flow; print(flow.__version__)",
+                    workspace_root.display()
+                ),
             ])
             .output()
             .expect("python3 must run for the version cross-check");
