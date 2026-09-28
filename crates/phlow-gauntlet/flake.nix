@@ -26,8 +26,9 @@
 #   landed), `tasks151to158` (implemented: Ghostex adaptation wave 25,
 #   drivers landed), `tasks159to165` (implemented: Ghostex adaptation
 #   wave 26, drivers landed), `tasks166to169` (implemented: Ghostex
-#   adaptation wave 27, drivers landed),
-#   `tasks151to200` (pending: Ghostex adaptation waves 28-32,
+#   adaptation wave 27, drivers landed), `tasks170to177` (implemented:
+#   Ghostex adaptation wave 28, drivers landed),
+#   `tasks151to200` (pending: Ghostex adaptation waves 29-32,
 #   designed in the extension docs, drivers not yet landed),
 #   `tasks201to250` (pending: zeroclaw adaptation waves 33-36,
 #   designed in the extension docs, drivers not yet landed), and
@@ -1012,10 +1013,8 @@
         }
       ];
 
-      # Pending: Ghostex adaptation waves 28-32 (tasks 170-200).
-      # Designed in ~/workspace/gauntlet-design-tasks-151-200.md;
-      # drivers not yet landed. Runs after tasks166to169.
-      tasks151to200 = [
+      # Implemented: Ghostex adaptation wave 28 (tasks 170-177); drivers landed.
+      tasks170to177 = [
         {
           id = "task-170";
           name = "pairing code issuance";
@@ -1056,6 +1055,12 @@
           name = "pairing ceremony end to end";
           kind = "rust";
         }
+      ];
+
+      # Pending: Ghostex adaptation waves 29-32 (tasks 178-200).
+      # Designed in ~/workspace/gauntlet-design-tasks-151-200.md;
+      # drivers not yet landed. Runs after tasks170to177.
+      tasks151to200 = [
         {
           id = "task-178";
           name = "ephemeral bridge launch";
@@ -1670,7 +1675,8 @@
         ++ tasks146to150
         ++ tasks151to158
         ++ tasks159to165
-        ++ tasks166to169;
+        ++ tasks166to169
+        ++ tasks170to177;
       rosterPending = tasks151to200 ++ tasks201to250 ++ tasks251to280;
 
       # Full declared roster: segments concatenated, nothing hardcoded.
