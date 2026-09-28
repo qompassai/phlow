@@ -20,10 +20,16 @@ pub mod json_compat;
 pub mod lsp_check;
 pub mod registry;
 pub mod shell;
+pub mod solpi;
 pub mod web_search;
 
 pub use error::ToolError;
 pub use file_ops::FileOps;
 pub use json_compat::{python_json_dumps, python_json_dumps_indent2};
 pub use registry::{ToolRegistry, ToolSpec, load_user_tools};
+pub use solpi::{
+    ActionOutcome, FusionError, FusionPolicy, FusionReceipt, ObservationHandle, ObservationPage,
+    ObservationProjection, PackError, PackStore, SolpiFeature, SolpiToolConfig, ValidationOutcome,
+    ValidationReport, fuse,
+};
 pub use web_search::{SearchBackend, SearchResult, WebSearch};

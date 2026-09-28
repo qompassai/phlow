@@ -5,6 +5,34 @@ All notable changes to phlow are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- NVlabs/SoL-Pi agent-harness features, re-expressed in Tiger Style Rust as
+  opt-in, disabled-by-default modules (upstream: MIT; "every mechanism is
+  opt-in and disabled by default", "a missing configuration leaves every
+  mechanism disabled"). `phlow-tools/src/solpi/`: **Action Fusion**
+  (`fuse()` runs an edit/write and its follow-up validation in one call;
+  validation is a caller-supplied closure, output capped at 8 KiB, failures
+  never re-run or roll back the action) and **ObservationPack** (`PackStore`
+  archives observations ≥ 10 KiB behind opaque handles with 4 KiB verbatim
+  pages; originals always retrievable; 4 MiB per-object / 256-obs / 16 MiB
+  store caps, typed errors, never silent eviction).
+  `phlow-agent/src/solpi/`: **Evidence-Preserving Reducer** (compacts to a
+  receipt only when every retained quotation matches the source byte-for-byte;
+  any mismatch yields `Unchanged` and the borrowed source is untouched; the
+  upstream remote reducer-model call is deliberately omitted — all
+  verification is local) and **Online Context Compact** (explicit cost model:
+  compacts only under window-pressure ≥ 0.75, ≥ 4096 reclaimable bytes, ≥ 2
+  completed unpinned candidates; returns an observable `CompactionPlan`, never
+  compacts itself). All four are inert unless explicitly enabled
+  (`enable()`/`opt_in()`); disabled use fails closed with typed errors.
+  Per-crate design records in `crates/phlow-{tools,agent}/docs/solpi-decisions.md`
+  (upstream citations, bounds, MITRE ATLAS v6 mapping, out-of-scope rationale).
+  46 tests (23 validation / 23 adversarial). Validated on Primo:
+  `cargo +nightly-2026-09-25 test --workspace` green,
+  `clippy --workspace --all-targets -- -D warnings` clean,
+  `rustfmt --check` clean.
+
 ### Changed
 
 - Operator config paths follow the Phlow product rename: the default

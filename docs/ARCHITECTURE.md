@@ -349,9 +349,9 @@ Derived from each crate's `src/` module list.
 |---|---|---|
 | `phlow-cli` | `cli`, `signal`, `wiring`, `bin/phlow.rs` | The `phlow` binary: flags, exit codes, SIGTERM→130, wiring the Runtime |
 | `phlow-runtime` | `runtime`, `prompt`, `report`, `tools`, `error`, `transport/{http,msgpack}` | The foreman: owns config, agents, tools, reports, shutdown; one owner per handle |
-| `phlow-agent` | `orchestrator`, `context`, `memory`, `system1`, `best_of_n` | The conveyor belt: bounded planner → coder → verification → reviewer; rusqlite memory; contrastive System-1 scoring; best-of-N verifier |
+| `phlow-agent` | `orchestrator`, `context`, `memory`, `system1`, `best_of_n`, `solpi` | The conveyor belt: bounded planner → coder → verification → reviewer; rusqlite memory; contrastive System-1 scoring; best-of-N verifier; opt-in SoL-Pi harness features (evidence-preserving reducer, online context compact) |
 | `phlow-llm` | `transport`, `payload`, `prompts`, `error` | Ollama backend: local model calls, loopback only |
-| `phlow-tools` | `registry`, `file_ops`, `shell`, `lsp_check`, `web_search`, `json_compat`, `error` | Tool implementations + Python-compatible JSON serialization |
+| `phlow-tools` | `registry`, `file_ops`, `shell`, `lsp_check`, `web_search`, `json_compat`, `error`, `solpi` | Tool implementations + Python-compatible JSON serialization; opt-in SoL-Pi harness features (action fusion, observation pack) |
 | `phlow-mcp` | `server`, `protocol`, `schema`, `json_ascii`, `error` | The MCP window: newline JSON-RPC frames over stdin/stdout |
 | `phlow-editor` | `bridge`, `contract`, `socket`, `fake`, `error` | The private Neovim socket: reverse requests into the editor |
 | `phlow-tui` | `app`, `facade`, `commands`, `panels` | The terminal frontend: ratatui with TTY, line mode without |
@@ -391,8 +391,12 @@ Derived from each crate's `src/` module list.
   inbox ring, JSON-line control protocol, daemon/client hooks, session daemon,
   declarative tapes); the TUI section above is extended, and the TUI itself
   will become a client of the crate in a later change.
+- The SoL-Pi harness features have landed as `solpi` modules in `phlow-tools`
+  (action fusion, observation pack) and `phlow-agent` (evidence-preserving
+  reducer, online context compact); all four are opt-in and disabled by
+  default, per the upstream rule "a missing configuration leaves every
+  mechanism disabled".
 - Remaining planned work: Mojo workers (`workers/phlow-mojo-worker`,
-  `kernels/mojo`), SoL-Pi agent-harness features, NVlabs GPU-compute
-  adaptations.
+  `kernels/mojo`), NVlabs GPU-compute adaptations.
 - The mdbook chapter `docs/book/src/architecture.md` is the ELI5 companion;
   keep the two consistent on crate roles and product naming.

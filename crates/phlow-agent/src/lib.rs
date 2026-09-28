@@ -10,6 +10,7 @@ pub mod best_of_n;
 pub mod context;
 pub mod memory;
 pub mod orchestrator;
+pub mod solpi;
 pub mod system1;
 
 pub use best_of_n::{
@@ -22,6 +23,11 @@ pub use memory::{
     RECENT_MAX, RESPONSE_CHARS_MAX, SEARCH_TERM_CHARS_MAX, TAG_CHARS_MAX, TAGS_MAX, TOP_K_MAX,
 };
 pub use orchestrator::Orchestrator;
+pub use solpi::{
+    CompactReceipt, CompactStep, CompactionPlan, CompactionPolicy, EvidenceReducer, PolicyError,
+    ReducerError, ReductionOutcome, ReductionProposal, SolpiAgentConfig, SolpiFeature,
+    evaluate_compaction,
+};
 pub use system1::{
     Answer, BuiltQuestion, Criteria, EmbedError, Embedded, Embedder, Question, QuestionError,
     QuestionKind, RankEntry, ScoringError, SystemOne, SystemOneError, SystemOneOutput, Usage,
