@@ -1,12 +1,14 @@
 # crates/phlow-gauntlet/flake.nix
 #
-# Phlow 130-task orchestration gauntlet: Nix entry points for the task
+# Phlow 200-task orchestration gauntlet: Nix entry points for the task
 # drivers in `crates/phlow-gauntlet` (tasks 01-20 designed in
 # ~/workspace/gauntlet-design.md; tasks 21-70 designed in
 # ~/workspace/gauntlet-design-tasks-21-70.md; tasks 71-100 designed in
 # ~/workspace/gauntlet-design-tasks-71-100.md; tasks 101-115 designed in
 # ~/workspace/gauntlet-design-tasks-101-115.md; tasks 116-130 designed in
-# ~/workspace/gauntlet-design-tasks-116-130.md).
+# ~/workspace/gauntlet-design-tasks-116-130.md; tasks 131-150 designed in
+# ~/workspace/gauntlet-design-tasks-131-150.md; tasks 151-200 designed in
+# ~/workspace/gauntlet-design-tasks-151-200.md).
 #
 # ROSTER SCHEME (two levels — read this before extending):
 # - `gauntletRoster` declares EVERY task as pure data: { id, name, kind },
@@ -14,9 +16,12 @@
 #   in this crate, waves 01-20), `tasks116to130` (implemented: diver
 #   harness Phase-2 acceptance probes, waves 116-120, 121-125, and
 #   126-130), `tasks106to110` (implemented: SkillOpt wave 21, drivers
-#   landed), and `tasks111to115` (pending: designed in the extension
-#   docs, wave 22, drivers not yet landed).
-#   Roster asserts validate ALL 130 entries.
+#   landed), `tasks111to115` (implemented: SkillOpt wave 22, drivers
+#   landed), and `tasks131to150` (pending: async bug-bounty cyclical
+#   workflow, designed in the extension docs, drivers not yet landed),
+#   and `tasks151to200` (pending: Ghostex adaptation waves 25-32,
+#   designed in the extension docs, drivers not yet landed).
+#   Roster asserts validate ALL 200 entries.
 # - Apps (`apps.task-NN`), the `gauntlet` runner, and `checks.task-list`
 #   cover IMPLEMENTED tasks only. The flake never claims an app for a
 #   task without a driver. This deliberately deviates from the design
@@ -26,10 +31,9 @@
 #   pending side to the implemented side (`rosterImplemented` grows,
 #   `rosterPending` shrinks). The asserts, app generation, runner, and
 #   checks all consume the two segments via `gauntletRoster` and
-#   `implementedTasks` — no other edits needed. Waves through 96-100
-#   landed every designed task, so the implemented side is complete
-#   through task-105 plus tasks 116-130; the pending side holds tasks
-#   106-115 until their drivers land.
+#   `implementedTasks` — no other edits needed. The implemented side is
+#   complete through task-130; the pending side holds tasks 131-200
+#   until their drivers land.
 # - `tasks01to60` was once referenced but never defined (dangling binding
 #   in the 70-task flake); it is defined here so the implemented
 #   concatenation evaluates. Nothing is hardcoded to 130 except the
@@ -57,7 +61,7 @@
 # Evaluator: Nix 2.x with the `nix-command` and `flakes` experimental
 # features enabled. Nixpkgs: nixos-25.05 (locked on primo, see above).
 {
-  description = "phlow 130-task gauntlet: declared roster, apps for implemented drivers";
+  description = "phlow 200-task gauntlet: declared roster, apps for implemented drivers";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
@@ -69,9 +73,9 @@
     let
       inherit (nixpkgs) lib;
 
-      # Named bound on the declared roster: exactly 130 entries
-      # (task-01..task-130), no more.
-      taskCountMax = 130;
+      # Named bound on the declared roster: exactly 200 entries
+      # (task-01..task-200), no more.
+      taskCountMax = 200;
 
       # Roster segment: tasks 01-50. Drivers landed in this crate
       # (`src/tasks/task_01.rs` .. `src/tasks/task_50.rs`).
@@ -776,6 +780,365 @@
         }
       ];
 
+      tasks131to150 = [
+        {
+          id = "task-131";
+          name = "scheduled scope refresh";
+          kind = "rust";
+        }
+        {
+          id = "task-132";
+          name = "scope diffing added removed";
+          kind = "rust";
+        }
+        {
+          id = "task-133";
+          name = "scope revocation mid-cycle";
+          kind = "rust";
+        }
+        {
+          id = "task-134";
+          name = "passive-active transition gating";
+          kind = "rust";
+        }
+        {
+          id = "task-135";
+          name = "approval expiry";
+          kind = "rust";
+        }
+        {
+          id = "task-136";
+          name = "bounded concurrency queueing";
+          kind = "rust";
+        }
+        {
+          id = "task-137";
+          name = "cancellation without zombies";
+          kind = "rust";
+        }
+        {
+          id = "task-138";
+          name = "restart recovery without rescan";
+          kind = "rust";
+        }
+        {
+          id = "task-139";
+          name = "finding dedup across cycles";
+          kind = "rust";
+        }
+        {
+          id = "task-140";
+          name = "rate limits and testing windows";
+          kind = "rust";
+        }
+        {
+          id = "task-141";
+          name = "evidence preservation custody";
+          kind = "rust";
+        }
+        {
+          id = "task-142";
+          name = "finding validation pipeline";
+          kind = "rust";
+        }
+        {
+          id = "task-143";
+          name = "false-positive rejection";
+          kind = "rust";
+        }
+        {
+          id = "task-144";
+          name = "report generation";
+          kind = "rust";
+        }
+        {
+          id = "task-145";
+          name = "submission payload preview";
+          kind = "rust";
+        }
+        {
+          id = "task-146";
+          name = "operator approval boundary";
+          kind = "rust";
+        }
+        {
+          id = "task-147";
+          name = "post-submission state tracking";
+          kind = "rust";
+        }
+        {
+          id = "task-148";
+          name = "triager feedback ingestion";
+          kind = "rust";
+        }
+        {
+          id = "task-149";
+          name = "secret non-disclosure";
+          kind = "rust";
+        }
+        {
+          id = "task-150";
+          name = "hostile scope change refusal";
+          kind = "rust";
+        }
+      ];
+
+      # Pending: Ghostex adaptation waves 25-32 (tasks 151-200).
+      # Designed in ~/workspace/gauntlet-design-tasks-151-200.md;
+      # drivers not yet landed. Runs after tasks131to150.
+      tasks151to200 = [
+        {
+          id = "task-151";
+          name = "open-enum unknown variants";
+          kind = "rust";
+        }
+        {
+          id = "task-152";
+          name = "unknown fields ignored";
+          kind = "rust";
+        }
+        {
+          id = "task-153";
+          name = "lenient envelope parsing";
+          kind = "rust";
+        }
+        {
+          id = "task-154";
+          name = "versioned envelope routing";
+          kind = "rust";
+        }
+        {
+          id = "task-155";
+          name = "hostile frame rejection";
+          kind = "rust";
+        }
+        {
+          id = "task-156";
+          name = "variant confusion refusal";
+          kind = "rust";
+        }
+        {
+          id = "task-157";
+          name = "version skew monotonicity";
+          kind = "rust";
+        }
+        {
+          id = "task-158";
+          name = "socket parity and license audit";
+          kind = "rust";
+        }
+        {
+          id = "task-159";
+          name = "reconnect ladder";
+          kind = "rust";
+        }
+        {
+          id = "task-160";
+          name = "subscribe on reconnect";
+          kind = "rust";
+        }
+        {
+          id = "task-161";
+          name = "snapshot resync";
+          kind = "rust";
+        }
+        {
+          id = "task-162";
+          name = "flapping daemon backoff";
+          kind = "rust";
+        }
+        {
+          id = "task-163";
+          name = "hostile peer on daemon socket";
+          kind = "rust";
+        }
+        {
+          id = "task-164";
+          name = "half-open connection timeout";
+          kind = "rust";
+        }
+        {
+          id = "task-165";
+          name = "worker shutdown without zombies";
+          kind = "rust";
+        }
+        {
+          id = "task-166";
+          name = "pure transition function";
+          kind = "rust";
+        }
+        {
+          id = "task-167";
+          name = "effect interpreter separation";
+          kind = "rust";
+        }
+        {
+          id = "task-168";
+          name = "hostile event injection";
+          kind = "rust";
+        }
+        {
+          id = "task-169";
+          name = "effect ordering idempotency";
+          kind = "rust";
+        }
+        {
+          id = "task-170";
+          name = "pairing code issuance";
+          kind = "rust";
+        }
+        {
+          id = "task-171";
+          name = "pairing code TTL expiry";
+          kind = "rust";
+        }
+        {
+          id = "task-172";
+          name = "secret hash comparison";
+          kind = "rust";
+        }
+        {
+          id = "task-173";
+          name = "pairing brute-force rate limit";
+          kind = "rust";
+        }
+        {
+          id = "task-174";
+          name = "pairing code replay refusal";
+          kind = "rust";
+        }
+        {
+          id = "task-175";
+          name = "pairing code forgery refusal";
+          kind = "rust";
+        }
+        {
+          id = "task-176";
+          name = "tailcat sidecar supervision";
+          kind = "rust";
+        }
+        {
+          id = "task-177";
+          name = "pairing ceremony end to end";
+          kind = "rust";
+        }
+        {
+          id = "task-178";
+          name = "ephemeral bridge launch";
+          kind = "rust";
+        }
+        {
+          id = "task-179";
+          name = "bridge stdio framing";
+          kind = "rust";
+        }
+        {
+          id = "task-180";
+          name = "devtools round trip";
+          kind = "rust";
+        }
+        {
+          id = "task-181";
+          name = "hostile page payload bounds";
+          kind = "rust";
+        }
+        {
+          id = "task-182";
+          name = "bridge navigation allowlist";
+          kind = "rust";
+        }
+        {
+          id = "task-183";
+          name = "cancelled bridge reaping";
+          kind = "rust";
+        }
+        {
+          id = "task-184";
+          name = "bridge cross-talk isolation";
+          kind = "rust";
+        }
+        {
+          id = "task-185";
+          name = "no persistent mcp config";
+          kind = "rust";
+        }
+        {
+          id = "task-186";
+          name = "scan-once sqlite index";
+          kind = "rust";
+        }
+        {
+          id = "task-187";
+          name = "ranked fuzzy queries";
+          kind = "rust";
+        }
+        {
+          id = "task-188";
+          name = "no per-agent parsers";
+          kind = "rust";
+        }
+        {
+          id = "task-189";
+          name = "poisoned session index";
+          kind = "rust";
+        }
+        {
+          id = "task-190";
+          name = "corrupt index rebuild";
+          kind = "rust";
+        }
+        {
+          id = "task-191";
+          name = "query literal handling";
+          kind = "rust";
+        }
+        {
+          id = "task-192";
+          name = "shared index concurrent readers";
+          kind = "rust";
+        }
+        {
+          id = "task-193";
+          name = "scan plan apply sync";
+          kind = "rust";
+        }
+        {
+          id = "task-194";
+          name = "idempotent skill sync";
+          kind = "rust";
+        }
+        {
+          id = "task-195";
+          name = "skill supply-chain refusal";
+          kind = "rust";
+        }
+        {
+          id = "task-196";
+          name = "concurrent modification safety";
+          kind = "rust";
+        }
+        {
+          id = "task-197";
+          name = "help-first commands";
+          kind = "rust";
+        }
+        {
+          id = "task-198";
+          name = "json output stability";
+          kind = "rust";
+        }
+        {
+          id = "task-199";
+          name = "verify-after-act";
+          kind = "rust";
+        }
+        {
+          id = "task-200";
+          name = "hostile output sanitization";
+          kind = "rust";
+        }
+      ];
+
       tasks106to110 = [
         {
           id = "task-106";
@@ -850,13 +1213,13 @@
       tasks116to125 = tasks116to120 ++ tasks121to125;
       tasks116to130 = tasks116to125 ++ tasks126to130;
       rosterImplemented = tasks01to105 ++ tasks106to110 ++ tasks111to115 ++ tasks116to130;
-      rosterPending = [ ];
+      rosterPending = tasks131to150 ++ tasks151to200;
 
       # Full declared roster: segments concatenated, nothing hardcoded.
       gauntletRoster = rosterImplemented ++ rosterPending;
 
-      # Roster invariant: the concatenated table really is the 130 declared
-      # entries, each well-shaped, ids unique and exactly task-01..task-130.
+      # Roster invariant: the concatenated table really is the 200 declared
+      # entries, each well-shaped, ids unique and exactly task-01..task-200.
       # Laziness note: these asserts fire when a per-system output that
       # references `implementedTasks` is evaluated, not at flake load.
       # `checks.task-list` forces that evaluation under `nix flake check`.

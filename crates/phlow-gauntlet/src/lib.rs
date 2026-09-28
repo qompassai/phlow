@@ -22,10 +22,14 @@
 //!
 //! # Layout
 //!
-//! - [`tasks`]: the 130 task modules, one per file, disjoint ownership.
+//! - [`tasks`]: the 150 task modules, one per file, disjoint ownership.
+//! - [`bounty`]: the shared scaffold for tasks 131–150 (async bug-bounty
+//!   cyclical workflow): scope feeds, scheduler, finding lifecycle,
+//!   validation pipeline, submission gate, fake platform.
 //! - `lua/gauntlet/`: the Neovim-side drivers for `nvim-lua` tasks.
 //! - `docs/gauntlet/`: the per-task learning corpus (ELI5 + cited + depth).
 
+pub mod bounty;
 pub mod skillopt;
 pub mod tasks;
 
@@ -34,8 +38,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 /// Maximum number of tasks in the gauntlet. The task list is closed: adding
-/// a 121st task is a design change, not an iteration.
-pub const TASK_COUNT_MAX: usize = 130;
+/// a 151st task is a design change, not an iteration.
+pub const TASK_COUNT_MAX: usize = 150;
 
 /// Maximum length in characters of a single evidence line in a report.
 /// Evidence is diagnostic text, not bulk data; oversized lines are truncated

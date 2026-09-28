@@ -154,7 +154,9 @@ pub const TASK_IDS: [&str; crate::TASK_COUNT_MAX] = [
     "task-105", "task-106", "task-107", "task-108", "task-109", "task-110", "task-111", "task-112",
     "task-113", "task-114", "task-115", "task-116", "task-117", "task-118", "task-119", "task-120",
     "task-121", "task-122", "task-123", "task-124", "task-125", "task-126", "task-127", "task-128",
-    "task-129", "task-130",
+    "task-129", "task-130", "task-131", "task-132", "task-133", "task-134", "task-135", "task-136",
+    "task-137", "task-138", "task-139", "task-140", "task-141", "task-142", "task-143", "task-144",
+    "task-145", "task-146", "task-147", "task-148", "task-149", "task-150",
 ];
 
 /// Run one task by id and record a `TaskReport`.
