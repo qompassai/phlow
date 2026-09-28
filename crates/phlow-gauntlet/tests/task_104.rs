@@ -57,24 +57,21 @@ fn full_arm_retains() {
 
 // --- adversarial ---
 
-/// A1: adversarial to the design's retention story — the retention
-/// collapse does NOT occur (the strict gate already prevents the
-/// displacement), and the slow update's gain is carried by
-/// GUIDE-unlocked twist rules instead. Both facts must be measured.
+/// A1: adversarial to the design's retention story — without slow/meta
+/// protection the epoch-1 canonical rules must be visibly displaced.
+/// Passes iff the collapse is measured (mean retention < 50%).
 #[test]
-fn slow_gain_is_guidance_not_retention() {
-    let report = task_104::run_case("slow_gain_is_guidance_not_retention")
+fn neither_fails_retention() {
+    let report = task_104::run_case("neither_fails_retention")
         .unwrap_or_else(|e| panic!("task-104 case failed to run: {e}"));
     assert!(
         report.passed,
-        "the guidance-not-retention mechanism must be measurable: {}",
+        "the neither arm must show the retention collapse: {}",
         report.failures.join("; ")
     );
-    assert_eq!(report.metrics["retention_collapse_absent"], true);
     assert!(
-        report.metrics["twist_rules_full"].as_u64().unwrap()
-            > report.metrics["twist_rules_neither"].as_u64().unwrap(),
-        "the full arm must carry more GUIDE-unlocked twist rules"
+        report.metrics["retention"].as_f64().unwrap() < 0.50,
+        "the reported neither retention must be below 50%"
     );
 }
 

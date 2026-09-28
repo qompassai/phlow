@@ -419,7 +419,7 @@ impl<'a> SeedState<'a> {
         epoch: usize,
     ) -> Result<(), LearnerError> {
         let l_t = self.cfg.schedule.bound(self.step_idx, self.total_steps);
-        let (ctx, d_sel_before) = self.reflect(batch, l_t);
+        let (ctx, d_sel_before) = self.reflect(batch, l_t, epoch);
         let mut record = StepRecord {
             step: self.step_idx,
             epoch,
@@ -453,7 +453,7 @@ impl<'a> SeedState<'a> {
     }
 
     /// Roll out the batch and build the reflection context.
-    fn reflect(&self, batch: &[TaskCase], l_t: usize) -> (ReflectCtx, f64) {
+    fn reflect(&self, batch: &[TaskCase], l_t: usize, epoch: usize) -> (ReflectCtx, f64) {
         let target = MixedTarget;
         let trajs: Vec<_> = batch
             .iter()
@@ -489,6 +489,7 @@ impl<'a> SeedState<'a> {
             meta_cats: self.meta_cats.clone(),
             l_t,
             step: self.step_idx,
+            epoch,
             families: self.cfg.families.clone(),
         };
         (ctx, target.score(&self.skill, &self.splits.d_sel))

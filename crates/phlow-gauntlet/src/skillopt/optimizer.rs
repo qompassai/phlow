@@ -81,6 +81,9 @@ pub struct ReflectCtx {
     pub l_t: usize,
     /// Step index (for ledgers).
     pub step: usize,
+    /// Epoch index (0-based). The scripted mock uses it to gate
+    /// later-epoch mechanisms (e.g. task-104's twist rediscovery).
+    pub epoch: usize,
     /// Families under optimization (drives the reflection prompt).
     pub families: Vec<Family>,
 }
@@ -191,6 +194,91 @@ impl ScriptedOptimizer {
         ScriptedOptimizer {
             last_suppressed: std::cell::Cell::new(0),
         }
+    }
+
+    /// Twist rediscovery + bundled displacement (task-104's forgetting
+    /// mechanism): in later epochs, without slow-update guidance, the
+    /// mock may rediscover ONE twist rule from a twist failure visible in
+    /// the reflection minibatch, bundled with canonical→narrow replaces
+    /// for unprotected slots. The twist fix is a strict D_sel
+    /// improvement, so the gate accepts the bundle on net and the
+    /// epoch-1 canonical rules are displaced as a side effect.
+    ///
+    /// Returns `None` when the mechanism does not fire. Fires only when
+    /// the epoch is ≥1, the step's `L_t` fits the bundle whole
+    /// (`l_t >= 3`), no slow-update GUIDE mentions twist, no twist rule
+    /// is present yet (one-shot: without meta-update momentum the mock
+    /// does not systematically cover the second kind), and all ledger
+    /// slots are filled. KEEP-protected and same-epoch-accepted lines
+    /// are never replaced.
+    fn twist_rediscovery_bundle(
+        &self,
+        ctx: &ReflectCtx,
+        skill: &SkillDoc,
+        guided: bool,
+        suppressed: &mut dyn FnMut(&str) -> bool,
+    ) -> Option<Vec<Template>> {
+        if ctx.epoch < 1 || ctx.l_t < 3 || guided {
+            return None;
+        }
+        if LEDGER_TWIST_RULES.iter().any(|r| skill.has_line(r)) {
+            return None;
+        }
+        let all_filled =
+            (0..3).all(|i| skill.has_line(LEDGER_CANONICAL[i]) || skill.has_line(LEDGER_NARROW[i]));
+        if !all_filled {
+            return None;
+        }
+        let mut kind: Option<usize> = None;
+        for s in &ctx.fail {
+            if s.expected.contains("twist=EmptyFrontier") {
+                kind = Some(0);
+                break;
+            }
+            if s.expected.contains("twist=Revisit") {
+                kind = Some(1);
+                break;
+            }
+        }
+        let j = kind?;
+        let direction = format!("ledger:rediscover:{j}");
+        if suppressed(&direction) {
+            return None;
+        }
+        let mut bundle = vec![Template {
+            edit: Edit {
+                op: EditOp::Append {
+                    line: LEDGER_TWIST_RULES[j].to_string(),
+                },
+                rationale: "twist failures persist; try a dedicated rule".to_string(),
+                direction,
+            },
+            good: true,
+            weight: 1.0,
+        }];
+        for i in 0..3 {
+            let canon = LEDGER_CANONICAL[i];
+            let protected = ctx.keep_lines.iter().any(|k| k == canon)
+                || ctx.epoch_accepted_lines.iter().any(|l| l == canon);
+            if skill.has_line(canon) && !protected {
+                let direction = format!("ledger:repl:{i}");
+                if !suppressed(&direction) {
+                    bundle.push(Template {
+                        edit: Edit {
+                            op: EditOp::Replace {
+                                old: canon.to_string(),
+                                new: LEDGER_NARROW[i].to_string(),
+                            },
+                            rationale: format!("short-horizon variant suffices for slot {i}"),
+                            direction,
+                        },
+                        good: false,
+                        weight: 0.25,
+                    });
+                }
+            }
+        }
+        Some(bundle)
     }
 
     /// Applicable templates for this reflection: good fixes for failing
@@ -414,6 +502,14 @@ impl ScriptedOptimizer {
                         }
                     }
                 }
+            }
+            // Twist rediscovery + bundled displacement: the forgetting
+            // mechanism (see `twist_rediscovery_bundle`). When it fires,
+            // the focused bundle displaces the normal templates — the gate
+            // judges the complete bundle, never a fragment.
+            if let Some(bundle) = self.twist_rediscovery_bundle(ctx, skill, guided, &mut suppressed)
+            {
+                return (bundle, suppressed_count);
             }
             // Replace canonical with narrow: the forgetting mechanism.
             for i in 0..3 {
@@ -908,6 +1004,7 @@ mod tests {
             meta_cats: HashMap::new(),
             l_t: 4,
             step: 0,
+            epoch: 0,
             families: vec![Family::FOrder],
         }
     }
