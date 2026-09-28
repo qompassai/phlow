@@ -1,0 +1,13 @@
+[package]
+name = "phlow-tuios"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# serde: wire types for the line-delimited JSON control protocol. The request
+# id stays an opaque serde_json::Value so it echoes back verbatim.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+default = []

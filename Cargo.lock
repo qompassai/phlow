@@ -1524,6 +1524,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "phlow-tuios"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "phlow-workspace"
 version = "0.2.0"
 dependencies = [
