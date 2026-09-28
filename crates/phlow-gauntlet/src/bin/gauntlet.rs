@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-//! `gauntlet` — CLI driver for the 45-task orchestration gauntlet.
+//! `gauntlet` — CLI driver for the 50-task orchestration gauntlet.
 //!
 //! ```sh
 //! gauntlet list

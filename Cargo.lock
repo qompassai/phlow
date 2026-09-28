@@ -1645,6 +1645,7 @@ version = "0.1.0"
 dependencies = [
  "ed25519-dalek",
  "ml-dsa",
+ "phlow-agent",
  "phlow-config",
  "phlow-council",
  "phlow-editor",
@@ -1652,6 +1653,7 @@ dependencies = [
  "phlow-json",
  "phlow-llm",
  "phlow-runtime",
+ "phlow-tuios",
  "rmpv",
  "serde_json",
  "sha2 0.10.9",

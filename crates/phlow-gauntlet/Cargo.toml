@@ -2,7 +2,7 @@
 name = "phlow-gauntlet"
 version = "0.1.0"
 edition = "2024"
-description = "45-task agent-orchestration proving ground for phlow: task drivers, failure recorder, and report CLI. EXPERIMENTAL — drives only test doubles and headless Neovim; enables no production behavior."
+description = "50-task agent-orchestration proving ground for phlow: task drivers, failure recorder, and report CLI. EXPERIMENTAL — drives only test doubles and headless Neovim; enables no production behavior."
 license = "MIT OR Apache-2.0"
 
 [lib]
@@ -38,6 +38,15 @@ phlow-config = { path = "../phlow-config" }
 # (parse_limited: input cap + depth bound + typed errors). Path
 # dependency, same workspace.
 phlow-json = { path = "../phlow-json" }
+# phlow-agent: the real Online Context Compact under test for task-46
+# (solpi::context_compact::evaluate_compaction). Path dependency, same
+# workspace.
+phlow-agent = { path = "../phlow-agent" }
+# phlow-tuios: the real hook subprocess fan-out under test for task-47
+# (hooks::HookManager + counting semaphores) and the real mailbox ring
+# under test for task-50 (mailbox::Mailbox). Path dependency, same
+# workspace.
+phlow-tuios = { path = "../phlow-tuios" }
 # rmpv: the scripted msgpack-RPC socket peer in the task-25 driver —
 # the same codec the transport uses. No derive-based validation.
 rmpv = "1"

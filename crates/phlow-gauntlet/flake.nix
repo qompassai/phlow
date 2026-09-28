@@ -7,8 +7,8 @@
 #
 # ROSTER SCHEME (two levels — read this before extending):
 # - `gauntletRoster` declares EVERY task as pure data: { id, name, kind },
-#   split into `tasks01to45` (drivers landed in this crate) and
-#   `tasks46to70` (designed; driver not yet written by a wave worker).
+#   split into `tasks01to50` (drivers landed in this crate) and
+#   `tasks51to70` (designed; driver not yet written by a wave worker).
 #   Roster asserts validate ALL 70 entries, so a pending declaration is
 #   checked long before its driver lands.
 # - Apps (`apps.task-NN`), the `gauntlet` runner, and `checks.task-list`
@@ -17,7 +17,7 @@
 #   doc's flake plan ("assert all 70 apps exist"): the plan is data-right
 #   but honesty-wrong while drivers 21-70 do not exist.
 # - When a wave worker lands a driver, move that task's entry from
-#   `tasks46to70` to `tasks01to45` (`rosterImplemented` grows,
+#   `tasks51to70` to the implemented side (`rosterImplemented` grows,
 #   `rosterPending` shrinks). The asserts, app generation, runner, and
 #   checks all consume the two segments via `gauntletRoster` and
 #   `implementedTasks` — no other edits needed.
@@ -64,8 +64,8 @@
       # (task-01..task-70), no more.
       taskCountMax = 70;
 
-      # Roster segment: tasks 01-45. Drivers landed in this crate
-      # (`src/tasks/task_01.rs` .. `src/tasks/task_45.rs`).
+      # Roster segment: tasks 01-50. Drivers landed in this crate
+      # (`src/tasks/task_01.rs` .. `src/tasks/task_50.rs`).
       # Contract: each entry is { id, name, kind } with id "task-NN",
       # name from the gauntlet-design.md task table, and kind in
       # { "nvim-lua", "rust" }.
@@ -299,11 +299,12 @@
         }
       ];
 
-      # Roster segment: tasks 46-70. Designed in
-      # ~/workspace/gauntlet-design-tasks-21-70.md; drivers NOT yet
-      # written — declared as data only, no apps. Same { id, name, kind }
-      # contract as above.
-      tasks46to70 = [
+      # Roster segment: tasks 46-50. Drivers landed in this crate
+      # (`src/tasks/task_46.rs` .. `src/tasks/task_50.rs`).
+      # Contract: each entry is { id, name, kind } with id "task-NN",
+      # name from the gauntlet-design.md task table, and kind in
+      # { "nvim-lua", "rust" }.
+      tasks46to50 = [
         {
           id = "task-46";
           name = "context pressure compaction";
@@ -329,6 +330,13 @@
           name = "bounded event buffers";
           kind = "rust";
         }
+      ];
+
+      # Roster segment: tasks 51-70. Designed in
+      # ~/workspace/gauntlet-design-tasks-21-70.md; drivers NOT yet
+      # written — declared as data only, no apps. Same { id, name, kind }
+      # contract as above.
+      tasks51to70 = [
         {
           id = "task-51";
           name = "byzantine worker detection";
@@ -434,9 +442,10 @@
       # Segment membership IS the implemented/pending signal: a task with
       # a driver lives in `rosterImplemented`, a designed-but-driverless
       # task in `rosterPending`. Tasks 71-100 slot in by appending a third
-      # segment to `rosterPending` (e.g. `tasks46to70 ++ tasks71to100`).
-      rosterImplemented = tasks01to45;
-      rosterPending = tasks46to70;
+      # segment to `rosterPending` (e.g. `tasks51to70 ++ tasks71to100`).
+      tasks01to50 = tasks01to45 ++ tasks46to50;
+      rosterImplemented = tasks01to50;
+      rosterPending = tasks51to70;
 
       # Full declared roster: segments concatenated, nothing hardcoded.
       gauntletRoster = rosterImplemented ++ rosterPending;
