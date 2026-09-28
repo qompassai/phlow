@@ -51,7 +51,7 @@ graph TB
     end
 
     subgraph AGENTLOOP["Agent loop"]
-        ORCH["phlow-agent · Orchestrator<br/>planner → coder → verification → reviewer<br/>bounded iterations"]
+        ORCH["phlow-agent · Orchestrator<br/>planner → coder → verification → reviewer<br/>bounded iterations<br/>contrastive System-1 scoring · best-of-N verifier"]
         CTX["context · memory<br/>rusqlite-backed"]
     end
 
@@ -72,7 +72,7 @@ graph TB
     end
 
     subgraph SUPPORT["Supporting"]
-        INF["phlow-inference<br/>kv_policy · speculative · tiered_cache · two_stage<br/>pre-existing crate, not part of the port"]
+        INF["phlow-inference<br/>kv_policy · speculative · tiered_cache · two_stage<br/>projection heads · vector-arena embedding cache<br/>used by phlow-agent for System-1 scoring"]
     end
 
     subgraph TUI["Terminal frontend"]
@@ -97,6 +97,7 @@ graph TB
     ORCH --> LLM
     ORCH --> TOOLS
     ORCH --> CHECKS
+    ORCH --> INF
     LLM --> OLLAMA
     TOOLS --> WS
     TOOLS --> HOST
@@ -127,8 +128,9 @@ Notes:
 - The MCP tool names `flow_run`, `flow_check`, `flow_status` are deliberately
   **not** renamed: they are the wire contract existing clients speak. Renaming
   them would silently break clients; any rename needs a versioned migration.
-- `phlow-inference` has no edges into the agent path — it is available as a
-  supporting library, not wired into `run`/`serve`.
+- `phlow-inference` is a pre-existing crate (not part of the port) that now
+  also hosts the CLM-adapted embedding cache and projection-head trait;
+  `phlow-agent` depends on it for System-1 scoring.
 
 ## Crate dependency layers
 
@@ -202,6 +204,7 @@ graph TB
     agt --> edt
     agt --> llm
     agt --> rt
+    agt --> inf
     cgen --> cfg
     cgen --> edt
     cgen --> llm
@@ -342,7 +345,7 @@ Derived from each crate's `src/` module list.
 |---|---|---|
 | `phlow-cli` | `cli`, `signal`, `wiring`, `bin/phlow.rs` | The `phlow` binary: flags, exit codes, SIGTERM→130, wiring the Runtime |
 | `phlow-runtime` | `runtime`, `prompt`, `report`, `tools`, `error`, `transport/{http,msgpack}` | The foreman: owns config, agents, tools, reports, shutdown; one owner per handle |
-| `phlow-agent` | `orchestrator`, `context`, `memory` | The conveyor belt: bounded planner → coder → verification → reviewer; rusqlite memory |
+| `phlow-agent` | `orchestrator`, `context`, `memory`, `system1`, `best_of_n` | The conveyor belt: bounded planner → coder → verification → reviewer; rusqlite memory; contrastive System-1 scoring; best-of-N verifier |
 | `phlow-llm` | `transport`, `payload`, `prompts`, `error` | Ollama backend: local model calls, loopback only |
 | `phlow-tools` | `registry`, `file_ops`, `shell`, `lsp_check`, `web_search`, `json_compat`, `error` | Tool implementations + Python-compatible JSON serialization |
 | `phlow-mcp` | `server`, `protocol`, `schema`, `json_ascii`, `error` | The MCP window: newline JSON-RPC frames over stdin/stdout |
@@ -354,7 +357,7 @@ Derived from each crate's `src/` module list.
 | `phlow-checks` | `runner`, `disabled` | Operator-approved named checks, exact argv, run on the host |
 | `phlow-codegen` | `app_generator`, `profiles`, `validator`, `error` | Code generation profiles (8 effective), 256-file cap |
 | `phlow-self-improve` | `feedback`, `prompt_evolver`, `skill_store`, `error` | Feedback records and prompt evolution; disabled by default |
-| `phlow-inference` | `kv_policy`, `speculative`, `tiered_cache`, `two_stage` | Inference-serving primitives (DeepSeek-V4.1-Flash ideas); supporting crate |
+| `phlow-inference` | `kv_policy`, `speculative`, `tiered_cache`, `two_stage`, `projection`, `vector_arena` | Inference-serving primitives (DeepSeek-V4.1-Flash ideas); projection-head trait + bounded vector-arena embedding cache (CLM-adapted); supporting crate |
 
 ## Trust boundaries
 
@@ -376,9 +379,9 @@ Derived from each crate's `src/` module list.
 
 - Re-run the derivation commands at the top after any structural change and
   diff the result against the diagrams.
-- When the CLM integration lands (contrastive scoring, bounded caches,
-  best-of-N verifier), add its crates/modules to the capability layer and the
-  dependency graph.
+- The CLM integration (contrastive System-1 scoring, bounded vector-arena
+  cache, best-of-N verifier) has landed in `phlow-agent` + `phlow-inference`;
+  the diagrams above already reflect it.
 - When the tuios integration lands (agent states, inbox, JSON control
   protocol, hooks, session daemon), extend the entry-surface and TUI sections.
 - The mdbook chapter `docs/book/src/architecture.md` is the ELI5 companion;
