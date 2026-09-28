@@ -31,7 +31,7 @@ fn tool_output_redacted_in_logs() {
     assert_eq!(task_149::ID, "task-149");
     let report = check_case("tool_output_redacted_in_logs");
     let m = &report.metrics;
-    assert_eq!(m["leaks_none"].as_bool().unwrap(), true);
+    assert!(m["leaks_none"].as_bool().unwrap());
     assert!(m["entries"].as_u64().unwrap() > 0);
     let joined = report.evidence.join("\n");
     assert!(
@@ -52,10 +52,9 @@ fn tool_output_redacted_in_logs() {
 fn report_redacted_vault_retains_real_value() {
     let report = check_case("report_redacted_vault_retains_real_value");
     let m = &report.metrics;
-    assert_eq!(m["report_clean"].as_bool().unwrap(), true);
-    assert_eq!(
-        m["vault_has_serialize"].as_bool().unwrap(),
-        false,
+    assert!(m["report_clean"].as_bool().unwrap());
+    assert!(
+        !m["vault_has_serialize"].as_bool().unwrap(),
         "SecretVault must stay memory-only"
     );
     let joined = report.evidence.join("\n");
@@ -75,7 +74,7 @@ fn report_redacted_vault_retains_real_value() {
 fn title_exfiltration_redacted() {
     let report = check_case("title_exfiltration_redacted");
     let m = &report.metrics;
-    assert_eq!(m["title_clean"].as_bool().unwrap(), true);
+    assert!(m["title_clean"].as_bool().unwrap());
     let joined = report.evidence.join("\n");
     assert!(
         joined.contains("stored title:") && joined.contains("[REDACTED]"),
@@ -89,7 +88,7 @@ fn title_exfiltration_redacted() {
 fn error_message_redacted_at_boundary() {
     let report = check_case("error_message_redacted_at_boundary");
     let m = &report.metrics;
-    assert_eq!(m["leaks_none"].as_bool().unwrap(), true);
+    assert!(m["leaks_none"].as_bool().unwrap());
     let joined = report.evidence.join("\n");
     assert!(
         !joined.contains("sk-live-"),

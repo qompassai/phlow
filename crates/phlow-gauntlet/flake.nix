@@ -845,6 +845,7 @@
       ];
 
       tasks141to145 = [
+        {
           id = "task-141";
           name = "evidence preservation custody";
           kind = "rust";
@@ -1649,11 +1650,7 @@
         ++ tasks131to135
         ++ tasks141to145
         ++ tasks146to150;
-      rosterPending =
-        tasks136to140
-        ++ tasks151to200
-        ++ tasks201to250
-        ++ tasks251to280;
+      rosterPending = tasks136to140 ++ tasks151to200 ++ tasks201to250 ++ tasks251to280;
 
       # Full declared roster: segments concatenated, nothing hardcoded.
       gauntletRoster = rosterImplemented ++ rosterPending;

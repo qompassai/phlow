@@ -2,11 +2,13 @@
 //!
 //! Four driver cases — 2 validation, 2 adversarial — against the
 //! clearly labeled scripted double (SubmissionGate + fixture approvals
-//! + ManualClock, deterministic, fast). A valid approval with a
-//! matching payload hash submits; an all-green finding with no
-//! approval is refused with `NoApproval`; an approval binding
-//! different bytes is refused with `HashMismatch` (nonce unspent); a
-//! replayed nonce is refused with `ReplayNonce`.
+//! + ManualClock, deterministic, fast):
+//!
+//! - valid approval with a matching payload hash submits;
+//! - all-green finding with no approval is refused with `NoApproval`;
+//! - approval binding different bytes is refused with `HashMismatch`
+//!   (nonce unspent);
+//! - replayed nonce is refused with `ReplayNonce`.
 
 use phlow_gauntlet::skillopt::driver::CaseReport;
 use phlow_gauntlet::tasks::task_146;
