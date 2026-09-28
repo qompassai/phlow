@@ -61,6 +61,11 @@ pub mod task_57;
 pub mod task_58;
 pub mod task_59;
 pub mod task_60;
+pub mod task_61;
+pub mod task_62;
+pub mod task_63;
+pub mod task_64;
+pub mod task_65;
 
 use crate::{Ctx, GauntletError, TaskKind, TaskReport};
 use std::time::Instant;
@@ -142,6 +147,11 @@ pub fn run_task(id: &str, ctx: &Ctx) -> Result<TaskReport, GauntletError> {
         task_58::ID => (task_58::ID, task_58::NAME, task_58::KIND, task_58::run(ctx)),
         task_59::ID => (task_59::ID, task_59::NAME, task_59::KIND, task_59::run(ctx)),
         task_60::ID => (task_60::ID, task_60::NAME, task_60::KIND, task_60::run(ctx)),
+        task_61::ID => (task_61::ID, task_61::NAME, task_61::KIND, task_61::run(ctx)),
+        task_62::ID => (task_62::ID, task_62::NAME, task_62::KIND, task_62::run(ctx)),
+        task_63::ID => (task_63::ID, task_63::NAME, task_63::KIND, task_63::run(ctx)),
+        task_64::ID => (task_64::ID, task_64::NAME, task_64::KIND, task_64::run(ctx)),
+        task_65::ID => (task_65::ID, task_65::NAME, task_65::KIND, task_65::run(ctx)),
         _ => return Err(GauntletError::UnknownTask { id: id.to_string() }),
     };
     let duration_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
@@ -217,6 +227,11 @@ pub fn task_meta(id: &str) -> Option<(&'static str, TaskKind)> {
         task_58::ID => Some((task_58::NAME, task_58::KIND)),
         task_59::ID => Some((task_59::NAME, task_59::KIND)),
         task_60::ID => Some((task_60::NAME, task_60::KIND)),
+        task_61::ID => Some((task_61::NAME, task_61::KIND)),
+        task_62::ID => Some((task_62::NAME, task_62::KIND)),
+        task_63::ID => Some((task_63::NAME, task_63::KIND)),
+        task_64::ID => Some((task_64::NAME, task_64::KIND)),
+        task_65::ID => Some((task_65::NAME, task_65::KIND)),
         _ => None,
     }
 }
