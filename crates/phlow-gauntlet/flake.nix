@@ -9,9 +9,9 @@
 #
 # ROSTER SCHEME (two levels — read this before extending):
 # - `gauntletRoster` declares EVERY task as pure data: { id, name, kind },
-#   split into `tasks01to100` (implemented: drivers for 01-100 all landed
-#   in this crate, waves 01-19) and `tasks101to115` (pending: designed in
-#   the two extension docs above, wave 20-21, drivers not yet landed).
+#   split into `tasks01to105` (implemented: drivers for 01-105 all landed
+#   in this crate, waves 01-20) and `tasks106to115` (pending: designed in
+#   the two extension docs above, wave 21, drivers not yet landed).
 #   Roster asserts validate ALL 115 entries.
 # - Apps (`apps.task-NN`), the `gauntlet` runner, and `checks.task-list`
 #   cover IMPLEMENTED tasks only. The flake never claims an app for a
@@ -24,7 +24,7 @@
 #   checks all consume the two segments via `gauntletRoster` and
 #   `implementedTasks` — no other edits needed. Waves through 96-100
 #   landed every designed task, so the implemented side is complete
-#   through task-100; the pending side holds tasks 101-115 until their
+#   through task-105; the pending side holds tasks 106-115 until their
 #   drivers land.
 # - `tasks01to60` was once referenced but never defined (dangling binding
 #   in the 70-task flake); it is defined here so the implemented
@@ -661,7 +661,7 @@
       # ~/workspace/gauntlet-design-tasks-101-115.md (waves 20-22,
       # SkillOpt extension); drivers have not landed, so this segment
       # is PENDING. Same { id, name, kind } contract as above.
-      tasks101to115 = [
+      tasks101to105 = [
         {
           id = "task-101";
           name = "edit-budget bound ablation";
@@ -687,6 +687,8 @@
           name = "evidence-size robustness";
           kind = "rust";
         }
+      ];
+      tasks106to115 = [
         {
           id = "task-106";
           name = "loop convergence dynamics";
@@ -753,8 +755,9 @@
       tasks01to90 = tasks01to85 ++ tasks86to90;
       tasks01to95 = tasks01to90 ++ tasks91to95;
       tasks01to100 = tasks01to95 ++ tasks96to100;
-      rosterImplemented = tasks01to100;
-      rosterPending = tasks101to115;
+      tasks01to105 = tasks01to100 ++ tasks101to105;
+      rosterImplemented = tasks01to105;
+      rosterPending = tasks106to115;
 
       # Full declared roster: segments concatenated, nothing hardcoded.
       gauntletRoster = rosterImplemented ++ rosterPending;

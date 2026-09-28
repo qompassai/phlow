@@ -1656,6 +1656,7 @@ dependencies = [
  "phlow-mcp",
  "phlow-runtime",
  "phlow-tuios",
+ "reqwest",
  "rmpv",
  "serde_json",
  "sha2 0.10.9",

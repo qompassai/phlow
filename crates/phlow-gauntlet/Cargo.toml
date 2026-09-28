@@ -2,7 +2,7 @@
 name = "phlow-gauntlet"
 version = "0.1.0"
 edition = "2024"
-description = "100-task agent-orchestration proving ground for phlow: task drivers, failure recorder, and report CLI. EXPERIMENTAL — drives only test doubles and headless Neovim; enables no production behavior."
+description = "115-task agent-orchestration proving ground for phlow (105 implemented): task drivers, failure recorder, and report CLI. EXPERIMENTAL — drives only test doubles and headless Neovim; enables no production behavior."
 license = "MIT OR Apache-2.0"
 
 [lib]
@@ -57,6 +57,13 @@ phlow-inference = { path = "../phlow-inference" }
 phlow-mcp = { path = "../phlow-mcp" }
 # rmpv: the scripted msgpack-RPC socket peer in the task-25 driver —
 # the same codec the transport uses. No derive-based validation.
+# reqwest: the real SkillOpt optimizer backend speaks Ollama's
+# /api/generate over HTTP. blocking (the Optimizer trait is sync),
+# rustls-webpki-roots, no default features — the same posture as
+# phlow-runtime's ReqwestTransport (no proxy, no redirects). reqwest's
+# /v1/chat/completions path stays in phlow-runtime; this crate needs
+# /api/generate (think:false), which the runtime does not expose.
+reqwest = { version = "=0.12.28", default-features = false, features = ["blocking", "json", "rustls-tls-webpki-roots"] }
 rmpv = "1"
 # serde_json: build the JSON verdict/report objects. No derive-based validation.
 serde_json = "1"
