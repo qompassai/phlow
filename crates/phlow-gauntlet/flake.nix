@@ -1,30 +1,35 @@
 # crates/phlow-gauntlet/flake.nix
 #
-# Phlow 70-task orchestration gauntlet: Nix entry points for the task
+# Phlow 115-task orchestration gauntlet: Nix entry points for the task
 # drivers in `crates/phlow-gauntlet` (tasks 01-20 designed in
 # ~/workspace/gauntlet-design.md; tasks 21-70 designed in
-# ~/workspace/gauntlet-design-tasks-21-70.md).
+# ~/workspace/gauntlet-design-tasks-21-70.md; tasks 71-100 designed in
+# ~/workspace/gauntlet-design-tasks-71-100.md; tasks 101-115 designed in
+# ~/workspace/gauntlet-design-tasks-101-115.md).
 #
 # ROSTER SCHEME (two levels — read this before extending):
 # - `gauntletRoster` declares EVERY task as pure data: { id, name, kind },
-#   split into `tasks01to65` and `tasks66to70` (drivers for 01-70 all
-#   landed in this crate; wave 66-70 completed the range). Roster
-#   asserts validate ALL 70 entries.
+#   split into `tasks01to70` (implemented: drivers for 01-70 all landed
+#   in this crate, waves 01-13) and `tasks71to115` (pending: designed in
+#   the two extension docs above, waves 14-22, drivers not yet landed).
+#   Roster asserts validate ALL 115 entries.
 # - Apps (`apps.task-NN`), the `gauntlet` runner, and `checks.task-list`
 #   cover IMPLEMENTED tasks only. The flake never claims an app for a
 #   task without a driver. This deliberately deviates from the design
-#   doc's flake plan ("assert all 70 apps exist"): the plan is data-right
-#   but honesty-wrong while drivers 21-70 do not exist.
+#   docs' flake plans ("assert all 100/115 apps exist"): the plan is
+#   data-right but honesty-wrong while drivers 71-115 do not exist.
 # - When a wave worker lands a driver, move that task's entry from the
 #   pending side to the implemented side (`rosterImplemented` grows,
 #   `rosterPending` shrinks). The asserts, app generation, runner, and
 #   checks all consume the two segments via `gauntletRoster` and
 #   `implementedTasks` — no other edits needed. Waves through 66-70
-#   have landed every designed task, so `rosterPending` is empty.
-# - Tasks 71-100 slot in as a third segment: add `tasks71to100 = [ ... ];`
-#   and extend the pending concatenation below; raise `taskCountMax` and
-#   the generated `expectedIds` grow with it. Nothing is hardcoded to 70
-#   except the named bound.
+#   landed every designed task, so the implemented side is complete
+#   through task-70; the pending side holds tasks 71-115 until their
+#   drivers land.
+# - `tasks01to60` was once referenced but never defined (dangling binding
+#   in the 70-task flake); it is defined here so the implemented
+#   concatenation evaluates. Nothing is hardcoded to 115 except the
+#   named bound `taskCountMax`.
 #
 # INPUT PINS: `nixpkgs` tracks the `nixos-25.05` branch and `flake-utils`
 # tracks its default branch. No `flake.lock` exists yet (no Nix evaluator in
@@ -48,7 +53,7 @@
 # Evaluator: Nix 2.x with the `nix-command` and `flakes` experimental
 # features enabled. Nixpkgs: nixos-25.05 (locked on primo, see above).
 {
-  description = "phlow 70-task gauntlet: declared roster, apps for implemented drivers";
+  description = "phlow 115-task gauntlet: declared roster, apps for implemented drivers";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
@@ -60,9 +65,9 @@
     let
       inherit (nixpkgs) lib;
 
-      # Named bound on the declared roster: exactly 70 entries
-      # (task-01..task-70), no more.
-      taskCountMax = 70;
+      # Named bound on the declared roster: exactly 115 entries
+      # (task-01..task-115), no more.
+      taskCountMax = 115;
 
       # Roster segment: tasks 01-50. Drivers landed in this crate
       # (`src/tasks/task_01.rs` .. `src/tasks/task_50.rs`).
@@ -458,20 +463,262 @@
         }
       ];
 
+      # Roster segment: tasks 71-100. Designed in
+      # ~/workspace/gauntlet-design-tasks-71-100.md (waves 14-19);
+      # drivers have not landed, so this segment is PENDING. Same
+      # { id, name, kind } contract as above.
+      tasks71to100 = [
+        {
+          id = "task-71";
+          name = "delegation depth attribution";
+          kind = "nvim-lua";
+        }
+        {
+          id = "task-72";
+          name = "context handoff fidelity";
+          kind = "nvim-lua";
+        }
+        {
+          id = "task-73";
+          name = "subagent failure containment";
+          kind = "nvim-lua";
+        }
+        {
+          id = "task-74";
+          name = "result aggregation under partial failure";
+          kind = "rust";
+        }
+        {
+          id = "task-75";
+          name = "delegation cycle detection";
+          kind = "nvim-lua";
+        }
+        {
+          id = "task-76";
+          name = "tokenizer boundary mismatch";
+          kind = "rust";
+        }
+        {
+          id = "task-77";
+          name = "quantization behavior change";
+          kind = "rust";
+        }
+        {
+          id = "task-78";
+          name = "model download and cache budgets";
+          kind = "rust";
+        }
+        {
+          id = "task-79";
+          name = "offline fallback";
+          kind = "rust";
+        }
+        {
+          id = "task-80";
+          name = "local model selection tradeoffs";
+          kind = "nvim-lua";
+        }
+        {
+          id = "task-81";
+          name = "provider auth failure modes";
+          kind = "rust";
+        }
+        {
+          id = "task-82";
+          name = "provider rate-limit protocol compliance";
+          kind = "rust";
+        }
+        {
+          id = "task-83";
+          name = "streaming vs non-streaming parity";
+          kind = "rust";
+        }
+        {
+          id = "task-84";
+          name = "provider outage failover";
+          kind = "rust";
+        }
+        {
+          id = "task-85";
+          name = "provider usage accounting integrity";
+          kind = "nvim-lua";
+        }
+        {
+          id = "task-86";
+          name = "MCP capability negotiation mismatch";
+          kind = "nvim-lua";
+        }
+        {
+          id = "task-87";
+          name = "MCP session resumption";
+          kind = "nvim-lua";
+        }
+        {
+          id = "task-88";
+          name = "A2A error-shape propagation";
+          kind = "rust";
+        }
+        {
+          id = "task-89";
+          name = "protocol version skew";
+          kind = "rust";
+        }
+        {
+          id = "task-90";
+          name = "namespaced cross-protocol dispatch";
+          kind = "nvim-lua";
+        }
+        {
+          id = "task-91";
+          name = "propose→approve→apply pipeline";
+          kind = "rust";
+        }
+        {
+          id = "task-92";
+          name = "proposal scope binding and drift detection";
+          kind = "nvim-lua";
+        }
+        {
+          id = "task-93";
+          name = "improvement sandbox validation";
+          kind = "rust";
+        }
+        {
+          id = "task-94";
+          name = "improvement rollback";
+          kind = "rust";
+        }
+        {
+          id = "task-95";
+          name = "approval render integrity (WYSIWYG)";
+          kind = "nvim-lua";
+        }
+        {
+          id = "task-96";
+          name = "cross-agent approval laundering";
+          kind = "rust";
+        }
+        {
+          id = "task-97";
+          name = "gate self-modification attempt";
+          kind = "rust";
+        }
+        {
+          id = "task-98";
+          name = "incremental composition attack";
+          kind = "rust";
+        }
+        {
+          id = "task-99";
+          name = "approval fatigue and dark-pattern proposals";
+          kind = "nvim-lua";
+        }
+        {
+          id = "task-100";
+          name = "artifact swap between pipeline stages";
+          kind = "rust";
+        }
+      ];
+
+      # Roster segment: tasks 101-115. Designed in
+      # ~/workspace/gauntlet-design-tasks-101-115.md (waves 20-22,
+      # SkillOpt extension); drivers have not landed, so this segment
+      # is PENDING. Same { id, name, kind } contract as above.
+      tasks101to115 = [
+        {
+          id = "task-101";
+          name = "edit-budget bound ablation";
+          kind = "rust";
+        }
+        {
+          id = "task-102";
+          name = "selection-gate ablation";
+          kind = "rust";
+        }
+        {
+          id = "task-103";
+          name = "rejected-buffer ablation";
+          kind = "rust";
+        }
+        {
+          id = "task-104";
+          name = "slow-meta ablation";
+          kind = "rust";
+        }
+        {
+          id = "task-105";
+          name = "evidence-size robustness";
+          kind = "rust";
+        }
+        {
+          id = "task-106";
+          name = "loop convergence dynamics";
+          kind = "rust";
+        }
+        {
+          id = "task-107";
+          name = "cross-family skill transfer";
+          kind = "rust";
+        }
+        {
+          id = "task-108";
+          name = "cross-harness skill transfer";
+          kind = "nvim-lua";
+        }
+        {
+          id = "task-109";
+          name = "adversarial edit catch rate";
+          kind = "rust";
+        }
+        {
+          id = "task-110";
+          name = "poisoned rollout evidence";
+          kind = "rust";
+        }
+        {
+          id = "task-111";
+          name = "selection-split overfitting";
+          kind = "rust";
+        }
+        {
+          id = "task-112";
+          name = "skill-document prompt injection";
+          kind = "nvim-lua";
+        }
+        {
+          id = "task-113";
+          name = "edit-budget accounting evasion";
+          kind = "rust";
+        }
+        {
+          id = "task-114";
+          name = "slow-update integrity";
+          kind = "rust";
+        }
+        {
+          id = "task-115";
+          name = "skill-export approval render";
+          kind = "nvim-lua";
+        }
+      ];
+
       # Segment membership IS the implemented/pending signal: a task with
       # a driver lives in `rosterImplemented`, a designed-but-driverless
-      # task in `rosterPending`. Tasks 71-100 slot in by appending a third
-      # segment to `rosterPending` (e.g. `rosterPending ++ tasks71to100`).
+      # task in `rosterPending`. `tasks01to60` was missing from the
+      # 70-task flake (dangling reference); it is the concatenation of
+      # the first four implemented segments.
+      tasks01to60 = tasks01to45 ++ tasks46to50 ++ tasks51to55 ++ tasks56to60;
       tasks01to65 = tasks01to60 ++ tasks61to65;
       tasks01to70 = tasks01to65 ++ tasks66to70;
+      tasks71to115 = tasks71to100 ++ tasks101to115;
       rosterImplemented = tasks01to70;
-      rosterPending = [];
+      rosterPending = tasks71to115;
 
       # Full declared roster: segments concatenated, nothing hardcoded.
       gauntletRoster = rosterImplemented ++ rosterPending;
 
-      # Roster invariant: the concatenated table really is the 70 declared
-      # entries, each well-shaped, ids unique and exactly task-01..task-70.
+      # Roster invariant: the concatenated table really is the 115 declared
+      # entries, each well-shaped, ids unique and exactly task-01..task-115.
       # Laziness note: these asserts fire when a per-system output that
       # references `implementedTasks` is evaluated, not at flake load.
       # `checks.task-list` forces that evaluation under `nix flake check`.
@@ -479,10 +726,13 @@
         let
           ids = map (t: t.id) gauntletRoster;
           sortedIds = builtins.sort builtins.lessThan ids;
-          # Zero-padded so lexicographic sort matches numeric order;
-          # no truncation, so task-100+ still compare correctly.
+          # `padId` pads single-digit ids only, so lexicographic sort order
+          # (e.g. task-100 before task-11) is NOT numeric order once ids
+          # pass two digits. Sort the generated expectation with the same
+          # comparator as the roster ids: the assert then checks the id
+          # SET (exactly task-01..task-<taskCountMax>), not the order.
           padId = n: "task-" + (if n < 9 then "0" else "") + toString (n + 1);
-          expectedIds = lib.genList padId taskCountMax;
+          expectedIds = builtins.sort builtins.lessThan (lib.genList padId taskCountMax);
         in
         assert builtins.length gauntletRoster == taskCountMax;
         assert builtins.length (lib.unique ids) == taskCountMax;
@@ -716,7 +966,7 @@
           # (1) every implemented task has an app;
           # (2) no app exists for a task that is not implemented.
           # Pending tasks are validated as roster DATA by `validatedRoster`
-          # (length, id uniqueness, exact task-01..task-70 sequence, entry
+          # (length, id uniqueness, exact task-01..task-115 sequence, entry
           # shape, kind set) — never as apps. The asserts fire when this
           # check is evaluated; the trivial derivation exists so
           # `nix flake check` exercises them.
