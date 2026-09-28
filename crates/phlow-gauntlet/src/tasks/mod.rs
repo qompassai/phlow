@@ -1,4 +1,4 @@
-//! The 60 gauntlet tasks. One module per task; each file has a single
+//! The 75 gauntlet tasks. One module per task; each file has a single
 //! owning worker during implementation (disjoint ownership).
 
 pub mod task_01;
@@ -71,6 +71,11 @@ pub mod task_67;
 pub mod task_68;
 pub mod task_69;
 pub mod task_70;
+pub mod task_71;
+pub mod task_72;
+pub mod task_73;
+pub mod task_74;
+pub mod task_75;
 
 use crate::{Ctx, GauntletError, TaskKind, TaskReport};
 use std::time::Instant;
@@ -86,7 +91,8 @@ pub const TASK_IDS: [&str; crate::TASK_COUNT_MAX] = [
     "task-41", "task-42", "task-43", "task-44", "task-45", "task-46", "task-47", "task-48",
     "task-49", "task-50", "task-51", "task-52", "task-53", "task-54", "task-55", "task-56",
     "task-57", "task-58", "task-59", "task-60", "task-61", "task-62", "task-63", "task-64",
-    "task-65", "task-66", "task-67", "task-68", "task-69", "task-70",
+    "task-65", "task-66", "task-67", "task-68", "task-69", "task-70", "task-71", "task-72",
+    "task-73", "task-74", "task-75",
 ];
 
 /// Run one task by id and record a `TaskReport`.
@@ -163,6 +169,11 @@ pub fn run_task(id: &str, ctx: &Ctx) -> Result<TaskReport, GauntletError> {
         task_68::ID => (task_68::ID, task_68::NAME, task_68::KIND, task_68::run(ctx)),
         task_69::ID => (task_69::ID, task_69::NAME, task_69::KIND, task_69::run(ctx)),
         task_70::ID => (task_70::ID, task_70::NAME, task_70::KIND, task_70::run(ctx)),
+        task_71::ID => (task_71::ID, task_71::NAME, task_71::KIND, task_71::run(ctx)),
+        task_72::ID => (task_72::ID, task_72::NAME, task_72::KIND, task_72::run(ctx)),
+        task_73::ID => (task_73::ID, task_73::NAME, task_73::KIND, task_73::run(ctx)),
+        task_74::ID => (task_74::ID, task_74::NAME, task_74::KIND, task_74::run(ctx)),
+        task_75::ID => (task_75::ID, task_75::NAME, task_75::KIND, task_75::run(ctx)),
         _ => return Err(GauntletError::UnknownTask { id: id.to_string() }),
     };
     let duration_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
@@ -248,6 +259,11 @@ pub fn task_meta(id: &str) -> Option<(&'static str, TaskKind)> {
         task_68::ID => Some((task_68::NAME, task_68::KIND)),
         task_69::ID => Some((task_69::NAME, task_69::KIND)),
         task_70::ID => Some((task_70::NAME, task_70::KIND)),
+        task_71::ID => Some((task_71::NAME, task_71::KIND)),
+        task_72::ID => Some((task_72::NAME, task_72::KIND)),
+        task_73::ID => Some((task_73::NAME, task_73::KIND)),
+        task_74::ID => Some((task_74::NAME, task_74::KIND)),
+        task_75::ID => Some((task_75::NAME, task_75::KIND)),
         _ => None,
     }
 }
