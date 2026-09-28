@@ -2,7 +2,7 @@
 name = "phlow-gauntlet"
 version = "0.1.0"
 edition = "2024"
-description = "20-task agent-orchestration proving ground for phlow: task drivers, failure recorder, and report CLI. EXPERIMENTAL — drives only test doubles and headless Neovim; enables no production behavior."
+description = "25-task agent-orchestration proving ground for phlow: task drivers, failure recorder, and report CLI. EXPERIMENTAL — drives only test doubles and headless Neovim; enables no production behavior."
 license = "MIT OR Apache-2.0"
 
 [lib]
@@ -20,6 +20,16 @@ phlow-experiment = { path = "../phlow-experiment" }
 # phlow-council: the real council arbitration under test (review.rs vote
 # tally). Path dependency, same workspace.
 phlow-council = { path = "../phlow-council" }
+# phlow-runtime: the real msgpack transport under test for task-25
+# (transport/msgpack.rs bounded mpsc worker channel). Path dependency,
+# same workspace.
+phlow-runtime = { path = "../phlow-runtime" }
+# phlow-editor: the EditorTransport trait + contract constants the
+# task-25 driver speaks through. Path dependency, same workspace.
+phlow-editor = { path = "../phlow-editor" }
+# rmpv: the scripted msgpack-RPC socket peer in the task-25 driver —
+# the same codec the transport uses. No derive-based validation.
+rmpv = "1"
 # serde_json: build the JSON verdict/report objects. No derive-based validation.
 serde_json = "1"
 # Crypto for the task-11 approval fixtures: the driver dual-signs genuine

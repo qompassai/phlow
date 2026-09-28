@@ -1,4 +1,4 @@
-//! The 20 gauntlet tasks. One module per task; each file has a single
+//! The 25 gauntlet tasks. One module per task; each file has a single
 //! owning worker during implementation (disjoint ownership).
 
 pub mod task_01;
@@ -21,6 +21,11 @@ pub mod task_17;
 pub mod task_18;
 pub mod task_19;
 pub mod task_20;
+pub mod task_21;
+pub mod task_22;
+pub mod task_23;
+pub mod task_24;
+pub mod task_25;
 
 use crate::{Ctx, GauntletError, TaskKind, TaskReport};
 use std::time::Instant;
@@ -30,7 +35,8 @@ use std::time::Instant;
 pub const TASK_IDS: [&str; crate::TASK_COUNT_MAX] = [
     "task-01", "task-02", "task-03", "task-04", "task-05", "task-06", "task-07", "task-08",
     "task-09", "task-10", "task-11", "task-12", "task-13", "task-14", "task-15", "task-16",
-    "task-17", "task-18", "task-19", "task-20",
+    "task-17", "task-18", "task-19", "task-20", "task-21", "task-22", "task-23", "task-24",
+    "task-25",
 ];
 
 /// Run one task by id and record a `TaskReport`.
@@ -57,6 +63,11 @@ pub fn run_task(id: &str, ctx: &Ctx) -> Result<TaskReport, GauntletError> {
         task_18::ID => (task_18::ID, task_18::NAME, task_18::KIND, task_18::run(ctx)),
         task_19::ID => (task_19::ID, task_19::NAME, task_19::KIND, task_19::run(ctx)),
         task_20::ID => (task_20::ID, task_20::NAME, task_20::KIND, task_20::run(ctx)),
+        task_21::ID => (task_21::ID, task_21::NAME, task_21::KIND, task_21::run(ctx)),
+        task_22::ID => (task_22::ID, task_22::NAME, task_22::KIND, task_22::run(ctx)),
+        task_23::ID => (task_23::ID, task_23::NAME, task_23::KIND, task_23::run(ctx)),
+        task_24::ID => (task_24::ID, task_24::NAME, task_24::KIND, task_24::run(ctx)),
+        task_25::ID => (task_25::ID, task_25::NAME, task_25::KIND, task_25::run(ctx)),
         _ => return Err(GauntletError::UnknownTask { id: id.to_string() }),
     };
     let duration_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
@@ -92,6 +103,11 @@ pub fn task_meta(id: &str) -> Option<(&'static str, TaskKind)> {
         task_18::ID => Some((task_18::NAME, task_18::KIND)),
         task_19::ID => Some((task_19::NAME, task_19::KIND)),
         task_20::ID => Some((task_20::NAME, task_20::KIND)),
+        task_21::ID => Some((task_21::NAME, task_21::KIND)),
+        task_22::ID => Some((task_22::NAME, task_22::KIND)),
+        task_23::ID => Some((task_23::NAME, task_23::KIND)),
+        task_24::ID => Some((task_24::NAME, task_24::KIND)),
+        task_25::ID => Some((task_25::NAME, task_25::KIND)),
         _ => None,
     }
 }
