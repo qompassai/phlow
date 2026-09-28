@@ -19,7 +19,8 @@
 #   harness Phase-2 acceptance probes, waves 116-120, 121-125, and
 #   126-130), `tasks106to110` (implemented: SkillOpt wave 21, drivers
 #   landed), `tasks111to115` (implemented: SkillOpt wave 22, drivers
-#   landed), and `tasks131to150` (pending: async bug-bounty cyclical
+#   landed), `tasks131to135` (implemented: bug-bounty wave 23, drivers
+#   landed), `tasks136to150` (pending: async bug-bounty cyclical
 #   workflow, designed in the extension docs, drivers not yet landed),
 #   `tasks151to200` (pending: Ghostex adaptation waves 25-32,
 #   designed in the extension docs, drivers not yet landed),
@@ -787,7 +788,7 @@
         }
       ];
 
-      tasks131to150 = [
+      tasks131to135 = [
         {
           id = "task-131";
           name = "scheduled scope refresh";
@@ -813,6 +814,9 @@
           name = "approval expiry";
           kind = "rust";
         }
+      ];
+
+      tasks136to150 = [
         {
           id = "task-136";
           name = "bounded concurrency queueing";
@@ -1632,8 +1636,9 @@
       tasks01to105 = tasks01to100 ++ tasks101to105;
       tasks116to125 = tasks116to120 ++ tasks121to125;
       tasks116to130 = tasks116to125 ++ tasks126to130;
-      rosterImplemented = tasks01to105 ++ tasks106to110 ++ tasks111to115 ++ tasks116to130;
-      rosterPending = tasks131to150 ++ tasks151to200 ++ tasks201to250 ++ tasks251to280;
+      rosterImplemented =
+        tasks01to105 ++ tasks106to110 ++ tasks111to115 ++ tasks116to130 ++ tasks131to135;
+      rosterPending = tasks136to150 ++ tasks151to200 ++ tasks201to250 ++ tasks251to280;
 
       # Full declared roster: segments concatenated, nothing hardcoded.
       gauntletRoster = rosterImplemented ++ rosterPending;
