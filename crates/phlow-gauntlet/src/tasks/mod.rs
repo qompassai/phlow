@@ -1,4 +1,4 @@
-//! The 35 gauntlet tasks. One module per task; each file has a single
+//! The 45 gauntlet tasks. One module per task; each file has a single
 //! owning worker during implementation (disjoint ownership).
 
 pub mod task_01;
@@ -41,6 +41,11 @@ pub mod task_37;
 pub mod task_38;
 pub mod task_39;
 pub mod task_40;
+pub mod task_41;
+pub mod task_42;
+pub mod task_43;
+pub mod task_44;
+pub mod task_45;
 
 use crate::{Ctx, GauntletError, TaskKind, TaskReport};
 use std::time::Instant;
@@ -53,6 +58,7 @@ pub const TASK_IDS: [&str; crate::TASK_COUNT_MAX] = [
     "task-17", "task-18", "task-19", "task-20", "task-21", "task-22", "task-23", "task-24",
     "task-25", "task-26", "task-27", "task-28", "task-29", "task-30", "task-31", "task-32",
     "task-33", "task-34", "task-35", "task-36", "task-37", "task-38", "task-39", "task-40",
+    "task-41", "task-42", "task-43", "task-44", "task-45",
 ];
 
 /// Run one task by id and record a `TaskReport`.
@@ -99,6 +105,11 @@ pub fn run_task(id: &str, ctx: &Ctx) -> Result<TaskReport, GauntletError> {
         task_38::ID => (task_38::ID, task_38::NAME, task_38::KIND, task_38::run(ctx)),
         task_39::ID => (task_39::ID, task_39::NAME, task_39::KIND, task_39::run(ctx)),
         task_40::ID => (task_40::ID, task_40::NAME, task_40::KIND, task_40::run(ctx)),
+        task_41::ID => (task_41::ID, task_41::NAME, task_41::KIND, task_41::run(ctx)),
+        task_42::ID => (task_42::ID, task_42::NAME, task_42::KIND, task_42::run(ctx)),
+        task_43::ID => (task_43::ID, task_43::NAME, task_43::KIND, task_43::run(ctx)),
+        task_44::ID => (task_44::ID, task_44::NAME, task_44::KIND, task_44::run(ctx)),
+        task_45::ID => (task_45::ID, task_45::NAME, task_45::KIND, task_45::run(ctx)),
         _ => return Err(GauntletError::UnknownTask { id: id.to_string() }),
     };
     let duration_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
@@ -154,6 +165,11 @@ pub fn task_meta(id: &str) -> Option<(&'static str, TaskKind)> {
         task_38::ID => Some((task_38::NAME, task_38::KIND)),
         task_39::ID => Some((task_39::NAME, task_39::KIND)),
         task_40::ID => Some((task_40::NAME, task_40::KIND)),
+        task_41::ID => Some((task_41::NAME, task_41::KIND)),
+        task_42::ID => Some((task_42::NAME, task_42::KIND)),
+        task_43::ID => Some((task_43::NAME, task_43::KIND)),
+        task_44::ID => Some((task_44::NAME, task_44::KIND)),
+        task_45::ID => Some((task_45::NAME, task_45::KIND)),
         _ => None,
     }
 }
