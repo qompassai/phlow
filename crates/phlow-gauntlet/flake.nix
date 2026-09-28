@@ -24,8 +24,9 @@
 #   landed), `tasks141to145` (implemented: bug-bounty wave 25, drivers
 #   landed), `tasks146to150` (implemented: bug-bounty wave 26, drivers
 #   landed), `tasks151to158` (implemented: Ghostex adaptation wave 25,
-#   drivers landed),
-#   `tasks151to200` (pending: Ghostex adaptation waves 26-32,
+#   drivers landed), `tasks159to165` (implemented: Ghostex adaptation
+#   wave 26, drivers landed),
+#   `tasks151to200` (pending: Ghostex adaptation waves 27-32,
 #   designed in the extension docs, drivers not yet landed),
 #   `tasks201to250` (pending: zeroclaw adaptation waves 33-36,
 #   designed in the extension docs, drivers not yet landed), and
@@ -947,10 +948,8 @@
         }
       ];
 
-      # Pending: Ghostex adaptation waves 26-32 (tasks 159-200).
-      # Designed in ~/workspace/gauntlet-design-tasks-151-200.md;
-      # drivers not yet landed. Runs after tasks151to158.
-      tasks151to200 = [
+      # Implemented: Ghostex adaptation wave 26 (tasks 159-165); drivers landed.
+      tasks159to165 = [
         {
           id = "task-159";
           name = "reconnect ladder";
@@ -986,6 +985,12 @@
           name = "worker shutdown without zombies";
           kind = "rust";
         }
+      ];
+
+      # Pending: Ghostex adaptation waves 27-32 (tasks 166-200).
+      # Designed in ~/workspace/gauntlet-design-tasks-151-200.md;
+      # drivers not yet landed. Runs after tasks159to165.
+      tasks151to200 = [
         {
           id = "task-166";
           name = "pure transition function";
@@ -1658,7 +1663,8 @@
         ++ tasks136to140
         ++ tasks141to145
         ++ tasks146to150
-        ++ tasks151to158;
+        ++ tasks151to158
+        ++ tasks159to165;
       rosterPending = tasks151to200 ++ tasks201to250 ++ tasks251to280;
 
       # Full declared roster: segments concatenated, nothing hardcoded.

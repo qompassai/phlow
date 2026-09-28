@@ -30,6 +30,7 @@
 //! - `docs/gauntlet/`: the per-task learning corpus (ELI5 + cited + depth).
 
 pub mod bounty;
+pub mod daemon_client;
 pub mod skillopt;
 pub mod tasks;
 pub mod wire;
