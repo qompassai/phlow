@@ -7,6 +7,29 @@ All notable changes to phlow are documented here. Format follows
 
 ### Added
 
+- Experimental Mojo worker support, re-expressed as Rust-side contracts in
+  Tiger Style Rust (two new workspace members, `#![forbid(unsafe_code)]`, no
+  new external dependencies). Mojo cannot compile in this workspace, so both
+  crates are contracts + deterministic test doubles:
+  `kernels/mojo` (`phlow-mojo-kernels`: `KernelName` validation, kernel
+  descriptors + registry, `LaunchConfig` geometry validated against
+  `DeviceLimits` with checked arithmetic, `LaunchBudget` planning,
+  `KernelExecutor` boundary with `launch` + `synchronize` mirroring Mojo's
+  `enqueue_function` + `DeviceContext.synchronize()`) and
+  `workers/phlow-mojo-worker` (`phlow-mojo-worker`: lifecycle state machine,
+  bounded task intake with reject-on-full, task ids, generation tokens,
+  in-flight tracking, bounded result queue, cancellation policy, `MojoWorker`
+  trait (`init`, `poll`, `cancel`, `shutdown`) as the boundary a real Mojo
+  implementation plugs into). Each crate's `simulated` feature (default on)
+  provides an in-process test double that performs no GPU work and compiles
+  no Mojo — never a substitute for a real device executor or Mojo worker.
+  Mojo APIs were checked against Modular's Mojo GitHub and
+  docs.modular.com/mojo (concepts only, no Mojo code in-tree). 42 tests,
+  exactly 21 validation / 21 adversarial. Per-crate design records in
+  `kernels/mojo/docs/decisions.md` and
+  `workers/phlow-mojo-worker/docs/decisions.md`. `docs/ARCHITECTURE.md`
+  updated (22 crates, Layer 0 placement, crate table, Mojo landing notes).
+
 - NVlabs GPU-compute concepts, re-expressed in Tiger Style Rust as four new
   CPU-only supporting crates with `#![forbid(unsafe_code)]` and no CUDA
   dependency (upstream concepts only — no verbatim ports; kda is NOASSERTION,

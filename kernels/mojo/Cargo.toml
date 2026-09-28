@@ -1,0 +1,14 @@
+[package]
+name = "phlow-mojo-kernels"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+
+[features]
+# simulated: in-process executor test double. It performs no GPU work and
+# compiles no Mojo; it exists so the launch contract (validated-only plans)
+# is exercisable in tests. Never a substitute for a real device executor.
+default = ["simulated"]
+simulated = []

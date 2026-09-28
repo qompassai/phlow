@@ -1,0 +1,15 @@
+[package]
+name = "phlow-mojo-worker"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+
+[features]
+# simulated: in-process Mojo worker test double. It implements the
+# MojoWorker boundary faithfully (bounds, cancellation, pending polls) but
+# runs ordinary Rust, not Mojo. For tests and interface experiments only;
+# a real Mojo implementation plugs in behind the same trait.
+default = ["simulated"]
+simulated = []

@@ -20,10 +20,11 @@ grep -rn 'path = "\.\./' crates/*/Cargo.toml
 ls crates/*/src
 ```
 
-The workspace is 20 crates: the 14 port crates plus `phlow-inference`,
+The workspace is 22 crates: the 14 port crates plus `phlow-inference`,
 `phlow-tuios`, `phlow-compute`, `phlow-compute-cuda`, `phlow-gpu-worker`,
-and `phlow-council`, supporting crates that are not part of the port and are
-not covered by the Python-parity gates.
+`phlow-council`, `phlow-mojo-kernels`, and `phlow-mojo-worker`, supporting
+crates that are not part of the port and are not covered by the
+Python-parity gates.
 
 ## System architecture
 
@@ -160,6 +161,8 @@ graph TB
         cmp["phlow-compute"]
         cda["phlow-compute-cuda"]
         cnc["phlow-council"]
+        mkj["phlow-mojo-kernels"]
+        mwr["phlow-mojo-worker"]
     end
 
     subgraph L1["Layer 1 — foundation only"]
@@ -227,7 +230,7 @@ graph TB
     cli --> tls
     cli --> tui
 
-    class cfg,jsn,wsp,inf,tui,tio,cmp,cda,cnc l0
+    class cfg,jsn,wsp,inf,tui,tio,cmp,cda,cnc,mkj,mwr l0
     class chk,llm,mcp,edt,sim,gpw l1
     class tls l2
     class rt l3
@@ -241,8 +244,9 @@ Reading the layers:
   workspace. `phlow-tui` and `phlow-inference` sit here because nothing in the
   workspace depends on their internals — the TUI is driven through its facade
   by `phlow-cli`, inference is standalone. `phlow-compute`,
-  `phlow-compute-cuda`, and `phlow-council` are also dependency-free;
-  `phlow-tuios` likewise has no workspace dependents.
+  `phlow-compute-cuda`, `phlow-council`, `phlow-mojo-kernels`, and
+  `phlow-mojo-worker` are also dependency-free; `phlow-tuios` likewise has no
+  workspace dependents.
 - **Layer 1** holds the crates whose only path dependencies are foundation:
   checks, the LLM backend, the MCP server, the editor bridge — and
   `phlow-self-improve`, whose single path dependency is `phlow-workspace`.
@@ -375,6 +379,8 @@ Derived from each crate's `src/` module list.
 | `phlow-compute-cuda` | `arch`, `backend`, `descriptor_file`, `error` | CUDA kernel-target model: `ComputeArch` (sm_80/90/100), structural PTX validation, kernel descriptors, launch-config validation, specialization `KernelPolicy`, bounded `CudaBackend` trait + deterministic CPU simulator; no CUDA driver binding; supporting crate (cuda-oxide concepts adapted) |
 | `phlow-gpu-worker` | `worker`, `job`, `error` | One-job-at-a-time lifecycle dispatcher over `CudaBackend`: Idle/Busy/Stopped state machine, job ids, generation-based cancellation; supporting crate |
 | `phlow-council` | `contract`, `candidate`, `evidence`, `review`, `workflow`, `error` | Domain-free candidate workflow: task contract, candidate lineage, per-candidate evidence, keep/revise/reject council review; keep promotes only verified candidates; supporting crate (kda methodology adapted; kda is NOASSERTION — no kda material copied) |
+| `phlow-mojo-kernels` | `budget`, `descriptor`, `error`, `executor`, `launch` | Mojo kernel contracts, host-side: kernel names/descriptors/registry, launch geometry + `DeviceLimits` validation (checked arithmetic), `LaunchBudget` planning, `KernelExecutor` boundary (`launch` + `synchronize`, mirroring Mojo's `enqueue_function` + `DeviceContext.synchronize()`); `simulated` feature (default) provides a deterministic in-process test double — compiles no Mojo, touches no GPU; supporting crate |
+| `phlow-mojo-worker` | `boundary`, `error`, `harness`, `simulated`, `types` | Experimental Mojo worker harness: Rust owns the lifecycle state machine, bounded task intake (reject-on-full), task ids, generation tokens, in-flight tracking, bounded result queue, cancellation policy; `MojoWorker` trait (`init`, `poll`, `cancel`, `shutdown`) is the boundary a real Mojo implementation plugs into; `simulated` feature (default) provides an in-process test double — runs ordinary Rust, not Mojo; supporting crate |
 
 ## Trust boundaries
 
@@ -414,7 +420,16 @@ Derived from each crate's `src/` module list.
   simulator; no CUDA driver binding), `phlow-gpu-worker` (lifecycle
   dispatcher), and `phlow-council` (kda candidate-workflow methodology;
   kda is NOASSERTION — methodology only, no kda material copied).
-- Remaining planned work: Mojo workers (`workers/phlow-mojo-worker`,
-  `kernels/mojo`).
+- The experimental Mojo worker support has landed as Rust-side contracts
+  only: `kernels/mojo` (`phlow-mojo-kernels`: kernel descriptors, launch
+  validation, budgets, `KernelExecutor` boundary) and
+  `workers/phlow-mojo-worker` (`phlow-mojo-worker`: harness contract +
+  `MojoWorker` trait boundary). Mojo cannot compile in this workspace, so
+  each crate ships a `simulated` test double (default feature) that performs
+  no GPU work and compiles no Mojo; a real Mojo implementation plugs in
+  behind the same traits. All Mojo APIs were checked against Modular's Mojo
+  GitHub and docs.modular.com/mojo.
+- Remaining planned work: none at this level; the port crates are complete
+  and the supporting crates above cover the requested external adaptations.
 - The mdbook chapter `docs/book/src/architecture.md` is the ELI5 companion;
   keep the two consistent on crate roles and product naming.

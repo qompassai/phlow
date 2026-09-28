@@ -1495,6 +1495,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "phlow-mojo-kernels"
+version = "0.1.0"
+
+[[package]]
+name = "phlow-mojo-worker"
+version = "0.1.0"
+
+[[package]]
 name = "phlow-runtime"
 version = "0.2.0"
 dependencies = [
