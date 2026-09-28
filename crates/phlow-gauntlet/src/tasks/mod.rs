@@ -50,7 +50,12 @@ pub mod task_132;
 pub mod task_133;
 pub mod task_134;
 pub mod task_135;
+pub mod task_136;
+pub mod task_137;
+pub mod task_138;
+pub mod task_139;
 pub mod task_14;
+pub mod task_140;
 pub mod task_141;
 pub mod task_142;
 pub mod task_143;
@@ -553,6 +558,36 @@ pub fn run_task(id: &str, ctx: &Ctx) -> Result<TaskReport, GauntletError> {
             task_150::KIND,
             task_150::run(ctx),
         ),
+        task_136::ID => (
+            task_136::ID,
+            task_136::NAME,
+            task_136::KIND,
+            task_136::run(ctx),
+        ),
+        task_137::ID => (
+            task_137::ID,
+            task_137::NAME,
+            task_137::KIND,
+            task_137::run(ctx),
+        ),
+        task_138::ID => (
+            task_138::ID,
+            task_138::NAME,
+            task_138::KIND,
+            task_138::run(ctx),
+        ),
+        task_139::ID => (
+            task_139::ID,
+            task_139::NAME,
+            task_139::KIND,
+            task_139::run(ctx),
+        ),
+        task_140::ID => (
+            task_140::ID,
+            task_140::NAME,
+            task_140::KIND,
+            task_140::run(ctx),
+        ),
         _ => return Err(GauntletError::UnknownTask { id: id.to_string() }),
     };
     let duration_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
@@ -713,6 +748,11 @@ pub fn task_meta(id: &str) -> Option<(&'static str, TaskKind)> {
         task_148::ID => Some((task_148::NAME, task_148::KIND)),
         task_149::ID => Some((task_149::NAME, task_149::KIND)),
         task_150::ID => Some((task_150::NAME, task_150::KIND)),
+        task_136::ID => Some((task_136::NAME, task_136::KIND)),
+        task_137::ID => Some((task_137::NAME, task_137::KIND)),
+        task_138::ID => Some((task_138::NAME, task_138::KIND)),
+        task_139::ID => Some((task_139::NAME, task_139::KIND)),
+        task_140::ID => Some((task_140::NAME, task_140::KIND)),
         _ => None,
     }
 }
