@@ -17,3 +17,22 @@ toml = "0.8"
 # schema only. Validation never relies on derive.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# ml-dsa: ML-DSA-65 post-quantum signatures (FIPS 204), the PQ half of the
+# dual operator-approval signature. Pure Rust, zero unsafe (verified from
+# source). Pinned exact. Default features off: the gate only verifies, so
+# getrandom/pkcs8/alloc are not on the production path.
+ml-dsa = { version = "=0.1.1", default-features = false }
+# ed25519-dalek: Ed25519 classical signatures (RFC 8032), the classical half
+# of the dual approval signature. Pinned exact. Default features off and the
+# `batch` feature never enabled: the gate uses verify_strict only.
+ed25519-dalek = { version = "=3.0.0", default-features = false }
+# sha2: SHA-256 fingerprints for the operator-enrollment ceremony only
+# (registry.rs). Never on the signature-verification path.
+sha2 = "=0.10.9"
+
+[dev-dependencies]
+# Test fixtures dual-sign records with the real crates (default features),
+# so every "genuine" fixture is a true positive, never hardcoded bytes.
+ml-dsa = "=0.1.1"
+ed25519-dalek = "=3.0.0"
+sha2 = "=0.10.9"

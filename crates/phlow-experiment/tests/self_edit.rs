@@ -5,7 +5,10 @@
 #[path = "common/mod.rs"]
 mod common;
 
-use common::{complete_evidence, ok, operator_record, proposal_params, proposal_with_surface};
+use common::{
+    complete_evidence, ok, operator_record, proposal_params, proposal_with_surface, test_agent,
+    test_clock, test_consumed, test_registry,
+};
 use phlow_experiment::{
     ExperimentError, HumanApproval, ImprovementProposal, PromotionGate, ReviewDecision,
     ReviewerDecision, RiskClass, WorkerRole, check_proposal_surface,
@@ -107,8 +110,16 @@ fn proposal_reviewer_rejection_blocks_promotion() {
         decision: ReviewDecision::Reject,
     }];
     let proposal = ok(ImprovementProposal::new(params));
-    let approval = ok(HumanApproval::from_operator_record(operator_record()));
-    let result = PromotionGate::promote(&proposal, approval, &complete_evidence());
+    let approval = ok(HumanApproval::from_operator_record(&operator_record()));
+    let result = PromotionGate::promote(
+        &proposal,
+        approval,
+        &complete_evidence(),
+        test_agent(),
+        &test_clock(),
+        &test_registry(),
+        &mut test_consumed(),
+    );
     assert!(matches!(
         result,
         Err(ExperimentError::ReviewerRejected { .. })
@@ -119,15 +130,9 @@ fn proposal_reviewer_rejection_blocks_promotion() {
 fn proposal_forged_approval_blocks_promotion() {
     // A tampered record cannot produce an approval token, so promotion
     // cannot even be attempted with it.
-    let tampered = "operator: test-operator\n\
-         approval_id: APR-TEST-0001\n\
-         candidate: 9f2b3c4d5e6f708192a3b4c5d6e7f809\n\
-         scope: phlow-experiment/test\n\
-         expires_ms: 1893456000000\n\
-         signature: 0000000000000000000000000000000000000000000000000000000000000000\n\
-         injected: grant-all\n";
+    let tampered = format!("{}injected: grant-all\n", operator_record());
     assert!(matches!(
-        HumanApproval::from_operator_record(tampered),
+        HumanApproval::from_operator_record(&tampered),
         Err(ExperimentError::ApprovalRejected { .. })
     ));
 }

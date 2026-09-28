@@ -6,22 +6,28 @@
 //! returns a typed [`ScenarioVerdict`]; [`run`] aggregates them into a
 //! [`TaskOutcome`] and writes a Markdown report under the task work dir.
 //!
-//! Honest result, verified against the source: the type system and the
-//! record shape check reject naive self-approval and tampered records,
-//! but the agent-vs-approver identity check this task requires does not
-//! exist in the code — `PromotionGate::promote`
-//! (`crates/phlow-experiment/src/promotion.rs:760`) takes no agent
-//! identity, there is no operator registry, and record signatures are
-//! shape-checked only (real signature verification is a documented future
-//! gate). The driver therefore reports failure with file/line evidence
-//! rather than inventing a seam.
+//! Verified against the source: operator records are format v2 and carry a
+//! dual Ed25519 + ML-DSA-65 signature verified against a registry of
+//! enrolled operator keys; `PromotionGate::promote` takes the acting
+//! agent's identity as an explicit parameter and rejects self-approval
+//! first, then replays, unknown/revoked operators, expired or
+//! over-TTL records, and bad signatures — in that order. The two
+//! adversarial scenarios pin the fixed behavior: a well-shaped forgery is
+//! rejected at the gate with `BadSignature`, and a confused-identity
+//! attempt (agent approving as itself) is rejected with `SelfApproval`.
 
 use crate::{Ctx, TaskKind, TaskOutcome, bound_evidence};
 use phlow_experiment::{
-    ArtifactDigest, CheckRun, EvidenceBundle, ExperimentError, HumanApproval, ImprovementProposal,
-    OPERATOR_RECORD_CHARS_MAX, PromotionGate, ProposalBudgets, ProposalParams, ReviewDecision,
-    ReviewerDecision, RiskClass, VerificationOutcome, WorkerRole,
+    ArtifactDigest, CheckRun, ConsumedApprovals, EvidenceBundle, ExperimentError, HumanApproval,
+    ImprovementProposal, ManualClock, OPERATOR_RECORD_CHARS_MAX, OperatorRegistry, PromotionGate,
+    ProposalBudgets, ProposalParams, ReviewDecision, ReviewerDecision, RiskClass,
+    VerificationOutcome, WorkerRole,
 };
+use std::path::{Path, PathBuf};
+
+/// The `signature::Keypair` trait (re-exported by `ml-dsa`), needed for
+/// `verifying_key()` on the ML-DSA signing key.
+use ml_dsa::Keypair as _;
 
 /// Task id.
 pub const ID: &str = "task-11";
@@ -34,12 +40,15 @@ pub const KIND: TaskKind = TaskKind::Rust;
 /// the crate's `EVIDENCE_LINES_MAX` via [`bound_evidence`].
 const SCENARIO_EVIDENCE_LINES_MAX: usize = 12;
 
-/// 64-hex-char signature: well-shaped, but minted by the caller — not by
-/// any operator key. The current code cannot tell the difference.
-const SIGNATURE_HEX_64: &str = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
-
 /// 32-hex-char candidate digest used by every fixture.
 const CANDIDATE_DIGEST_HEX: &str = "9f2b3c4d5e6f708192a3b4c5d6e7f809";
+
+/// Expiry for driver fixtures (2030-01-01T00:00:00Z).
+const EXPIRES_MS: u64 = 1_893_456_000_000;
+
+/// The acting-agent identity for driver scenarios. It is deliberately not
+/// an enrolled operator (the confused-identity scenario overrides it).
+const DRIVER_AGENT: &str = "gauntlet-runner";
 
 /// The observed result of one scenario.
 #[derive(Debug, Clone)]
@@ -71,18 +80,126 @@ fn verdict(
     }
 }
 
-/// Builds a six-key operator approval record. Every value is shape-valid;
-/// the signature is well-formed hex but minted by the caller, never by an
-/// operator key — the current code cannot distinguish the two.
-fn operator_record(operator: &str, signature: &str) -> String {
+// ---------------------------------------------------------------------------
+// Fixtures: real dual-signed v2 records, generated in-driver.
+// ---------------------------------------------------------------------------
+
+/// A deterministic Ed25519 + ML-DSA-65 keypair. Fixed test seeds — never
+/// real key material — so fixtures are reproducible without randomness.
+struct DriverKeypair {
+    ed_sk: ed25519_dalek::SigningKey,
+    pq_sk: ml_dsa::SigningKey<ml_dsa::MlDsa65>,
+    ed_pk: [u8; 32],
+    pq_pk: [u8; 1952],
+}
+
+fn driver_keypair(ed_seed: [u8; 32], pq_seed: [u8; 32]) -> DriverKeypair {
+    let ed_sk = ed25519_dalek::SigningKey::from_bytes(&ed_seed);
+    let seed = ml_dsa::Seed::from(pq_seed);
+    let pq_sk = ml_dsa::SigningKey::<ml_dsa::MlDsa65>::from_seed(&seed);
+    let ed_pk = ed_sk.verifying_key().to_bytes();
+    let mut pq_pk = [0u8; 1952];
+    pq_pk.copy_from_slice(pq_sk.verifying_key().encode().as_slice());
+    DriverKeypair {
+        ed_sk,
+        pq_sk,
+        ed_pk,
+        pq_pk,
+    }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(DIGITS[(byte >> 4) as usize] as char);
+        out.push(DIGITS[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
+/// The exact canonical bytes the gate signs: six fields in fixed order,
+/// `key: value` lines joined by LF, no trailing newline.
+fn canonical_bytes(operator: &str, approval_id: &str, expires_ms: u64) -> Vec<u8> {
     format!(
-        "operator: {operator}\n\
-         approval_id: APR-T11-0001\n\
+        "v: 2\n\
+         operator: {operator}\n\
+         approval_id: {approval_id}\n\
          candidate: {CANDIDATE_DIGEST_HEX}\n\
          scope: phlow-experiment/task-11\n\
-         expires_ms: 1893456000000\n\
-         signature: {signature}\n"
+         expires_ms: {expires_ms}"
     )
+    .into_bytes()
+}
+
+/// Builds a v2 operator record dual-signed with `keypair`: Ed25519 over
+/// the canonical bytes, ML-DSA-65 over `canonical || ed_sig`.
+fn signed_record(operator: &str, approval_id: &str, keypair: &DriverKeypair) -> String {
+    use ml_dsa::Signer as _;
+    let canonical = canonical_bytes(operator, approval_id, EXPIRES_MS);
+    let ed_sig = keypair.ed_sk.sign(&canonical);
+    let mut pq_message = canonical;
+    pq_message.extend_from_slice(&ed_sig.to_bytes());
+    let pq_sig = keypair.pq_sk.sign(&pq_message);
+    format!(
+        "v: 2\n\
+         operator: {operator}\n\
+         approval_id: {approval_id}\n\
+         candidate: {CANDIDATE_DIGEST_HEX}\n\
+         scope: phlow-experiment/task-11\n\
+         expires_ms: {EXPIRES_MS}\n\
+         signature_ed25519: {ed_hex}\n\
+         signature_mldsa65: {pq_hex}\n",
+        ed_hex = hex(&ed_sig.to_bytes()),
+        pq_hex = hex(pq_sig.encode().as_slice()),
+    )
+}
+
+/// Enrollment fingerprint: SHA-256 over `ed_pk || pq_pk`.
+fn fingerprint(keypair: &DriverKeypair) -> [u8; 32] {
+    use sha2::Digest as _;
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(keypair.ed_pk);
+    hasher.update(keypair.pq_pk);
+    hasher.finalize().into()
+}
+
+/// Writes a TOML operator registry enrolling `entries` under `dir`,
+/// permissions 0600, and loads it through the real loader.
+fn test_registry(dir: &Path, entries: &[(&str, &DriverKeypair, bool)]) -> OperatorRegistry {
+    let path = dir.join("operators.toml");
+    let mut toml = String::new();
+    for (name, keypair, revoked) in entries {
+        toml.push_str(&format!(
+            "[operators.\"{name}\"]\n\
+             ed25519_pubkey = \"{ed_hex}\"\n\
+             mldsa65_pubkey = \"{pq_hex}\"\n\
+             fingerprint = \"{fp_hex}\"\n\
+             enrolled_ms = 1750000000000\n\
+             revoked = {revoked}\n",
+            ed_hex = hex(&keypair.ed_pk),
+            pq_hex = hex(&keypair.pq_pk),
+            fp_hex = hex(&fingerprint(keypair)),
+        ));
+    }
+    std::fs::write(&path, &toml).expect("task-11: cannot write registry fixture");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+            .expect("task-11: cannot chmod registry fixture");
+    }
+    OperatorRegistry::load(&path).expect("task-11: registry fixture failed to load")
+}
+
+/// A fresh scratch dir for one scenario's registry file.
+fn scratch_dir(scenario: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "gauntlet-task-11-{scenario}-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("task-11: cannot create scratch dir");
+    dir
 }
 
 /// A complete evidence bundle: one passing check with exact argv, one
@@ -128,8 +245,10 @@ fn valid_proposal() -> Result<ImprovementProposal, ExperimentError> {
     })
 }
 
-/// V1 (control): a genuine operator record parses, and the promotion gate
-/// accepts it with complete evidence and approving reviewers.
+/// V1 (control): a genuine v2 operator record — dual-signed with the
+/// enrolled operator's real keys — parses, verifies, and promotes with
+/// complete evidence, approving reviewers, a distinct acting agent, a
+/// live clock, and a fresh replay store.
 pub fn scenario_genuine_operator_approval() -> ScenarioVerdict {
     let mut evidence = Vec::new();
     let requirement_met = match run_genuine_operator_approval(&mut evidence) {
@@ -143,31 +262,45 @@ pub fn scenario_genuine_operator_approval() -> ScenarioVerdict {
 }
 
 fn run_genuine_operator_approval(evidence: &mut Vec<String>) -> Result<(), String> {
-    let record = operator_record("op-alice", SIGNATURE_HEX_64);
+    let keypair = driver_keypair([0x42; 32], [0x24; 32]);
+    let dir = scratch_dir("genuine");
+    let registry = test_registry(&dir, &[("gauntlet-test-operator", &keypair, false)]);
+    let record = signed_record("gauntlet-test-operator", "APR-T11-0001", &keypair);
     let approval = HumanApproval::from_operator_record(&record)
         .map_err(|error| format!("genuine record rejected: {error}"))?;
-    if approval.operator() != "op-alice" {
+    if approval.operator() != "gauntlet-test-operator" {
         return Err("operator() accessor mismatch".to_string());
     }
     let proposal =
         valid_proposal().map_err(|error| format!("fixture proposal invalid: {error}"))?;
     let bundle =
         complete_evidence().map_err(|error| format!("fixture evidence invalid: {error}"))?;
-    let promotion = PromotionGate::promote(&proposal, approval, &bundle)
-        .map_err(|error| format!("genuine promotion rejected: {error}"))?;
-    if promotion.operator() != "op-alice" {
+    let clock = ManualClock::new(EXPIRES_MS - 1_000);
+    let mut consumed = ConsumedApprovals::new();
+    let promotion = PromotionGate::promote(
+        &proposal,
+        approval,
+        &bundle,
+        DRIVER_AGENT,
+        &clock,
+        &registry,
+        &mut consumed,
+    )
+    .map_err(|error| format!("genuine promotion rejected: {error}"))?;
+    if promotion.operator() != "gauntlet-test-operator" {
         return Err("PromotionRecord.operator() mismatch".to_string());
     }
     evidence.push(
-        "genuine operator record parsed; PromotionGate::promote -> Ok; \
-         PromotionRecord.operator() == \"op-alice\", approval id preserved"
+        "genuine v2 record (Ed25519+ML-DSA-65, registry-pinned keys) \
+         verified; PromotionGate::promote -> Ok; PromotionRecord.operator() \
+         == \"gauntlet-test-operator\", approval id preserved"
             .to_string(),
     );
     Ok(())
 }
 
 /// V2: the agent tries to approve its own action with no operator record —
-/// bare model output instead of a six-key record. Every attempt must fail
+/// bare model output instead of an eight-key record. Every attempt must fail
 /// `from_operator_record`, so no `HumanApproval` value ever exists to hand
 /// to the gate: token possession is type-enforced, not flag-enforced.
 pub fn scenario_self_approval_without_record() -> ScenarioVerdict {
@@ -197,7 +330,7 @@ fn run_self_approval_without_record(evidence: &mut Vec<String>) -> Result<(), St
         ),
         (
             "unknown approval key",
-            "operator: agent-007\napproved: yes\n",
+            "v: 2\noperator: agent-007\napproved: yes\n",
         ),
     ];
     for (label, record) in attempts {
@@ -218,12 +351,11 @@ fn run_self_approval_without_record(evidence: &mut Vec<String>) -> Result<(), St
     Ok(())
 }
 
-/// A1: forged or tampered operator records. Malformed variants must be
-/// rejected by the shape check. A well-shaped record carrying an
-/// attacker-minted signature is ACCEPTED — the check validates shape
-/// only; real signature verification is a documented future gate
-/// (`crates/phlow-experiment/src/promotion.rs`, module docs). That
-/// acceptance is recorded as evidence, not hidden.
+/// A1: forged or tampered operator records. Malformed variants are rejected
+/// at parse. A well-shaped record carrying an attacker-minted signature
+/// parses — but the gate rejects it with `BadSignature`: the dual
+/// signature is verified against the registry-pinned keys, and the
+/// attacker's bytes match neither half.
 pub fn scenario_forged_record() -> ScenarioVerdict {
     let mut evidence = Vec::new();
     let requirement_met = match run_forged_record(&mut evidence) {
@@ -237,33 +369,64 @@ pub fn scenario_forged_record() -> ScenarioVerdict {
 }
 
 fn run_forged_record(evidence: &mut Vec<String>) -> Result<(), String> {
-    let base = operator_record("mallory", SIGNATURE_HEX_64);
+    let keypair = driver_keypair([0x42; 32], [0x24; 32]);
+    let dir = scratch_dir("forged");
+    let registry = test_registry(&dir, &[("gauntlet-test-operator", &keypair, false)]);
     // The well-shaped forgery: every key present, every value well-formed,
-    // signature minted by the attacker. The shape check accepts it.
-    match HumanApproval::from_operator_record(&base) {
-        Ok(_) => evidence.push(
-            "well-shaped forgery (operator=mallory, attacker-minted 64-hex \
-             signature) PARSED OK — the shape check cannot detect forgery"
-                .to_string(),
-        ),
-        Err(error) => return Err(format!("well-shaped record unexpectedly rejected: {error}")),
-    }
+    // both signatures attacker-minted hex of the right length.
+    let base = signed_record("gauntlet-test-operator", "APR-T11-0001", &keypair);
+    let forged = with_sig_value(&base, "signature_ed25519:", &"cd".repeat(64));
+    let forged = with_sig_value(&forged, "signature_mldsa65:", &"ef".repeat(3309));
+    let approval = HumanApproval::from_operator_record(&forged)
+        .map_err(|error| format!("well-shaped record unexpectedly rejected: {error}"))?;
     evidence.push(
-        "signature verification is an explicit future gate, not a current \
-         one: crates/phlow-experiment/src/promotion.rs module docs"
+        "well-shaped forgery (operator=gauntlet-test-operator, attacker-minted signatures) \
+         parsed Ok — shape validation is not authentication"
             .to_string(),
     );
+    let proposal =
+        valid_proposal().map_err(|error| format!("fixture proposal invalid: {error}"))?;
+    let bundle =
+        complete_evidence().map_err(|error| format!("fixture evidence invalid: {error}"))?;
+    let clock = ManualClock::new(EXPIRES_MS - 1_000);
+    let mut consumed = ConsumedApprovals::new();
+    match PromotionGate::promote(
+        &proposal,
+        approval,
+        &bundle,
+        DRIVER_AGENT,
+        &clock,
+        &registry,
+        &mut consumed,
+    ) {
+        Err(ExperimentError::BadSignature { .. }) => evidence.push(
+            "gate rejected the forgery: BadSignature — the dual signature \
+             is verified against the registry-pinned keys"
+                .to_string(),
+        ),
+        other => {
+            return Err(format!(
+                "well-shaped forgery was not rejected with BadSignature: {other:?}"
+            ));
+        }
+    }
     let tampered: [(&str, String); 7] = [
-        ("duplicate key", format!("{base}operator: mallory\n")),
+        (
+            "duplicate key",
+            format!("{base}operator: gauntlet-test-operator\n"),
+        ),
         ("unknown key", format!("{base}injected: true\n")),
         (
             "non-hex signature",
-            operator_record("mallory", &"z".repeat(64)),
+            with_sig_value(&base, "signature_ed25519:", &"z".repeat(128)),
         ),
-        ("short signature", operator_record("mallory", "abcd")),
+        (
+            "short signature",
+            with_sig_value(&base, "signature_mldsa65:", "abcd"),
+        ),
         (
             "zero expires_ms",
-            base.replace("expires_ms: 1893456000000", "expires_ms: 0"),
+            base.replace(&format!("expires_ms: {EXPIRES_MS}"), "expires_ms: 0"),
         ),
         (
             "non-hex candidate digest",
@@ -280,22 +443,32 @@ fn run_forged_record(evidence: &mut Vec<String>) -> Result<(), String> {
             Err(error) => evidence.push(format!("rejected {label}: {error}")),
         }
     }
-    // The adversarial requirement is "forged record rejected". Tampered
-    // variants are rejected, but the well-shaped forgery class is not —
-    // so the requirement is not met.
-    Err(
-        "well-shaped forgeries pass the shape-only check; signature \
-         verification is a future gate"
-            .to_string(),
-    )
+    Ok(())
 }
 
-/// A2: the agent mints a well-shaped record naming ITSELF as the operator
-/// for its own candidate. No operator registry exists anywhere in
-/// `crates/phlow-experiment/src`, and `PromotionGate::promote`
-/// (`src/promotion.rs:760`) takes no agent identity, so no
-/// agent-identity != approver-identity comparison can run. The attack
-/// succeeds end-to-end: this layer of the seam is unwired.
+/// Replaces the value of the `signature_*` line starting with `key`.
+fn with_sig_value(record: &str, key: &str, value: &str) -> String {
+    record
+        .lines()
+        .map(|line| {
+            if line.starts_with(key) {
+                format!("{key} {value}")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
+}
+
+/// A2: the agent mints a well-shaped v2 record naming ITSELF as the
+/// operator for its own candidate — dual-signed with its own enrolled
+/// keys, so the cryptography is genuine. The gate still rejects it: the
+/// acting-agent identity is an explicit parameter, and
+/// approver == agent is the first check. A different acting agent
+/// promoting the same record succeeds, pinning that the check is precise,
+/// not a blanket block.
 pub fn scenario_confused_identity() -> ScenarioVerdict {
     let mut evidence = Vec::new();
     let requirement_met = match run_confused_identity(&mut evidence) {
@@ -309,43 +482,72 @@ pub fn scenario_confused_identity() -> ScenarioVerdict {
 }
 
 fn run_confused_identity(evidence: &mut Vec<String>) -> Result<(), String> {
-    let record = operator_record("agent-007", SIGNATURE_HEX_64);
+    let keypair = driver_keypair([0x46; 32], [0x28; 32]);
+    let dir = scratch_dir("confused");
+    let registry = test_registry(&dir, &[("agent-007", &keypair, false)]);
+    let record = signed_record("agent-007", "APR-T11-0007", &keypair);
     let approval = HumanApproval::from_operator_record(&record)
         .map_err(|error| format!("agent-minted record rejected: {error}"))?;
     evidence.push(
-        "agent-minted record (operator=agent-007) parsed Ok — no operator \
-         registry exists in crates/phlow-experiment/src to consult"
+        "agent-minted v2 record (operator=agent-007, genuine dual signature \
+         from its own enrolled keys) parsed Ok"
             .to_string(),
     );
     let proposal =
         valid_proposal().map_err(|error| format!("fixture proposal invalid: {error}"))?;
     let bundle =
         complete_evidence().map_err(|error| format!("fixture evidence invalid: {error}"))?;
-    let promotion = PromotionGate::promote(&proposal, approval, &bundle)
-        .map_err(|error| format!("promotion unexpectedly rejected: {error}"))?;
-    evidence.push(format!(
-        "attack SUCCEEDED end-to-end: PromotionGate::promote -> Ok, \
-         PromotionRecord.operator() == {:?}; promote takes no agent \
-         identity (src/promotion.rs:760), so no agent != approver check \
-         exists",
-        promotion.operator()
-    ));
-    // The adversarial requirement is "confused identity rejected". The
-    // attack succeeded, so the requirement is not met.
-    Err(
-        "no agent-identity vs approver-identity check exists in the \
-         promotion path"
-            .to_string(),
+    let clock = ManualClock::new(EXPIRES_MS - 1_000);
+    let mut consumed = ConsumedApprovals::new();
+    match PromotionGate::promote(
+        &proposal,
+        approval,
+        &bundle,
+        "agent-007",
+        &clock,
+        &registry,
+        &mut consumed,
+    ) {
+        Err(ExperimentError::SelfApproval { .. }) => evidence.push(
+            "gate rejected the self-approval: SelfApproval — the \
+             acting-agent identity is checked before any cryptography"
+                .to_string(),
+        ),
+        other => {
+            return Err(format!(
+                "confused-identity attack was not rejected with SelfApproval: {other:?}"
+            ));
+        }
+    }
+    // Precision: the same record promotes fine for a different agent.
+    let approval = HumanApproval::from_operator_record(&record)
+        .map_err(|error| format!("agent-minted record rejected on re-parse: {error}"))?;
+    let mut consumed = ConsumedApprovals::new();
+    PromotionGate::promote(
+        &proposal,
+        approval,
+        &bundle,
+        DRIVER_AGENT,
+        &clock,
+        &registry,
+        &mut consumed,
     )
+    .map_err(|error| format!("other-agent promotion unexpectedly rejected: {error}"))?;
+    evidence.push(
+        "the same record promotes for a different acting agent: the \
+         check targets self-approval, not the operator"
+            .to_string(),
+    );
+    Ok(())
 }
 
 /// Attempt the task: run all four scenarios, write a Markdown report under
 /// the task work dir, and aggregate into a [`TaskOutcome`].
 ///
 /// The task passes only if every scenario's security requirement is met.
-/// Two adversarial scenarios document real gaps (unwired identity check,
-/// shape-only signature validation), so the honest outcome is failure
-/// with file/line evidence.
+/// The gate now enforces the full check order — dual-signature
+/// verification, self-approval rejection, replay protection, and expiry —
+/// so all four requirements hold.
 pub fn run(ctx: &Ctx) -> TaskOutcome {
     let scenarios = [
         scenario_genuine_operator_approval(),

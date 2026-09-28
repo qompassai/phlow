@@ -335,7 +335,10 @@ impl EvaluationRecord {
     /// Records a human approval. The [`HumanApproval`] token is consumed by
     /// reference here (the promotion gate consumes it by value); only a
     /// token produced by [`HumanApproval::from_operator_record`] can call
-    /// this, which is what makes the state trustworthy.
+    /// this, which is what makes the state trustworthy. The token's dual
+    /// signatures are cryptographically verified at the promotion gate
+    /// against the operator registry — a parsed record alone never
+    /// authorizes anything.
     pub fn record_human_approval(&mut self, _approval: &HumanApproval) {
         self.promotion.human_approved = true;
     }

@@ -22,3 +22,9 @@ phlow-experiment = { path = "../phlow-experiment" }
 phlow-council = { path = "../phlow-council" }
 # serde_json: build the JSON verdict/report objects. No derive-based validation.
 serde_json = "1"
+# Crypto for the task-11 approval fixtures: the driver dual-signs genuine
+# v2 operator records with the real crates (never hardcoded signatures).
+# Same pinned versions as phlow-experiment.
+ml-dsa = "=0.1.1"
+ed25519-dalek = "=3.0.0"
+sha2 = "=0.10.9"

@@ -18,7 +18,9 @@
 //!   complete evidence can pass [`promotion::PromotionGate`].
 //! - **No self-approval or self-promotion.**
 //!   [`promotion::HumanApproval`] is opaque and constructible only from a
-//!   shape-validated operator record; model output cannot become one.
+//!   dual-signature-verified operator record (Ed25519+ML-DSA-65); model
+//!   output cannot become one. [`promotion::PromotionGate::promote`]
+//!   rejects the acting agent approving its own action.
 //! - **Promotion gates stay human.**
 //!   [`promotion::Lifecycle`] requires the `HumanApproved` event to leave
 //!   `AwaitingHuman`; terminal states reject every event.
@@ -34,7 +36,10 @@
 //!   (states, roles, capability delegation, bounded admission, at-most-once
 //!   publication, cancellation).
 //! - [`promotion`]: candidate lifecycle, opaque human approval,
-//!   improvement proposals, and the promotion gate.
+//!   improvement proposals, the promotion gate, the trusted clock, and
+//!   replay protection.
+//! - [`registry`]: the operator registry — enrolled identities and their
+//!   pinned Ed25519 + ML-DSA-65 public keys.
 //! - [`evaluator`]: evaluation stages, budget tracking, and evidence
 //!   bundles (skeleton: order and budgets, no execution).
 //! - [`record`]: the immutable per-experiment JSON evaluation report.
@@ -48,6 +53,7 @@ mod evaluator;
 mod manifest;
 mod promotion;
 mod record;
+mod registry;
 
 pub use control_plane::{
     AGGREGATE_OUTPUT_BYTES_MAX_DEFAULT, AGGREGATE_TOOL_CALLS_MAX_DEFAULT, CANCELLED_RUNS_MAX,
@@ -72,15 +78,17 @@ pub use manifest::{
     parse_promotion_manifest, parse_suite_manifest, parse_task_manifest, read_manifest_file,
 };
 pub use promotion::{
-    APPROVAL_FIELD_CHARS_MAX, APPROVAL_SCOPE_CHARS_MAX, CANDIDATE_DIGEST_HEX_MIN,
-    CHANGED_SURFACE_MAX, DIFF_SUMMARY_CHARS_MAX, DIGEST_HEX_CHARS_MAX, HumanApproval,
-    ImprovementProposal, Lifecycle, LifecycleEvent, OPERATOR_RECORD_CHARS_MAX,
-    PROPOSAL_TEXT_CHARS_MAX, PromotionGate, PromotionRecord, ProposalBudgets, ProposalParams,
-    REVIEWER_DECISIONS_MAX, ReviewDecision, ReviewerDecision, SURFACE_PATH_CHARS_MAX,
-    check_proposal_surface,
+    APPROVAL_FIELD_CHARS_MAX, APPROVAL_SCOPE_CHARS_MAX, APPROVAL_TTL_MAX_MS,
+    CANDIDATE_DIGEST_HEX_MIN, CHANGED_SURFACE_MAX, Clock, ConsumedApprovals,
+    DIFF_SUMMARY_CHARS_MAX, DIGEST_HEX_CHARS_MAX, ED25519_SIG_HEX_CHARS, HumanApproval,
+    ImprovementProposal, Lifecycle, LifecycleEvent, MLDSA65_SIG_HEX_CHARS, ManualClock,
+    OPERATOR_RECORD_CHARS_MAX, PROPOSAL_TEXT_CHARS_MAX, PromotionGate, PromotionRecord,
+    ProposalBudgets, ProposalParams, REVIEWER_DECISIONS_MAX, ReviewDecision, ReviewerDecision,
+    SURFACE_PATH_CHARS_MAX, SystemClock, check_proposal_surface,
 };
 pub use record::{
     CHANGED_FILES_MAX, CheckRecord, EVENTS_MAX, EvaluationRecord, PromotionSection,
     RECORD_CHECKS_MAX, RECORD_LIST_MAX, RECORD_TEXT_CHARS_MAX, RecordParams, SCHEMA_VERSION,
     VerificationSection,
 };
+pub use registry::{OperatorKey, OperatorRegistry};

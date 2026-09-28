@@ -115,6 +115,35 @@ pub enum ExperimentError {
         /// Why the record was rejected (static text only).
         reason: &'static str,
     },
+    /// The approval names an operator the registry does not enroll.
+    UnknownOperator {
+        /// The unenrolled operator name.
+        operator: String,
+    },
+    /// The approval names an operator whose registry entry is revoked.
+    RevokedOperator {
+        /// The revoked operator name.
+        operator: String,
+    },
+    /// A dual-signature component failed verification.
+    BadSignature {
+        /// Which component failed: `"ed25519"` or `"mldsa65"` (static text).
+        component: &'static str,
+    },
+    /// The approval's `expires_ms` is at or past the trusted clock.
+    ApprovalExpired,
+    /// The approval's `expires_ms` exceeds the maximum TTL policy.
+    ExpiryBeyondMaxTtl,
+    /// The approval id was already consumed: single-use enforcement.
+    ApprovalReplayed {
+        /// The replayed approval id.
+        approval_id: String,
+    },
+    /// The acting agent is the approving operator: self-approval.
+    SelfApproval {
+        /// The operator who tried to approve their own action.
+        operator: String,
+    },
     /// The evidence bundle is missing a required piece.
     IncompleteEvidence {
         /// What is missing (static text only).
@@ -234,6 +263,38 @@ impl fmt::Display for ExperimentError {
             }
             Self::ApprovalRejected { reason } => {
                 write!(formatter, "operator approval record rejected: {reason}")
+            }
+            Self::UnknownOperator { operator } => {
+                write!(
+                    formatter,
+                    "unknown operator {operator}: not enrolled in the registry"
+                )
+            }
+            Self::RevokedOperator { operator } => {
+                write!(formatter, "operator {operator} is revoked; approval denied")
+            }
+            Self::BadSignature { component } => {
+                write!(
+                    formatter,
+                    "operator approval signature failed verification ({component})"
+                )
+            }
+            Self::ApprovalExpired => write!(formatter, "operator approval expired"),
+            Self::ExpiryBeyondMaxTtl => write!(
+                formatter,
+                "operator approval expiry exceeds the maximum TTL"
+            ),
+            Self::ApprovalReplayed { approval_id } => {
+                write!(
+                    formatter,
+                    "operator approval {approval_id} was already consumed"
+                )
+            }
+            Self::SelfApproval { operator } => {
+                write!(
+                    formatter,
+                    "self-approval denied: acting agent is the approving operator {operator}"
+                )
             }
             Self::IncompleteEvidence { missing } => {
                 write!(formatter, "evidence incomplete: {missing}")

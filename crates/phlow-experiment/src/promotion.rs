@@ -5,27 +5,37 @@
 //! - [`Lifecycle::transition`] is the only way to move a candidate; invalid
 //!   transitions are typed errors and terminal states reject everything.
 //! - [`HumanApproval`] is opaque and constructible only from a
-//!   shape-validated operator record. There is no constructor path from
-//!   model output — adversarial tests try and fail.
+//!   dual-signature-verified operator record. There is no constructor path
+//!   from model output — adversarial tests try and fail.
 //! - [`PromotionGate::promote`] consumes the approval by value (one-time
-//!   use) and fails closed when evidence is incomplete, the changed surface
-//!   touches protected paths, or any reviewer did not approve.
+//!   use) and fails closed when the acting agent is the approver, the
+//!   approval id was already consumed, the operator is unknown or revoked,
+//!   the record is expired or beyond the TTL policy, either signature fails,
+//!   evidence is incomplete, the changed surface touches protected paths,
+//!   or any reviewer did not approve.
 //!
-//! Real cryptographic signature verification of the operator record is a
-//! future promotion gate; the current shape check only rejects malformed or
-//! implausible records.
+//! The operator record is format v2: eight keys, dual-signed with Ed25519
+//! (classical) and ML-DSA-65 (post-quantum, FIPS 204) in a nested binding —
+//! the PQ signature covers `canonical || ed25519_signature`, so the two
+//! halves cannot be mixed across records. Verification is AND: both halves
+//! must verify against the operator's registry-pinned keys. The old v1
+//! shape-only records do not parse and are never verified.
 
 use crate::error::ExperimentError;
 use crate::evaluator::EvidenceBundle;
 use crate::manifest::RiskClass;
+use crate::registry::{OperatorKey, OperatorRegistry};
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
 // Bounds (all with units)
 // ---------------------------------------------------------------------------
 
-/// Maximum characters in an operator approval record.
-pub const OPERATOR_RECORD_CHARS_MAX: usize = 4_096;
+/// Maximum characters in an operator approval record. Sized for the v2
+/// dual signature (6,746 hex chars) with headroom for field growth; still
+/// bounded.
+pub const OPERATOR_RECORD_CHARS_MAX: usize = 16_384;
 /// Maximum characters in the operator name or approval id.
 pub const APPROVAL_FIELD_CHARS_MAX: usize = 64;
 /// Maximum characters in the approval scope string.
@@ -34,6 +44,15 @@ pub const APPROVAL_SCOPE_CHARS_MAX: usize = 128;
 pub const CANDIDATE_DIGEST_HEX_MIN: usize = 16;
 /// Maximum characters in a hex digest field.
 pub const DIGEST_HEX_CHARS_MAX: usize = 128;
+/// Hex characters in an Ed25519 signature (64 bytes).
+pub const ED25519_SIG_HEX_CHARS: usize = 128;
+/// Hex characters in an ML-DSA-65 signature (3,309 bytes).
+pub const MLDSA65_SIG_HEX_CHARS: usize = 6_618;
+/// Maximum approval lifetime in milliseconds: 30 days. An expiry past
+/// `now + APPROVAL_TTL_MAX_MS` is rejected outright — it bounds the blast
+/// radius of a stolen approval. This is policy, not cryptography: a named
+/// constant, easy to change when the operator sets operational policy.
+pub const APPROVAL_TTL_MAX_MS: u64 = 2_592_000_000;
 /// Maximum characters in a proposal's candidate diff summary.
 pub const DIFF_SUMMARY_CHARS_MAX: usize = 4_096;
 /// Maximum changed-surface paths on one proposal.
@@ -45,15 +64,23 @@ pub const REVIEWER_DECISIONS_MAX: usize = 16;
 /// Maximum characters in a proposal text field.
 pub const PROPOSAL_TEXT_CHARS_MAX: usize = 2_048;
 
-/// Keys an operator approval record must carry — exactly these, no more.
+/// Keys a v2 operator approval record must carry — exactly these, no
+/// more, in any order in the file (the canonical bytes use a fixed order).
 const APPROVAL_KEYS: &[&str] = &[
+    "v",
     "operator",
     "approval_id",
     "candidate",
     "scope",
     "expires_ms",
-    "signature",
+    "signature_ed25519",
+    "signature_mldsa65",
 ];
+
+/// The only record version this gate accepts. v1 shape-only records are
+/// unparseable here by construction: they lack `v`, carry the unknown
+/// `signature` key, and have no dual signatures to verify.
+const APPROVAL_RECORD_VERSION: &str = "2";
 
 /// Changed-surface prefixes a candidate must never control: hidden holdouts,
 /// immutable safety cases, the evaluator, the promotion gate, and the
@@ -208,7 +235,7 @@ impl LifecycleEvent {
 // ---------------------------------------------------------------------------
 
 /// An operator's approval: an opaque token constructible only from a
-/// shape-validated operator record.
+/// dual-signature-verified operator record.
 ///
 /// The fields are private and there is no `From<&str>`, no deserialization,
 /// and no other constructor — model output cannot become an approval. The
@@ -216,20 +243,24 @@ impl LifecycleEvent {
 /// `key: value` lines and validates shapes:
 ///
 /// ```text
-/// operator: jdoe
+/// v: 2
+/// operator: gauntlet-test-operator
 /// approval_id: APR-2026-0001
 /// candidate: 9f2b3c4d5e6f708192a3b4c5d6e7f809
 /// scope: phlow-experiment/promotion
 /// expires_ms: 1893456000000
-/// signature: <64 or 128 hex characters>
+/// signature_ed25519: <128 hex characters>
+/// signature_mldsa65: <6618 hex characters>
 /// ```
 ///
 /// Exactly these keys are accepted (unknown or duplicate keys are
-/// rejected); `expires_ms` must be a positive integer; `signature` must be
-/// 64 or 128 hex characters. This is a *shape* check only: real signature
-/// verification against the operator's key, expiry enforcement against a
-/// trusted clock, and replay protection are future promotion gates, and the
-/// record must pass them before any real promotion.
+/// rejected); `v` must be `2`; `expires_ms` must be a positive integer;
+/// the two signatures must be exact-length hex. The signatures themselves
+/// are verified later, inside [`PromotionGate::promote`], against the
+/// operator's registry-pinned keys: Ed25519 over the canonical bytes, then
+/// ML-DSA-65 over `canonical || ed25519_signature` (nested binding), both
+/// required. Parse accepts well-shaped records; only the gate decides
+/// whether the seals are genuine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HumanApproval {
     operator: String,
@@ -237,16 +268,19 @@ pub struct HumanApproval {
     candidate_digest: String,
     scope: String,
     expires_ms: u64,
-    record_fingerprint: String,
+    ed_sig: [u8; 64],
+    pq_sig: [u8; 3309],
 }
 
 impl HumanApproval {
-    /// Parses and shape-validates an operator approval record.
+    /// Parses and shape-validates a v2 operator approval record.
     ///
-    /// Accepted: the exact six-key format above with well-shaped values.
+    /// Accepted: the exact eight-key format above with well-shaped values.
     /// Rejected: empty or oversized records, malformed lines, unknown or
-    /// duplicate keys, missing keys, empty or over-long fields, non-numeric
-    /// or zero `expires_ms`, non-hex or wrong-length `signature`.
+    /// duplicate keys, missing keys, a version other than `2`, empty or
+    /// over-long fields, non-numeric or zero `expires_ms`, non-hex or
+    /// wrong-length signatures. Shape validation is not authentication:
+    /// [`PromotionGate::promote`] verifies the signatures.
     pub fn from_operator_record(record: &str) -> Result<Self, ExperimentError> {
         if record.is_empty() {
             return Err(ExperimentError::ApprovalRejected {
@@ -291,6 +325,11 @@ impl HumanApproval {
                 });
             }
         }
+        if fields["v"] != APPROVAL_RECORD_VERSION {
+            return Err(ExperimentError::ApprovalRejected {
+                reason: "unsupported record version",
+            });
+        }
         let operator = Self::check_field(&fields, "operator")?;
         let approval_id = Self::check_field(&fields, "approval_id")?;
         let candidate_digest = Self::check_hex_field(
@@ -311,23 +350,18 @@ impl HumanApproval {
                 reason: "expires_ms must be positive",
             });
         }
-        let signature = Self::check_hex_field(&fields, "signature", 64, DIGEST_HEX_CHARS_MAX)?;
-        if signature.len() != 64 && signature.len() != DIGEST_HEX_CHARS_MAX {
-            return Err(ExperimentError::ApprovalRejected {
-                reason: "signature must be 64 or 128 hex characters",
-            });
-        }
-        // Non-cryptographic binding fingerprint of the canonical record, so
-        // the token is bound to exactly the record it was parsed from. This
-        // is not a signature check; see the struct docs.
-        let record_fingerprint = fnv1a_hex(record.as_bytes());
+        let ed_sig: [u8; 64] =
+            Self::check_sig_field(&fields, "signature_ed25519", ED25519_SIG_HEX_CHARS)?;
+        let pq_sig: [u8; 3309] =
+            Self::check_sig_field(&fields, "signature_mldsa65", MLDSA65_SIG_HEX_CHARS)?;
         Ok(Self {
             operator,
             approval_id,
             candidate_digest,
             scope,
             expires_ms,
-            record_fingerprint,
+            ed_sig,
+            pq_sig,
         })
     }
 
@@ -351,9 +385,71 @@ impl HumanApproval {
         &self.scope
     }
 
-    /// The expiry instant in milliseconds (enforcement is a future gate).
+    /// The expiry instant in milliseconds (enforced by the gate against
+    /// the trusted clock).
     pub fn expires_ms(&self) -> u64 {
         self.expires_ms
+    }
+
+    /// The exact bytes both signatures cover: the six non-signature
+    /// fields in fixed order, `key: value` lines joined by LF, no trailing
+    /// newline. Rebuilt from the parsed values, never sliced from the raw
+    /// input — comments and blank lines cannot affect verification.
+    fn canonical_bytes(&self) -> Vec<u8> {
+        let mut canonical = String::with_capacity(320);
+        canonical.push_str("v: 2\n");
+        canonical.push_str("operator: ");
+        canonical.push_str(&self.operator);
+        canonical.push_str("\napproval_id: ");
+        canonical.push_str(&self.approval_id);
+        canonical.push_str("\ncandidate: ");
+        canonical.push_str(&self.candidate_digest);
+        canonical.push_str("\nscope: ");
+        canonical.push_str(&self.scope);
+        canonical.push_str("\nexpires_ms: ");
+        canonical.push_str(&self.expires_ms.to_string());
+        canonical.into_bytes()
+    }
+
+    /// Verifies the dual signature against the operator's pinned keys.
+    ///
+    /// Ed25519 first (cheap, battle-tested) with `verify_strict`, which
+    /// rejects malleable non-canonical signatures; then ML-DSA-65 over the
+    /// nested binding `canonical || ed_sig`, so the two halves cannot be
+    /// mixed across records. Both must verify: an attacker must break both
+    /// schemes to forge. Each failure names its component.
+    fn verify_dual_signatures(&self, key: &OperatorKey) -> Result<(), ExperimentError> {
+        let canonical = self.canonical_bytes();
+        let ed_signature = ed25519_dalek::Signature::from_bytes(&self.ed_sig);
+        let ed_key = ed25519_dalek::VerifyingKey::from_bytes(&key.ed25519_pk).map_err(|_| {
+            ExperimentError::BadSignature {
+                component: "ed25519",
+            }
+        })?;
+        ed_key
+            .verify_strict(&canonical, &ed_signature)
+            .map_err(|_| ExperimentError::BadSignature {
+                component: "ed25519",
+            })?;
+        let mut pq_message = canonical;
+        pq_message.extend_from_slice(&self.ed_sig);
+        let pq_signature = ml_dsa::Signature::<ml_dsa::MlDsa65>::try_from(self.pq_sig.as_slice())
+            .map_err(|_| ExperimentError::BadSignature {
+            component: "mldsa65",
+        })?;
+        let encoded_key =
+            ml_dsa::EncodedVerifyingKey::<ml_dsa::MlDsa65>::try_from(key.mldsa65_pk.as_slice())
+                .map_err(|_| ExperimentError::BadSignature {
+                    component: "mldsa65",
+                })?;
+        let pq_key = ml_dsa::VerifyingKey::<ml_dsa::MlDsa65>::decode(&encoded_key);
+        use ml_dsa::Verifier as _;
+        pq_key
+            .verify(&pq_message, &pq_signature)
+            .map_err(|_| ExperimentError::BadSignature {
+                component: "mldsa65",
+            })?;
+        Ok(())
     }
 
     fn check_field(
@@ -431,30 +527,47 @@ impl HumanApproval {
         }
         Ok(value.clone())
     }
+
+    /// Validates a signature field: exactly `hex_chars` hex characters,
+    /// decoded into `N` bytes. Wrong length or non-hex input is rejected
+    /// before any cryptography runs.
+    fn check_sig_field<const N: usize>(
+        fields: &BTreeMap<String, String>,
+        key: &str,
+        hex_chars: usize,
+    ) -> Result<[u8; N], ExperimentError> {
+        let value = &fields[key];
+        if value.len() != hex_chars || N * 2 != hex_chars {
+            return Err(ExperimentError::ApprovalRejected {
+                reason: "signature has wrong length",
+            });
+        }
+        let mut out = [0u8; N];
+        let (chunks, _) = value.as_bytes().as_chunks::<2>();
+        for (index, pair) in chunks.iter().enumerate() {
+            let hi = hex_nibble(pair[0]);
+            let lo = hex_nibble(pair[1]);
+            match (hi, lo) {
+                (Some(hi), Some(lo)) => out[index] = (hi << 4) | lo,
+                _ => {
+                    return Err(ExperimentError::ApprovalRejected {
+                        reason: "signature has non-hex characters",
+                    });
+                }
+            }
+        }
+        Ok(out)
+    }
 }
 
-/// FNV-1a 64-bit, rendered as 16 hex characters.
-///
-/// Used only as a non-cryptographic binding fingerprint tying a
-/// [`HumanApproval`] to the exact record bytes it was parsed from. It is
-/// not a hash for security purposes and does not replace signature
-/// verification.
-fn fnv1a_hex(bytes: &[u8]) -> String {
-    const OFFSET: u64 = 0xcbf29ce484222325;
-    const PRIME: u64 = 0x100000001b3;
-    let mut hash = OFFSET;
-    for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(PRIME);
+/// One hex digit's value, or `None` for non-hex input.
+fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
     }
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(16);
-    for shift in (0..64).step_by(8).rev() {
-        let b = ((hash >> shift) & 0xff) as u8;
-        out.push(HEX[(b >> 4) as usize] as char);
-        out.push(HEX[(b & 0xf) as usize] as char);
-    }
-    out
 }
 
 // ---------------------------------------------------------------------------
@@ -705,6 +818,220 @@ pub fn check_proposal_surface(proposal: &ImprovementProposal) -> Result<(), Expe
 }
 
 // ---------------------------------------------------------------------------
+// Trusted clock
+// ---------------------------------------------------------------------------
+
+/// A trusted time source for approval expiry, in milliseconds since the
+/// Unix epoch.
+///
+/// "Trusted" means the process's own clock, supplied by the gate's caller —
+/// never parsed from a record, never influenced by the agent. The trait
+/// (not a bare `SystemTime`) exists so expiry tests are deterministic via
+/// [`ManualClock`].
+pub trait Clock {
+    /// Current time in milliseconds since the Unix epoch.
+    fn now_ms(&self) -> u64;
+}
+
+/// The production clock: the process wall clock.
+///
+/// Fail-closed: if the system clock is unavailable, this saturates to 0,
+/// which makes every approval read as expired.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SystemClock;
+
+impl Clock for SystemClock {
+    fn now_ms(&self) -> u64 {
+        match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            Ok(duration) => duration.as_millis().try_into().unwrap_or(u64::MAX),
+            Err(_) => 0,
+        }
+    }
+}
+
+/// A deterministic clock for tests: the time is whatever was set.
+#[derive(Debug, Clone, Copy)]
+pub struct ManualClock {
+    now_ms: u64,
+}
+
+impl ManualClock {
+    /// Builds a clock reading `now_ms`.
+    pub fn new(now_ms: u64) -> Self {
+        Self { now_ms }
+    }
+
+    /// Moves the clock to `now_ms`.
+    pub fn set(&mut self, now_ms: u64) {
+        self.now_ms = now_ms;
+    }
+}
+
+impl Clock for ManualClock {
+    fn now_ms(&self) -> u64 {
+        self.now_ms
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Replay protection
+// ---------------------------------------------------------------------------
+
+/// Maximum bytes read from a consumed-approvals store file.
+const CONSUMED_STORE_BYTES_MAX: u64 = 1_048_576;
+/// Maximum characters in a stored approval id (matches the record bound).
+const CONSUMED_ID_CHARS_MAX: usize = 64;
+
+/// Single-use approval ids: the replay store.
+///
+/// `promote` already consumes the [`HumanApproval`] token by value (one
+/// token, one call); this store closes the *re-parse* hole, where the
+/// same record text parsed twice yields two tokens. Check-then-insert is
+/// atomic within one `promote` call (single `&mut` borrow — no TOCTOU).
+///
+/// Entries live at most [`APPROVAL_TTL_MAX_MS`], so the store stays
+/// bounded; [`ConsumedApprovals::evict_expired`] drops dead entries. For
+/// restart safety the store persists as append-only JSONL, one
+/// `{"id","expires_ms"}` object per line.
+#[derive(Debug, Clone, Default)]
+pub struct ConsumedApprovals {
+    ids: std::collections::HashMap<String, u64>,
+}
+
+impl ConsumedApprovals {
+    /// An empty replay store.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// True when `id` was already consumed.
+    pub fn contains(&self, id: &str) -> bool {
+        self.ids.contains_key(id)
+    }
+
+    /// Records `id` as consumed with its expiry. Call only after the
+    /// approval passed every gate check.
+    pub fn insert(&mut self, id: String, expires_ms: u64) {
+        self.ids.insert(id, expires_ms);
+    }
+
+    /// Drops entries with `expires_ms <= now_ms`.
+    pub fn evict_expired(&mut self, now_ms: u64) {
+        self.ids.retain(|_, expires_ms| *expires_ms > now_ms);
+    }
+
+    /// How many ids are currently stored.
+    pub fn len(&self) -> usize {
+        self.ids.len()
+    }
+
+    /// True when no ids are stored.
+    pub fn is_empty(&self) -> bool {
+        self.ids.is_empty()
+    }
+
+    /// The default store path: `PHLOW_CONSUMED_APPROVALS_FILE` wins, then
+    /// `$XDG_DATA_HOME/phlow/consumed-approvals.jsonl`, then
+    /// `~/.local/share/phlow/consumed-approvals.jsonl`.
+    pub fn default_path() -> PathBuf {
+        if let Ok(path) = std::env::var("PHLOW_CONSUMED_APPROVALS_FILE")
+            && !path.is_empty()
+        {
+            return PathBuf::from(path);
+        }
+        if let Ok(xdg) = std::env::var("XDG_DATA_HOME")
+            && !xdg.is_empty()
+        {
+            return PathBuf::from(xdg).join("phlow/consumed-approvals.jsonl");
+        }
+        if let Ok(home) = std::env::var("HOME")
+            && !home.is_empty()
+        {
+            return PathBuf::from(home).join(".local/share/phlow/consumed-approvals.jsonl");
+        }
+        PathBuf::from("phlow/consumed-approvals.jsonl")
+    }
+
+    /// Loads the store from a JSONL file, dropping expired entries as of
+    /// `now_ms`. Malformed lines fail the load: the store is
+    /// trust-adjacent, and silent skips would hide tampering.
+    pub fn load(path: &Path, now_ms: u64) -> Result<Self, ExperimentError> {
+        let metadata = std::fs::metadata(path).map_err(|_| ExperimentError::ApprovalRejected {
+            reason: "consumed-approvals store unreadable",
+        })?;
+        if metadata.len() > CONSUMED_STORE_BYTES_MAX {
+            return Err(ExperimentError::ApprovalRejected {
+                reason: "consumed-approvals store too large",
+            });
+        }
+        let text =
+            std::fs::read_to_string(path).map_err(|_| ExperimentError::ApprovalRejected {
+                reason: "consumed-approvals store unreadable",
+            })?;
+        let mut store = Self::new();
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let value: serde_json::Value =
+                serde_json::from_str(line).map_err(|_| ExperimentError::ApprovalRejected {
+                    reason: "consumed-approvals store is corrupt",
+                })?;
+            let id = value
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .filter(|id| !id.is_empty() && id.len() <= CONSUMED_ID_CHARS_MAX)
+                .ok_or(ExperimentError::ApprovalRejected {
+                    reason: "consumed-approvals store is corrupt",
+                })?;
+            let expires_ms = value
+                .get("expires_ms")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or(ExperimentError::ApprovalRejected {
+                    reason: "consumed-approvals store is corrupt",
+                })?;
+            if store.ids.insert(id.to_string(), expires_ms).is_some() {
+                return Err(ExperimentError::ApprovalRejected {
+                    reason: "consumed-approvals store has a duplicate id",
+                });
+            }
+        }
+        store.evict_expired(now_ms);
+        Ok(store)
+    }
+
+    /// Persists the store as JSONL, atomically (temp file + rename), one
+    /// `{"id","expires_ms"}` object per line. Creates parent directories.
+    pub fn save(&self, path: &Path) -> Result<(), ExperimentError> {
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent).map_err(|_| ExperimentError::ApprovalRejected {
+                reason: "consumed-approvals store directory unwritable",
+            })?;
+        }
+        let mut text = String::new();
+        let mut ids: Vec<(&String, &u64)> = self.ids.iter().collect();
+        ids.sort_by(|a, b| a.0.cmp(b.0));
+        for (id, expires_ms) in ids {
+            text.push_str(&format!(
+                "{{\"id\":{id_json},\"expires_ms\":{expires_ms}}}\n",
+                id_json = serde_json::Value::String(id.clone()),
+            ));
+        }
+        let tmp = path.with_extension("jsonl.tmp");
+        std::fs::write(&tmp, &text).map_err(|_| ExperimentError::ApprovalRejected {
+            reason: "consumed-approvals store unwritable",
+        })?;
+        std::fs::rename(&tmp, path).map_err(|_| ExperimentError::ApprovalRejected {
+            reason: "consumed-approvals store unwritable",
+        })?;
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Promotion gate
 // ---------------------------------------------------------------------------
 
@@ -745,23 +1072,70 @@ impl PromotionRecord {
 /// The promotion gate: the single choke point before a candidate may be
 /// presented for human-driven merge.
 ///
-/// `promote` fails closed. It rejects: incomplete evidence
-/// ([`ExperimentError::IncompleteEvidence`]); proposals touching protected
-/// surfaces ([`ExperimentError::ProtectedSurface`],
-/// [`ExperimentError::BadPath`]); any reviewer decision other than
-/// [`ReviewDecision::Approve`] ([`ExperimentError::ReviewerRejected`]).
-/// The approval is consumed by value — one token, one promotion — and there
-/// is deliberately no path that promotes without one: the type system, not
-/// a flag, enforces it.
+/// `promote` fails closed, in this exact check order (the order determines
+/// which error surfaces first):
+///
+/// 1. Empty `acting_agent`, or `acting_agent == approval.operator()`:
+///    [`ExperimentError::ApprovalRejected`] / [`ExperimentError::SelfApproval`].
+///    The agent's identity is an explicit parameter — never an ambient or
+///    global lookup — so the self-approval check cannot be dodged.
+/// 2. Already-consumed `approval_id`: [`ExperimentError::ApprovalReplayed`].
+/// 3. Registry lookup: [`ExperimentError::UnknownOperator`] /
+///    [`ExperimentError::RevokedOperator`].
+/// 4. Expiry against the trusted clock ([`ExperimentError::ApprovalExpired`])
+///    and the TTL policy cap ([`ExperimentError::ExpiryBeyondMaxTtl`]).
+/// 5. Dual signature verification ([`ExperimentError::BadSignature`]).
+/// 6. The approval id is recorded as consumed — only after every check
+///    passed.
+/// 7. The pre-existing gates, unchanged: incomplete evidence
+///    ([`ExperimentError::IncompleteEvidence`]); proposals touching
+///    protected surfaces ([`ExperimentError::ProtectedSurface`],
+///    [`ExperimentError::BadPath`]); any reviewer decision other than
+///    [`ReviewDecision::Approve`] ([`ExperimentError::ReviewerRejected`]).
+///
+/// The approval is consumed by value — one token, one promotion — and the
+/// replay store closes the re-parse hole. There is deliberately no path
+/// that promotes without one: the type system, not a flag, enforces it.
 pub struct PromotionGate;
 
 impl PromotionGate {
-    /// Attempts promotion. See the struct docs for the fail-closed rules.
+    /// Attempts promotion. See the struct docs for the fail-closed check
+    /// order.
     pub fn promote(
         proposal: &ImprovementProposal,
         approval: HumanApproval,
         evidence: &EvidenceBundle,
+        acting_agent: &str,
+        clock: &dyn Clock,
+        registry: &OperatorRegistry,
+        consumed: &mut ConsumedApprovals,
     ) -> Result<PromotionRecord, ExperimentError> {
+        if acting_agent.is_empty() {
+            return Err(ExperimentError::ApprovalRejected {
+                reason: "empty acting agent",
+            });
+        }
+        if approval.operator() == acting_agent {
+            return Err(ExperimentError::SelfApproval {
+                operator: approval.operator().to_string(),
+            });
+        }
+        if consumed.contains(approval.approval_id()) {
+            return Err(ExperimentError::ApprovalReplayed {
+                approval_id: approval.approval_id().to_string(),
+            });
+        }
+        let key = registry.lookup(approval.operator())?;
+        let now_ms = clock.now_ms();
+        let ttl_limit = now_ms.checked_add(APPROVAL_TTL_MAX_MS);
+        if ttl_limit.is_none_or(|limit| approval.expires_ms() > limit) {
+            return Err(ExperimentError::ExpiryBeyondMaxTtl);
+        }
+        if now_ms >= approval.expires_ms() {
+            return Err(ExperimentError::ApprovalExpired);
+        }
+        approval.verify_dual_signatures(key)?;
+        consumed.insert(approval.approval_id().to_string(), approval.expires_ms());
         if !evidence.is_complete() {
             return Err(ExperimentError::IncompleteEvidence {
                 missing: "complete evidence bundle",
