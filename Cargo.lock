@@ -1645,9 +1645,11 @@ version = "0.1.0"
 dependencies = [
  "ed25519-dalek",
  "ml-dsa",
+ "phlow-config",
  "phlow-council",
  "phlow-editor",
  "phlow-experiment",
+ "phlow-llm",
  "phlow-runtime",
  "rmpv",
  "serde_json",

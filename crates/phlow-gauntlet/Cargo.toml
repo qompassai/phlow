@@ -2,7 +2,7 @@
 name = "phlow-gauntlet"
 version = "0.1.0"
 edition = "2024"
-description = "25-task agent-orchestration proving ground for phlow: task drivers, failure recorder, and report CLI. EXPERIMENTAL — drives only test doubles and headless Neovim; enables no production behavior."
+description = "30-task agent-orchestration proving ground for phlow: task drivers, failure recorder, and report CLI. EXPERIMENTAL — drives only test doubles and headless Neovim; enables no production behavior."
 license = "MIT OR Apache-2.0"
 
 [lib]
@@ -27,6 +27,13 @@ phlow-runtime = { path = "../phlow-runtime" }
 # phlow-editor: the EditorTransport trait + contract constants the
 # task-25 driver speaks through. Path dependency, same workspace.
 phlow-editor = { path = "../phlow-editor" }
+# phlow-llm: the real downstream-call wrapper under test for task-26/27
+# (OllamaBackend::chat -> LlmTransport::post_chat). Path dependency,
+# same workspace.
+phlow-llm = { path = "../phlow-llm" }
+# phlow-config: OllamaConfig for the task-26/27 backend fixtures. Direct
+# dependency (used by name); also pulled transitively via phlow-llm.
+phlow-config = { path = "../phlow-config" }
 # rmpv: the scripted msgpack-RPC socket peer in the task-25 driver —
 # the same codec the transport uses. No derive-based validation.
 rmpv = "1"
