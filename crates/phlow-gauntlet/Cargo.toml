@@ -64,6 +64,13 @@ phlow-mcp = { path = "../phlow-mcp" }
 # /v1/chat/completions path stays in phlow-runtime; this crate needs
 # /api/generate (think:false), which the runtime does not expose.
 reqwest = { version = "=0.12.28", default-features = false, features = ["blocking", "json", "rustls-tls-webpki-roots"] }
+# percent-encoding: encode the initial-navigation URL as the *raw*
+# query component of `PUT /json/new?{url}`. The DevTools HTTP docs
+# (https://chromedevtools.github.io/devtools-protocol/, "PUT /json/new
+# or PUT /json/new?{url}") specify the query component itself — not a
+# `url=` parameter — is parsed and URL-unescaped. Already in the
+# transitive closure via reqwest -> url; pinned by the lockfile.
+percent-encoding = "=2.3.2"
 rmpv = "1"
 # serde_json: build the JSON verdict/report objects. No derive-based validation.
 serde_json = "1"

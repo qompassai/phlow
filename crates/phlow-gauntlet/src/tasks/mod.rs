@@ -96,7 +96,15 @@ pub mod task_174;
 pub mod task_175;
 pub mod task_176;
 pub mod task_177;
+pub mod task_178;
+pub mod task_179;
 pub mod task_18;
+pub mod task_180;
+pub mod task_181;
+pub mod task_182;
+pub mod task_183;
+pub mod task_184;
+pub mod task_185;
 pub mod task_19;
 pub mod task_20;
 pub mod task_21;
@@ -228,6 +236,54 @@ pub fn run_task(id: &str, ctx: &Ctx) -> Result<TaskReport, GauntletError> {
         task_15::ID => (task_15::ID, task_15::NAME, task_15::KIND, task_15::run(ctx)),
         task_16::ID => (task_16::ID, task_16::NAME, task_16::KIND, task_16::run(ctx)),
         task_17::ID => (task_17::ID, task_17::NAME, task_17::KIND, task_17::run(ctx)),
+        task_178::ID => (
+            task_178::ID,
+            task_178::NAME,
+            task_178::KIND,
+            task_178::run(ctx),
+        ),
+        task_179::ID => (
+            task_179::ID,
+            task_179::NAME,
+            task_179::KIND,
+            task_179::run(ctx),
+        ),
+        task_180::ID => (
+            task_180::ID,
+            task_180::NAME,
+            task_180::KIND,
+            task_180::run(ctx),
+        ),
+        task_181::ID => (
+            task_181::ID,
+            task_181::NAME,
+            task_181::KIND,
+            task_181::run(ctx),
+        ),
+        task_182::ID => (
+            task_182::ID,
+            task_182::NAME,
+            task_182::KIND,
+            task_182::run(ctx),
+        ),
+        task_183::ID => (
+            task_183::ID,
+            task_183::NAME,
+            task_183::KIND,
+            task_183::run(ctx),
+        ),
+        task_184::ID => (
+            task_184::ID,
+            task_184::NAME,
+            task_184::KIND,
+            task_184::run(ctx),
+        ),
+        task_185::ID => (
+            task_185::ID,
+            task_185::NAME,
+            task_185::KIND,
+            task_185::run(ctx),
+        ),
         task_18::ID => (task_18::ID, task_18::NAME, task_18::KIND, task_18::run(ctx)),
         task_19::ID => (task_19::ID, task_19::NAME, task_19::KIND, task_19::run(ctx)),
         task_20::ID => (task_20::ID, task_20::NAME, task_20::KIND, task_20::run(ctx)),
@@ -762,6 +818,14 @@ pub fn task_meta(id: &str) -> Option<(&'static str, TaskKind)> {
         task_15::ID => Some((task_15::NAME, task_15::KIND)),
         task_16::ID => Some((task_16::NAME, task_16::KIND)),
         task_17::ID => Some((task_17::NAME, task_17::KIND)),
+        task_178::ID => Some((task_178::NAME, task_178::KIND)),
+        task_179::ID => Some((task_179::NAME, task_179::KIND)),
+        task_180::ID => Some((task_180::NAME, task_180::KIND)),
+        task_181::ID => Some((task_181::NAME, task_181::KIND)),
+        task_182::ID => Some((task_182::NAME, task_182::KIND)),
+        task_183::ID => Some((task_183::NAME, task_183::KIND)),
+        task_184::ID => Some((task_184::NAME, task_184::KIND)),
+        task_185::ID => Some((task_185::NAME, task_185::KIND)),
         task_18::ID => Some((task_18::NAME, task_18::KIND)),
         task_19::ID => Some((task_19::NAME, task_19::KIND)),
         task_20::ID => Some((task_20::NAME, task_20::KIND)),
