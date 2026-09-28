@@ -227,6 +227,60 @@ pub fn run_nvim_lua_driver(ctx: &Ctx, script: &str, expected_id: &'static str) -
 }
 
 /// [`run_nvim_lua_driver`] with extra environment variables for the driver
+/// Outcome of [`wait_for_child`].
+enum WaitOutcome {
+    /// The child finished within the deadline: its exit status plus its
+    /// captured output (or the error from reading it).
+    Finished {
+        status: std::process::ExitStatus,
+        output: Result<std::process::Output, String>,
+    },
+    /// The child was killed after the deadline. Its pipes were dropped
+    /// without draining, so there is no output to report.
+    TimedOut,
+}
+
+/// Wait for a spawned driver child, killing it if `timeout` expires.
+///
+/// Returns [`WaitOutcome::Finished`] when the child exits in time and
+/// [`WaitOutcome::TimedOut`] when it is killed after the deadline. `Err`
+/// carries a `try_wait` failure.
+///
+/// On the timeout path the child is reaped with [`std::process::Child::wait`]
+/// — which waits only for the process to exit — and its pipes are dropped
+/// WITHOUT draining to EOF: any surviving process that inherited the pipes
+/// (e.g. a grandchild of the driver) keeps EOF open, so `wait_with_output`
+/// there turned an 800 ms budget into a ~19 s stall. The caller's timeout
+/// arm already discards driver output, so nothing observable is lost.
+fn wait_for_child(
+    mut child: std::process::Child,
+    timeout: Duration,
+) -> Result<WaitOutcome, String> {
+    use std::time::Instant;
+
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let output = child.wait_with_output().map_err(|e| e.to_string());
+                return Ok(WaitOutcome::Finished { status, output });
+            }
+            Ok(None) => {
+                if started.elapsed() > timeout {
+                    // Wedged driver: reap the process, drop the pipes, leave.
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    drop(child.stdout.take());
+                    drop(child.stderr.take());
+                    return Ok(WaitOutcome::TimedOut);
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+}
+
 /// child (e.g. `GAUNTLET_SCENARIO`). Names and values are passed through
 /// unchanged; the caller owns their meaning.
 pub fn run_nvim_lua_driver_with_env(
@@ -236,7 +290,6 @@ pub fn run_nvim_lua_driver_with_env(
     extra_env: &[(&str, &str)],
 ) -> TaskOutcome {
     use std::process::{Command, Stdio};
-    use std::time::{Duration, Instant};
 
     if !is_driver_script_name(script) {
         return TaskOutcome::Fail {
@@ -266,7 +319,7 @@ pub fn run_nvim_lua_driver_with_env(
     for (k, v) in extra_env {
         cmd.env(k, v);
     }
-    let mut child = match cmd.spawn() {
+    let child = match cmd.spawn() {
         Ok(child) => child,
         Err(e) => {
             return TaskOutcome::Fail {
@@ -279,29 +332,13 @@ pub fn run_nvim_lua_driver_with_env(
 
     // Bounded wait: poll try_wait, kill on expiry. No blocking wait without
     // a deadline — a wedged driver must not wedge the gauntlet.
-    let started = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Some(status),
-            Ok(None) => {
-                if started.elapsed() > ctx.timeout {
-                    let _ = child.kill();
-                    break None;
-                }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            Err(e) => {
-                return TaskOutcome::Fail {
-                    where_: "wait".to_string(),
-                    how: format!("cannot wait on nvim child: {e}"),
-                    evidence: vec![],
-                };
-            }
-        }
-    };
-    let output = child.wait_with_output().map_err(|e| e.to_string());
-    match (status, output) {
-        (None, _) => TaskOutcome::Fail {
+    match wait_for_child(child, ctx.timeout) {
+        Err(e) => TaskOutcome::Fail {
+            where_: "wait".to_string(),
+            how: format!("cannot wait on nvim child: {e}"),
+            evidence: vec![],
+        },
+        Ok(WaitOutcome::TimedOut) => TaskOutcome::Fail {
             where_: "timeout".to_string(),
             how: format!(
                 "nvim driver exceeded {} ms and was killed",
@@ -309,12 +346,18 @@ pub fn run_nvim_lua_driver_with_env(
             ),
             evidence: vec![],
         },
-        (Some(_), Err(e)) => TaskOutcome::Fail {
+        Ok(WaitOutcome::Finished {
+            status: _,
+            output: Err(e),
+        }) => TaskOutcome::Fail {
             where_: "output".to_string(),
             how: format!("cannot read nvim output: {e}"),
             evidence: vec![],
         },
-        (Some(st), Ok(out)) => parse_driver_verdict(&out, expected_id, st.code()),
+        Ok(WaitOutcome::Finished {
+            status,
+            output: Ok(out),
+        }) => parse_driver_verdict(&out, expected_id, status.code()),
     }
 }
 
@@ -426,7 +469,7 @@ fn parse_driver_verdict(
 
 #[cfg(test)]
 mod tests {
-    use super::{find_verdict_line, is_driver_script_name};
+    use super::{WaitOutcome, find_verdict_line, is_driver_script_name, wait_for_child};
 
     /// Validation: every real driver name is accepted.
     #[test]
@@ -484,5 +527,95 @@ mod tests {
     fn verdict_absent_is_none() {
         assert!(find_verdict_line("no json here", "lua error: boom").is_none());
         assert!(find_verdict_line("x = {1,2}", "traceback...").is_none());
+    }
+
+    /// Spawn a piped `/bin/sh` child for the wait-path tests: no nvim in
+    /// this sandbox, and the bug is in the wait logic, not the driver.
+    fn piped_sh(script: &str) -> std::process::Child {
+        use std::process::{Command, Stdio};
+        Command::new("sh")
+            .arg("-c")
+            .arg(script)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("sh must be spawnable in the sandbox")
+    }
+
+    /// Validation (reproducer for the 800 ms -> ~19 s bug): a child whose
+    /// grandchild inherits stdout still times out on budget. `sleep 30 &
+    /// wait` parks the parent for 30 s while the background sleep holds the
+    /// stdout pipe open; the old `wait_with_output` path drained to EOF and
+    /// stalled. The orphaned sleep exits on its own.
+    #[test]
+    fn timeout_survives_pipe_holding_grandchild() {
+        use std::time::{Duration, Instant};
+        let started = Instant::now();
+        let outcome = wait_for_child(piped_sh("sleep 30 & wait"), Duration::from_millis(800))
+            .expect("try_wait must not fail");
+        let elapsed = started.elapsed();
+        assert!(matches!(outcome, WaitOutcome::TimedOut));
+        assert!(
+            elapsed < Duration::from_secs(10),
+            "timeout took {elapsed:?}; the bug stalled ~19 s on an 800 ms budget"
+        );
+    }
+
+    /// Validation: a fast child keeps the normal path — status and output
+    /// both come back, so the restructure regresses nothing.
+    #[test]
+    fn fast_child_returns_status_and_output() {
+        use std::time::Duration;
+        let outcome = wait_for_child(piped_sh("echo hello-verdict"), Duration::from_secs(10))
+            .expect("try_wait must not fail");
+        match outcome {
+            WaitOutcome::Finished { status, output } => {
+                assert!(status.success());
+                let out = output.expect("output read must succeed");
+                assert!(String::from_utf8_lossy(&out.stdout).contains("hello-verdict"));
+            }
+            WaitOutcome::TimedOut => panic!("a fast child must not time out"),
+        }
+    }
+
+    /// Adversarial: a grandchild writing continuously to stdout must not
+    /// wedge the timeout path or grow memory without bound. The background
+    /// loop hammers the pipe while the parent sleeps; we drop our pipe ends
+    /// without draining, so the writer dies on SIGPIPE by itself and we
+    /// return on budget.
+    #[test]
+    fn timeout_survives_chattering_grandchild() {
+        use std::time::{Duration, Instant};
+        let started = Instant::now();
+        let outcome = wait_for_child(
+            piped_sh("(while true; do echo chatter; done) & sleep 30"),
+            Duration::from_millis(800),
+        )
+        .expect("try_wait must not fail");
+        let elapsed = started.elapsed();
+        assert!(matches!(outcome, WaitOutcome::TimedOut));
+        assert!(
+            elapsed < Duration::from_secs(10),
+            "timeout took {elapsed:?} with a chattering grandchild"
+        );
+    }
+
+    /// Adversarial: the child exits just as the deadline fires. Whichever
+    /// way `try_wait` lands, the result is coherent — no panic, no hang,
+    /// and `TimedOut` never carries output.
+    #[test]
+    fn kill_race_stays_coherent() {
+        use std::time::{Duration, Instant};
+        let started = Instant::now();
+        let outcome = wait_for_child(piped_sh("true"), Duration::from_millis(0))
+            .expect("try_wait must not fail");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the kill race must not hang"
+        );
+        match outcome {
+            WaitOutcome::TimedOut => {}
+            WaitOutcome::Finished { status, .. } => assert!(status.success()),
+        }
     }
 }
