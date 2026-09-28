@@ -2,7 +2,7 @@
 name = "phlow-gauntlet"
 version = "0.1.0"
 edition = "2024"
-description = "35-task agent-orchestration proving ground for phlow: task drivers, failure recorder, and report CLI. EXPERIMENTAL — drives only test doubles and headless Neovim; enables no production behavior."
+description = "40-task agent-orchestration proving ground for phlow: task drivers, failure recorder, and report CLI. EXPERIMENTAL — drives only test doubles and headless Neovim; enables no production behavior."
 license = "MIT OR Apache-2.0"
 
 [lib]
@@ -34,6 +34,10 @@ phlow-llm = { path = "../phlow-llm" }
 # phlow-config: OllamaConfig for the task-26/27 backend fixtures. Direct
 # dependency (used by name); also pulled transitively via phlow-llm.
 phlow-config = { path = "../phlow-config" }
+# phlow-json: the real checked JSON boundary under test for task-39
+# (parse_limited: input cap + depth bound + typed errors). Path
+# dependency, same workspace.
+phlow-json = { path = "../phlow-json" }
 # rmpv: the scripted msgpack-RPC socket peer in the task-25 driver —
 # the same codec the transport uses. No derive-based validation.
 rmpv = "1"

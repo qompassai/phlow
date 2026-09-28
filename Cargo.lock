@@ -1649,6 +1649,7 @@ dependencies = [
  "phlow-council",
  "phlow-editor",
  "phlow-experiment",
+ "phlow-json",
  "phlow-llm",
  "phlow-runtime",
  "rmpv",
