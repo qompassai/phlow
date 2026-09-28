@@ -1,4 +1,4 @@
-//! The 85 gauntlet tasks. One module per task; each file has a single
+//! The 100 gauntlet tasks. One module per task; each file has a single
 //! owning worker during implementation (disjoint ownership).
 
 pub mod task_01;
@@ -11,6 +11,7 @@ pub mod task_07;
 pub mod task_08;
 pub mod task_09;
 pub mod task_10;
+pub mod task_100;
 pub mod task_11;
 pub mod task_12;
 pub mod task_13;
@@ -96,6 +97,10 @@ pub mod task_92;
 pub mod task_93;
 pub mod task_94;
 pub mod task_95;
+pub mod task_96;
+pub mod task_97;
+pub mod task_98;
+pub mod task_99;
 
 use crate::{Ctx, GauntletError, TaskKind, TaskReport};
 use std::time::Instant;
@@ -114,7 +119,8 @@ pub const TASK_IDS: [&str; crate::TASK_COUNT_MAX] = [
     "task-65", "task-66", "task-67", "task-68", "task-69", "task-70", "task-71", "task-72",
     "task-73", "task-74", "task-75", "task-76", "task-77", "task-78", "task-79", "task-80",
     "task-81", "task-82", "task-83", "task-84", "task-85", "task-86", "task-87", "task-88",
-    "task-89", "task-90", "task-91", "task-92", "task-93", "task-94", "task-95",
+    "task-89", "task-90", "task-91", "task-92", "task-93", "task-94", "task-95", "task-96",
+    "task-97", "task-98", "task-99", "task-100",
 ];
 
 /// Run one task by id and record a `TaskReport`.
@@ -216,6 +222,16 @@ pub fn run_task(id: &str, ctx: &Ctx) -> Result<TaskReport, GauntletError> {
         task_93::ID => (task_93::ID, task_93::NAME, task_93::KIND, task_93::run(ctx)),
         task_94::ID => (task_94::ID, task_94::NAME, task_94::KIND, task_94::run(ctx)),
         task_95::ID => (task_95::ID, task_95::NAME, task_95::KIND, task_95::run(ctx)),
+        task_96::ID => (task_96::ID, task_96::NAME, task_96::KIND, task_96::run(ctx)),
+        task_97::ID => (task_97::ID, task_97::NAME, task_97::KIND, task_97::run(ctx)),
+        task_98::ID => (task_98::ID, task_98::NAME, task_98::KIND, task_98::run(ctx)),
+        task_99::ID => (task_99::ID, task_99::NAME, task_99::KIND, task_99::run(ctx)),
+        task_100::ID => (
+            task_100::ID,
+            task_100::NAME,
+            task_100::KIND,
+            task_100::run(ctx),
+        ),
         _ => return Err(GauntletError::UnknownTask { id: id.to_string() }),
     };
     let duration_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
@@ -326,6 +342,11 @@ pub fn task_meta(id: &str) -> Option<(&'static str, TaskKind)> {
         task_93::ID => Some((task_93::NAME, task_93::KIND)),
         task_94::ID => Some((task_94::NAME, task_94::KIND)),
         task_95::ID => Some((task_95::NAME, task_95::KIND)),
+        task_96::ID => Some((task_96::NAME, task_96::KIND)),
+        task_97::ID => Some((task_97::NAME, task_97::KIND)),
+        task_98::ID => Some((task_98::NAME, task_98::KIND)),
+        task_99::ID => Some((task_99::NAME, task_99::KIND)),
+        task_100::ID => Some((task_100::NAME, task_100::KIND)),
         _ => None,
     }
 }

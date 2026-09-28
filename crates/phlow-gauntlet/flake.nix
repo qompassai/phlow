@@ -9,22 +9,22 @@
 #
 # ROSTER SCHEME (two levels — read this before extending):
 # - `gauntletRoster` declares EVERY task as pure data: { id, name, kind },
-#   split into `tasks01to95` (implemented: drivers for 01-95 all landed
-#   in this crate, waves 01-18) and `tasks96to115` (pending: designed in
-#   the two extension docs above, waves 19-22, drivers not yet landed).
+#   split into `tasks01to100` (implemented: drivers for 01-100 all landed
+#   in this crate, waves 01-19) and `tasks101to115` (pending: designed in
+#   the two extension docs above, wave 20-21, drivers not yet landed).
 #   Roster asserts validate ALL 115 entries.
 # - Apps (`apps.task-NN`), the `gauntlet` runner, and `checks.task-list`
 #   cover IMPLEMENTED tasks only. The flake never claims an app for a
 #   task without a driver. This deliberately deviates from the design
 #   docs' flake plans ("assert all 100/115 apps exist"): the plan is
-#   data-right but honesty-wrong while drivers 91-115 do not exist.
+#   data-right but honesty-wrong while drivers 101-115 do not exist.
 # - When a wave worker lands a driver, move that task's entry from the
 #   pending side to the implemented side (`rosterImplemented` grows,
 #   `rosterPending` shrinks). The asserts, app generation, runner, and
 #   checks all consume the two segments via `gauntletRoster` and
-#   `implementedTasks` — no other edits needed. Waves through 91-95
+#   `implementedTasks` — no other edits needed. Waves through 96-100
 #   landed every designed task, so the implemented side is complete
-#   through task-95; the pending side holds tasks 96-115 until their
+#   through task-100; the pending side holds tasks 101-115 until their
 #   drivers land.
 # - `tasks01to60` was once referenced but never defined (dangling binding
 #   in the 70-task flake); it is defined here so the implemented
@@ -627,8 +627,8 @@
 
       # Roster segment: tasks 96-100. Designed in
       # ~/workspace/gauntlet-design-tasks-71-100.md (wave 19);
-      # drivers have not landed, so this segment is PENDING. Same
-      # { id, name, kind } contract as above.
+      # drivers landed in the wave 96-100 commit, so this segment is
+      # IMPLEMENTED. Same { id, name, kind } contract as above.
       tasks96to100 = [
         {
           id = "task-96";
@@ -752,9 +752,9 @@
       tasks01to85 = tasks01to80 ++ tasks81to85;
       tasks01to90 = tasks01to85 ++ tasks86to90;
       tasks01to95 = tasks01to90 ++ tasks91to95;
-      tasks96to115 = tasks96to100 ++ tasks101to115;
-      rosterImplemented = tasks01to95;
-      rosterPending = tasks96to115;
+      tasks01to100 = tasks01to95 ++ tasks96to100;
+      rosterImplemented = tasks01to100;
+      rosterPending = tasks101to115;
 
       # Full declared roster: segments concatenated, nothing hardcoded.
       gauntletRoster = rosterImplemented ++ rosterPending;
