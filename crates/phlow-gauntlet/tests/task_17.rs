@@ -11,6 +11,7 @@
 use phlow_gauntlet::tasks::task_17;
 use phlow_gauntlet::{Ctx, TaskKind, TaskOutcome};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 /// Resolve a required directory from env or fallback. Panics (fail closed)
@@ -51,7 +52,14 @@ fn home_dir() -> String {
     std::env::var("HOME").unwrap_or_else(|_| panic!("task-17: HOME is not set"))
 }
 
+/// Process-local sequence so concurrent `ctx_for` calls never collide.
+static WORKDIR_SEQ: AtomicU64 = AtomicU64::new(0);
+
 /// Build a `Ctx` for one scenario with its own scratch directory.
+///
+/// The workdir is unique per call (pid + a process-local counter): two
+/// tests running the *same* scenario in parallel get disjoint directories,
+/// while the driver still sees the unchanged scenario name.
 fn ctx_for(scenario: &str) -> Ctx {
     let nvim_bin = required_dir(
         "GAUNTLET_NVIM_BIN",
@@ -61,7 +69,11 @@ fn ctx_for(scenario: &str) -> Ctx {
         "GAUNTLET_DIVER_LUA",
         &format!("{}/workspace/repos/diver/lua", home_dir()),
     );
-    let work_dir = std::env::temp_dir().join(format!("gauntlet-task-17-{scenario}"));
+    let seq = WORKDIR_SEQ.fetch_add(1, Ordering::SeqCst);
+    let work_dir = std::env::temp_dir().join(format!(
+        "gauntlet-task-17-{scenario}-{}-{seq}",
+        std::process::id()
+    ));
     let mut ctx = Ctx::new(nvim_bin, diver_lua, work_dir)
         .unwrap_or_else(|e| panic!("task-17: cannot build Ctx: {e}"));
     ctx.timeout = Duration::from_secs(120);
