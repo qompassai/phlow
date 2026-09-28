@@ -1471,6 +1471,7 @@ dependencies = [
 name = "phlow-gauntlet"
 version = "0.1.0"
 dependencies = [
+ "phlow-council",
  "phlow-experiment",
  "serde_json",
 ]
