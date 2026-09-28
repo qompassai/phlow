@@ -703,27 +703,27 @@ fn reject_unknown(
 }
 
 /// Requires `key` to hold a table.
-fn as_table_value(
-    value: Option<&toml::Value>,
+fn as_table_value<'a>(
+    value: Option<&'a toml::Value>,
     file: &'static str,
     key: &str,
     missing: &str,
-) -> Result<Table, ExperimentError> {
+) -> Result<&'a Table, ExperimentError> {
     match value {
-        Some(toml::Value::Table(table)) => Ok(table.clone()),
+        Some(toml::Value::Table(table)) => Ok(table),
         Some(_) => Err(manifest_invalid(file, key, "must be a table")),
         None => Err(manifest_invalid(file, key, missing)),
     }
 }
 
 /// Requires `array` to hold a table at `index`.
-fn as_table(
-    value: &toml::Value,
+fn as_table<'a>(
+    value: &'a toml::Value,
     file: &'static str,
     at: &str,
-) -> Result<Table, ExperimentError> {
+) -> Result<&'a Table, ExperimentError> {
     match value {
-        toml::Value::Table(table) => Ok(table.clone()),
+        toml::Value::Table(table) => Ok(table),
         _ => Err(manifest_invalid(file, at, "must be a table")),
     }
 }

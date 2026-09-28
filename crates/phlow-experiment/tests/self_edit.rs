@@ -17,7 +17,7 @@ use phlow_experiment::{
 fn improvement_proposal_construction() {
     let proposal = ok(ImprovementProposal::new(proposal_params()));
     assert_eq!(proposal.changed_surface(), &["src/checks.rs".to_string()]);
-    assert_eq!(proposal.risk_class(), RiskClass::Low);
+    assert_eq!(proposal.risk_class(), RiskClass::Normal);
     assert_eq!(proposal.baseline_revision(), "abc123");
     assert_eq!(proposal.rollback_target(), "abc123");
     assert_eq!(proposal.reviewer_decisions().len(), 1);

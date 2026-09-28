@@ -649,6 +649,38 @@ impl SchedulerNode {
     pub fn deadline_ms(&self) -> u64 {
         self.deadline_ms
     }
+    /// The pinned baseline revision the node was prepared from.
+    pub fn baseline_revision(&self) -> &str {
+        &self.baseline_revision
+    }
+    /// The immutable workspace snapshot label.
+    pub fn workspace_snapshot(&self) -> &str {
+        &self.workspace_snapshot
+    }
+    /// The digest of the immutable input the node was given.
+    pub fn input_digest(&self) -> &str {
+        &self.input_digest
+    }
+    /// Ids of nodes this node depends on.
+    pub fn dependency_ids(&self) -> &[NodeId] {
+        &self.dependency_ids
+    }
+    /// The CPU budget in milliseconds.
+    pub fn cpu_budget_ms(&self) -> u64 {
+        self.cpu_budget_ms
+    }
+    /// The memory budget in bytes.
+    pub fn memory_budget_bytes(&self) -> u64 {
+        self.memory_budget_bytes
+    }
+    /// The maximum output the node may produce, in bytes.
+    pub fn output_bytes_max(&self) -> u64 {
+        self.output_bytes_max
+    }
+    /// The remaining tool calls delegated to this node.
+    pub fn tool_calls_remaining(&self) -> u64 {
+        self.tool_calls_remaining
+    }
 
     /// Moves the node to `state`. Crate-internal: only the [`Scheduler`]
     /// transitions nodes, after validating the move.
@@ -780,6 +812,18 @@ impl Scheduler {
     /// Number of published results.
     pub fn published_count(&self) -> usize {
         self.published.len()
+    }
+
+    /// The digest published for `id`, if a result was published.
+    pub fn published_digest(&self, id: &NodeId) -> Option<&str> {
+        self.published
+            .get(id)
+            .map(|result| result.result_digest.as_str())
+    }
+
+    /// The generation a published result was produced for, if any.
+    pub fn published_generation(&self, id: &NodeId) -> Option<u64> {
+        self.published.get(id).map(|result| result.generation)
     }
 
     /// Looks up an admitted node.

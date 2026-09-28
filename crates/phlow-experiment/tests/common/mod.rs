@@ -2,6 +2,13 @@
 //!
 //! Every helper builds its value from literal arguments so each test states
 //! exactly what it feeds the code under test.
+//!
+//! This module is compiled separately into each integration-test binary and
+//! each binary uses only a subset, so per-binary dead-code analysis would
+//! flag the rest. The allow below is scoped to that artifact: every helper
+//! here is used by at least one test binary (verified by grep 2026-09-28),
+//! so it silences subset noise, not genuine disuse.
+#![allow(dead_code)]
 
 use phlow_experiment::{
     ArtifactDigest, BudgetTracker, CapabilitySet, CheckRun, EvidenceBundle, ExperimentError,
@@ -129,7 +136,7 @@ pub fn proposal_params() -> ProposalParams {
         candidate_diff_summary: "Tighten the check timeout path.".to_string(),
         changed_surface: vec!["src/checks.rs".to_string()],
         expected_benefit: "Fewer hung checks.".to_string(),
-        risk_class: RiskClass::Low,
+        risk_class: RiskClass::Normal,
         budgets: ProposalBudgets {
             tool_calls_max: 64,
             wall_ms_max: 300_000,

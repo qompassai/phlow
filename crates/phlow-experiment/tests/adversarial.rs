@@ -8,8 +8,7 @@
 mod common;
 
 use common::{
-    complete_evidence, manifest_text, ok, operator_record, proposal_params, root_capabilities,
-    test_budget,
+    manifest_text, ok, operator_record, proposal_params, root_capabilities, test_budget,
 };
 use phlow_experiment::{
     ArtifactDigest, CheckRun, EvidenceBundle, ExperimentError, HumanApproval,
