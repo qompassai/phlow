@@ -19,8 +19,10 @@ use crate::error::{DimAxis, KernelError};
 
 /// Maximum threads per block on the generic device profile.
 ///
-/// Verified against real hardware behavior: NVIDIA GPUs reject more than
-/// 1024 threads per block at the driver level (see docs/decisions.md).
+/// Conservative profile choice, not a verified universal fact: the official
+/// Mojo GPU tutorial notes NVIDIA hardware rejects more than 1024 threads
+/// per block at the driver level (see docs/decisions.md), so the generic
+/// profile adopts 1024. A real device profile would query the driver.
 pub const THREADS_PER_BLOCK_MAX: u32 = 1024;
 /// Maximum shared memory per block on the generic device profile (48 KiB).
 pub const SHARED_MEMORY_BYTES_PER_BLOCK_MAX: u32 = 48 * 1024;

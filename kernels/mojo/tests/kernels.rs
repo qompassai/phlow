@@ -1,6 +1,6 @@
 //! Integration tests for `phlow-mojo-kernels`.
 //!
-//! Inventory: 20 tests, exactly 10 validation (v_*) and 10 adversarial
+//! Inventory: 22 tests, exactly 11 validation (v_*) and 11 adversarial
 //! (a_*). Validation tests prove the contract accepts what it should;
 //! adversarial tests throw hostile, boundary-violating, or oversized input
 //! at every check and assert typed rejection without state corruption.

@@ -9,8 +9,9 @@
 //!
 //! `Stopped -> start() -> Running -> drain()/stop() -> Stopped`. `drain`
 //! first refuses new submissions (`Draining`), pumps the queue and
-//! in-flight map until empty, force-cancels leftovers after
-//! [`DRAIN_ROUNDS_MAX`] no-progress rounds, then shuts the worker down.
+//! in-flight map until empty — stopping early on the first round with no
+//! progress, or after [`DRAIN_ROUNDS_MAX`] rounds — force-cancels
+//! leftovers, then shuts the worker down.
 //! `restart` drains, bumps the generation, and starts again.
 //!
 //! # Cancellation policy
@@ -215,8 +216,9 @@ impl<W: MojoWorker> WorkerHarness<W> {
     ///
     /// [`WorkerError::NotRunning`] when not running;
     /// [`WorkerError::PayloadTooLarge`] before any queue admission;
-    /// [`WorkerError::QueueFull`] when the queue is at capacity. Rejection
-    /// changes nothing.
+    /// [`WorkerError::QueueFull`] when the queue is at capacity;
+    /// [`WorkerError::TaskIdsExhausted`] when all 2^64 ids are used.
+    /// Rejection changes nothing.
     pub fn submit(&mut self, kind: TaskKind, payload: Vec<u8>) -> Result<TaskId, WorkerError> {
         if self.state != HarnessState::Running {
             return Err(WorkerError::NotRunning);
@@ -232,9 +234,10 @@ impl<W: MojoWorker> WorkerHarness<W> {
                 capacity: self.config.queue_capacity(),
             });
         }
+        if self.next_task_id == u64::MAX {
+            return Err(WorkerError::TaskIdsExhausted);
+        }
         let id = TaskId::next(self.next_task_id);
-        // 2^64 task ids per harness lifetime is the bound; saturation keeps
-        // ids monotonic rather than wrapping into collision.
         self.next_task_id = self.next_task_id.saturating_add(1);
         self.queue
             .push_back(WorkerTask::new(id, self.generation, kind, payload));
@@ -294,8 +297,9 @@ impl<W: MojoWorker> WorkerHarness<W> {
     }
 
     /// Drain the harness: refuse new submissions, pump until the queue and
-    /// in-flight map are empty, force-cancel leftovers after
-    /// [`DRAIN_ROUNDS_MAX`] no-progress rounds, shut the worker down.
+    /// in-flight map are empty — stopping early on the first round with no
+    /// progress, or after [`DRAIN_ROUNDS_MAX`] rounds — force-cancel
+    /// leftovers, shut the worker down.
     ///
     /// Always shuts the worker down and returns to `Stopped`, even when a
     /// poll fails mid-drain (the error is still reported to the caller).
@@ -419,9 +423,17 @@ impl<W: MojoWorker> WorkerHarness<W> {
                     counts.stale += 1;
                 }
             }
-            PollOutcome::Cancelled(_) => {
-                self.publish_cancelled(id, task.generation());
-                counts.cancelled += 1;
+            PollOutcome::Cancelled(cancelled_id) => {
+                // The worker names the task it cancelled; a mismatched id
+                // is a dishonest or confused worker — dropped as stale,
+                // never published.
+                if cancelled_id == id {
+                    self.publish_cancelled(id, task.generation());
+                    counts.cancelled += 1;
+                } else {
+                    self.stale_results_dropped += 1;
+                    counts.stale += 1;
+                }
             }
         }
     }
@@ -483,5 +495,88 @@ impl<W: MojoWorker> WorkerHarness<W> {
             }
         }
         cancelled
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Crate-internal hardening tests. These exercise paths the public API
+    //! cannot reach: a worker forging a `Cancelled` id (`TaskId` has no
+    //! public constructor, so only crate-internal code can forge one) and
+    //! task-id exhaustion (the counter is private). They supplement the
+    //! integration inventory in `tests/worker.rs` (10 validation / 10
+    //! adversarial) rather than belonging to it.
+    use super::*;
+    use crate::boundary::{MojoWorker, PollOutcome};
+    use crate::types::TaskKind;
+    use std::time::Duration;
+
+    fn test_config() -> WorkerConfig {
+        WorkerConfig::new(128, 1024, Duration::from_secs(60)).unwrap()
+    }
+
+    /// A dishonest worker: reports `Cancelled` for an id it was never given.
+    struct ForgedCancelWorker;
+
+    impl MojoWorker for ForgedCancelWorker {
+        fn init(&mut self, _config: &WorkerConfig) -> Result<(), WorkerError> {
+            Ok(())
+        }
+
+        fn poll(&mut self, task: &WorkerTask) -> Result<PollOutcome, WorkerError> {
+            let forged = TaskId::next(task.id().get().wrapping_add(1));
+            Ok(PollOutcome::Cancelled(forged))
+        }
+
+        fn cancel(&mut self, _id: TaskId, _generation: u64) {}
+
+        fn shutdown(&mut self) {}
+    }
+
+    #[test]
+    fn cancelled_with_forged_id_is_dropped_as_stale() {
+        let mut harness = WorkerHarness::new(ForgedCancelWorker, test_config());
+        harness.start().unwrap();
+        harness.submit(TaskKind::Transform, b"x".to_vec()).unwrap();
+        let report = harness.pump().unwrap();
+        assert_eq!(report.cancelled, 0);
+        assert_eq!(report.stale_dropped, 1);
+        // Nothing was published: the forged cancellation is dropped, not
+        // honored.
+        assert!(harness.take_result().is_none());
+        assert_eq!(harness.stale_results_dropped, 1);
+    }
+
+    /// A minimal worker: never completes, never cancels. Enough to drive
+    /// the harness without the `simulated` feature.
+    struct NullWorker;
+
+    impl MojoWorker for NullWorker {
+        fn init(&mut self, _config: &WorkerConfig) -> Result<(), WorkerError> {
+            Ok(())
+        }
+
+        fn poll(&mut self, _task: &WorkerTask) -> Result<PollOutcome, WorkerError> {
+            Ok(PollOutcome::Pending)
+        }
+
+        fn cancel(&mut self, _id: TaskId, _generation: u64) {}
+
+        fn shutdown(&mut self) {}
+    }
+
+    #[test]
+    fn submit_at_id_exhaustion_is_rejected() {
+        let mut harness = WorkerHarness::new(NullWorker, test_config());
+        harness.start().unwrap();
+        harness.next_task_id = u64::MAX;
+        assert_eq!(
+            harness.submit(TaskKind::Transform, b"x".to_vec()),
+            Err(WorkerError::TaskIdsExhausted)
+        );
+        // Rejection changed nothing: the queue is empty and the counter is
+        // untouched.
+        assert_eq!(harness.queue_len(), 0);
+        assert_eq!(harness.next_task_id, u64::MAX);
     }
 }

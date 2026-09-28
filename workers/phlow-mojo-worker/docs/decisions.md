@@ -1,10 +1,10 @@
 # phlow-mojo-worker design decisions
 
-Lane `lane/mojo`, 2026-09-27. Adaptation of Mojo worker concepts into Tiger
+Lane `lane/mojo`, 2026-09-28. Adaptation of Mojo worker concepts into Tiger
 Style Rust: a Rust-side harness contract plus the interface boundary a
 Mojo-implemented worker must satisfy. Concepts are re-expressed, never
 ported: no Mojo code was translated and no Mojo compiles in this workspace.
-Upstream facts were verified against primary sources on 2026-09-27.
+Upstream facts were verified against primary sources on 2026-09-28.
 
 ## 1. Upstream sources
 

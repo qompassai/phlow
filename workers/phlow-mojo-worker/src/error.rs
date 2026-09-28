@@ -56,6 +56,9 @@ pub enum WorkerError {
         /// Maximum allowed.
         max: usize,
     },
+    /// All 2^64 task ids for this harness lifetime are used; no new task
+    /// can be admitted without reusing an id.
+    TaskIdsExhausted,
 }
 
 impl Display for WorkerError {
@@ -79,6 +82,7 @@ impl Display for WorkerError {
             Self::ResultTooLarge { bytes, max } => {
                 write!(f, "worker result is {bytes} bytes, max {max}")
             }
+            Self::TaskIdsExhausted => write!(f, "all 2^64 task ids are used"),
         }
     }
 }

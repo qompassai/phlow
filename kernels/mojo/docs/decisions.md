@@ -1,9 +1,9 @@
 # phlow-mojo-kernels design decisions
 
-Lane `lane/mojo`, 2026-09-27. Adaptation of Mojo GPU-kernel concepts into
+Lane `lane/mojo`, 2026-09-28. Adaptation of Mojo GPU-kernel concepts into
 Tiger Style Rust. Concepts are re-expressed, never ported: no Mojo code was
 translated, no Mojo was compiled, and no GPU is touched. All upstream facts
-below were verified against primary sources on 2026-09-27; secondary
+below were verified against primary sources on 2026-09-28; secondary
 observations are labeled as such.
 
 ## 1. Upstream sources
