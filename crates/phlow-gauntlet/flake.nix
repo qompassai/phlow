@@ -816,7 +816,7 @@
         }
       ];
 
-      tasks136to150 = [
+      tasks136to140 = [
         {
           id = "task-136";
           name = "bounded concurrency queueing";
@@ -842,7 +842,9 @@
           name = "rate limits and testing windows";
           kind = "rust";
         }
-        {
+      ];
+
+      tasks141to145 = [
           id = "task-141";
           name = "evidence preservation custody";
           kind = "rust";
@@ -867,6 +869,9 @@
           name = "submission payload preview";
           kind = "rust";
         }
+      ];
+
+      tasks146to150 = [
         {
           id = "task-146";
           name = "operator approval boundary";
@@ -1637,8 +1642,18 @@
       tasks116to125 = tasks116to120 ++ tasks121to125;
       tasks116to130 = tasks116to125 ++ tasks126to130;
       rosterImplemented =
-        tasks01to105 ++ tasks106to110 ++ tasks111to115 ++ tasks116to130 ++ tasks131to135;
-      rosterPending = tasks136to150 ++ tasks151to200 ++ tasks201to250 ++ tasks251to280;
+        tasks01to105
+        ++ tasks106to110
+        ++ tasks111to115
+        ++ tasks116to130
+        ++ tasks131to135
+        ++ tasks141to145
+        ++ tasks146to150;
+      rosterPending =
+        tasks136to140
+        ++ tasks151to200
+        ++ tasks201to250
+        ++ tasks251to280;
 
       # Full declared roster: segments concatenated, nothing hardcoded.
       gauntletRoster = rosterImplemented ++ rosterPending;
