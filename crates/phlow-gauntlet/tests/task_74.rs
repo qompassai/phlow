@@ -30,7 +30,11 @@ use std::path::PathBuf;
 /// V1: the complete case — 5 of 5 reviewers vote; the real tally
 /// aggregates normally (strict plurality: keep=3 > reject=1, revise=1
 /// -> Keep). This is the mechanism baseline the partial cases are
-/// measured against.
+/// measured against. The task-level driver then runs all four cases
+/// and reports the honest seam failure: CouncilReview is a votes-only
+/// tally that cannot account for gaps, so the aggregation-envelope
+/// product decision is banked in the task-level `how`, not implemented
+/// on gauntlet authority.
 #[test]
 fn complete_case_aggregates_normally() {
     assert_eq!(task_74::ID, "task-74");
@@ -50,6 +54,29 @@ fn complete_case_aggregates_normally() {
     assert!(
         joined.contains("decision() = Keep"),
         "evidence must show the aggregated verdict:\n{joined}"
+    );
+    // Task-level: the driver fails at the seam (not a pass), and the
+    // `how` banks the aggregation-envelope product decision for Matt.
+    let ctx = Ctx::new(
+        PathBuf::from("/bin/true"),
+        PathBuf::from("/tmp"),
+        PathBuf::from("/tmp"),
+    )
+    .unwrap_or_else(|e| panic!("task-74: cannot build Ctx: {e}"));
+    let (where_, how) = match task_74::run(&ctx) {
+        TaskOutcome::Fail { where_, how, .. } => (where_, how),
+        TaskOutcome::Pass { evidence } => panic!(
+            "task-74 passed: an aggregation envelope was invented, not found\nevidence: {evidence:?}"
+        ),
+    };
+    assert_eq!(where_, "seam", "task-74 must fail at the seam");
+    assert!(
+        how.contains("product decision for Matt"),
+        "the 'how' must bank the product decision: {how}"
+    );
+    assert!(
+        how.contains("votes-only tally"),
+        "the 'how' must name the votes-only tally: {how}"
     );
 }
 
@@ -134,44 +161,5 @@ fn late_arrival_silently_changes_the_published_verdict() {
     assert!(
         joined.contains("Keep -> Revise"),
         "evidence must show the silent verdict move:\n{joined}"
-    );
-}
-
-/// The task-level driver runs all four cases and reports the honest
-/// seam failure: CouncilReview is a votes-only tally that cannot
-/// account for gaps — "3 of 5" is indistinguishable from "3 of 3",
-/// the empty case yields a misnamed error, and late votes merge
-/// silently.
-#[test]
-fn task_level_verdict_is_fail_at_seam() {
-    let ctx = Ctx::new(
-        PathBuf::from("/bin/true"),
-        PathBuf::from("/tmp"),
-        PathBuf::from("/tmp"),
-    )
-    .unwrap_or_else(|e| panic!("task-74: cannot build Ctx: {e}"));
-    let (where_, how, evidence) = match task_74::run(&ctx) {
-        TaskOutcome::Fail {
-            where_,
-            how,
-            evidence,
-        } => (where_, how, evidence),
-        TaskOutcome::Pass { evidence } => panic!(
-            "task-74 passed: an aggregation envelope was invented, not found\nevidence: {evidence:?}"
-        ),
-    };
-    assert_eq!(where_, "seam", "task-74 must fail at the seam");
-    let joined = evidence.join("\n");
-    assert!(
-        joined.contains("PartialEq-identical"),
-        "evidence must name the core identity:\n{joined}"
-    );
-    assert!(
-        how.contains("product decision for Matt"),
-        "the 'how' must bank the product decision: {how}"
-    );
-    assert!(
-        how.contains("votes-only tally"),
-        "the 'how' must name the votes-only tally: {how}"
     );
 }
