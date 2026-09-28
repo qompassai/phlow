@@ -91,6 +91,11 @@ pub mod task_87;
 pub mod task_88;
 pub mod task_89;
 pub mod task_90;
+pub mod task_91;
+pub mod task_92;
+pub mod task_93;
+pub mod task_94;
+pub mod task_95;
 
 use crate::{Ctx, GauntletError, TaskKind, TaskReport};
 use std::time::Instant;
@@ -109,7 +114,7 @@ pub const TASK_IDS: [&str; crate::TASK_COUNT_MAX] = [
     "task-65", "task-66", "task-67", "task-68", "task-69", "task-70", "task-71", "task-72",
     "task-73", "task-74", "task-75", "task-76", "task-77", "task-78", "task-79", "task-80",
     "task-81", "task-82", "task-83", "task-84", "task-85", "task-86", "task-87", "task-88",
-    "task-89", "task-90",
+    "task-89", "task-90", "task-91", "task-92", "task-93", "task-94", "task-95",
 ];
 
 /// Run one task by id and record a `TaskReport`.
@@ -206,6 +211,11 @@ pub fn run_task(id: &str, ctx: &Ctx) -> Result<TaskReport, GauntletError> {
         task_88::ID => (task_88::ID, task_88::NAME, task_88::KIND, task_88::run(ctx)),
         task_89::ID => (task_89::ID, task_89::NAME, task_89::KIND, task_89::run(ctx)),
         task_90::ID => (task_90::ID, task_90::NAME, task_90::KIND, task_90::run(ctx)),
+        task_91::ID => (task_91::ID, task_91::NAME, task_91::KIND, task_91::run(ctx)),
+        task_92::ID => (task_92::ID, task_92::NAME, task_92::KIND, task_92::run(ctx)),
+        task_93::ID => (task_93::ID, task_93::NAME, task_93::KIND, task_93::run(ctx)),
+        task_94::ID => (task_94::ID, task_94::NAME, task_94::KIND, task_94::run(ctx)),
+        task_95::ID => (task_95::ID, task_95::NAME, task_95::KIND, task_95::run(ctx)),
         _ => return Err(GauntletError::UnknownTask { id: id.to_string() }),
     };
     let duration_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
@@ -311,6 +321,11 @@ pub fn task_meta(id: &str) -> Option<(&'static str, TaskKind)> {
         task_88::ID => Some((task_88::NAME, task_88::KIND)),
         task_89::ID => Some((task_89::NAME, task_89::KIND)),
         task_90::ID => Some((task_90::NAME, task_90::KIND)),
+        task_91::ID => Some((task_91::NAME, task_91::KIND)),
+        task_92::ID => Some((task_92::NAME, task_92::KIND)),
+        task_93::ID => Some((task_93::NAME, task_93::KIND)),
+        task_94::ID => Some((task_94::NAME, task_94::KIND)),
+        task_95::ID => Some((task_95::NAME, task_95::KIND)),
         _ => None,
     }
 }

@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-//! Gauntlet: the 90-task agent-orchestration proving ground for phlow.
+//! Gauntlet: the 95-task agent-orchestration proving ground for phlow.
 //!
 //! # Status: EXPERIMENTAL
 //!
@@ -33,8 +33,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 /// Maximum number of tasks in the gauntlet. The task list is closed: adding
-/// an 81st task is a design change, not an iteration.
-pub const TASK_COUNT_MAX: usize = 90;
+/// a 96th task is a design change, not an iteration.
+pub const TASK_COUNT_MAX: usize = 95;
 
 /// Maximum length in characters of a single evidence line in a report.
 /// Evidence is diagnostic text, not bulk data; oversized lines are truncated
