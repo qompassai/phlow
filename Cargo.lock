@@ -1459,6 +1459,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "phlow-experiment"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
 name = "phlow-gpu-worker"
 version = "0.1.0"
 dependencies = [
