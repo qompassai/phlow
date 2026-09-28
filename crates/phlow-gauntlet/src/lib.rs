@@ -22,7 +22,7 @@
 //!
 //! # Layout
 //!
-//! - [`tasks`]: the 150 task modules, one per file, disjoint ownership.
+//! - [`tasks`]: the 158 task modules, one per file, disjoint ownership.
 //! - [`bounty`]: the shared scaffold for tasks 131–150 (async bug-bounty
 //!   cyclical workflow): scope feeds, scheduler, finding lifecycle,
 //!   validation pipeline, submission gate, fake platform.
@@ -32,14 +32,15 @@
 pub mod bounty;
 pub mod skillopt;
 pub mod tasks;
+pub mod wire;
 
 use std::fmt;
 use std::path::PathBuf;
 use std::time::Duration;
 
 /// Maximum number of tasks in the gauntlet. The task list is closed: adding
-/// a 151st task is a design change, not an iteration.
-pub const TASK_COUNT_MAX: usize = 150;
+/// a 159th task is a design change, not an iteration.
+pub const TASK_COUNT_MAX: usize = 158;
 
 /// Maximum length in characters of a single evidence line in a report.
 /// Evidence is diagnostic text, not bulk data; oversized lines are truncated

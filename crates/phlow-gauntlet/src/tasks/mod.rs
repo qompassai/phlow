@@ -67,6 +67,14 @@ pub mod task_148;
 pub mod task_149;
 pub mod task_15;
 pub mod task_150;
+pub mod task_151;
+pub mod task_152;
+pub mod task_153;
+pub mod task_154;
+pub mod task_155;
+pub mod task_156;
+pub mod task_157;
+pub mod task_158;
 pub mod task_16;
 pub mod task_17;
 pub mod task_18;
@@ -176,7 +184,8 @@ pub const TASK_IDS: [&str; crate::TASK_COUNT_MAX] = [
     "task-121", "task-122", "task-123", "task-124", "task-125", "task-126", "task-127", "task-128",
     "task-129", "task-130", "task-131", "task-132", "task-133", "task-134", "task-135", "task-136",
     "task-137", "task-138", "task-139", "task-140", "task-141", "task-142", "task-143", "task-144",
-    "task-145", "task-146", "task-147", "task-148", "task-149", "task-150",
+    "task-145", "task-146", "task-147", "task-148", "task-149", "task-150", "task-151", "task-152",
+    "task-153", "task-154", "task-155", "task-156", "task-157", "task-158",
 ];
 
 /// Run one task by id and record a `TaskReport`.
@@ -558,6 +567,54 @@ pub fn run_task(id: &str, ctx: &Ctx) -> Result<TaskReport, GauntletError> {
             task_150::KIND,
             task_150::run(ctx),
         ),
+        task_151::ID => (
+            task_151::ID,
+            task_151::NAME,
+            task_151::KIND,
+            task_151::run(ctx),
+        ),
+        task_152::ID => (
+            task_152::ID,
+            task_152::NAME,
+            task_152::KIND,
+            task_152::run(ctx),
+        ),
+        task_153::ID => (
+            task_153::ID,
+            task_153::NAME,
+            task_153::KIND,
+            task_153::run(ctx),
+        ),
+        task_154::ID => (
+            task_154::ID,
+            task_154::NAME,
+            task_154::KIND,
+            task_154::run(ctx),
+        ),
+        task_155::ID => (
+            task_155::ID,
+            task_155::NAME,
+            task_155::KIND,
+            task_155::run(ctx),
+        ),
+        task_156::ID => (
+            task_156::ID,
+            task_156::NAME,
+            task_156::KIND,
+            task_156::run(ctx),
+        ),
+        task_157::ID => (
+            task_157::ID,
+            task_157::NAME,
+            task_157::KIND,
+            task_157::run(ctx),
+        ),
+        task_158::ID => (
+            task_158::ID,
+            task_158::NAME,
+            task_158::KIND,
+            task_158::run(ctx),
+        ),
         task_136::ID => (
             task_136::ID,
             task_136::NAME,
@@ -748,6 +805,14 @@ pub fn task_meta(id: &str) -> Option<(&'static str, TaskKind)> {
         task_148::ID => Some((task_148::NAME, task_148::KIND)),
         task_149::ID => Some((task_149::NAME, task_149::KIND)),
         task_150::ID => Some((task_150::NAME, task_150::KIND)),
+        task_151::ID => Some((task_151::NAME, task_151::KIND)),
+        task_152::ID => Some((task_152::NAME, task_152::KIND)),
+        task_153::ID => Some((task_153::NAME, task_153::KIND)),
+        task_154::ID => Some((task_154::NAME, task_154::KIND)),
+        task_155::ID => Some((task_155::NAME, task_155::KIND)),
+        task_156::ID => Some((task_156::NAME, task_156::KIND)),
+        task_157::ID => Some((task_157::NAME, task_157::KIND)),
+        task_158::ID => Some((task_158::NAME, task_158::KIND)),
         task_136::ID => Some((task_136::NAME, task_136::KIND)),
         task_137::ID => Some((task_137::NAME, task_137::KIND)),
         task_138::ID => Some((task_138::NAME, task_138::KIND)),
