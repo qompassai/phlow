@@ -3,9 +3,11 @@
 A map of the Rust workspace as it actually is: every node and edge below is
 derived from the tree — the `Cargo.toml` workspace member list, each crate's
 `path` dependencies, and the real module layout under `crates/*/src`. Nothing
-here is aspirational; planned work (CLM scoring, tuios session/inbox concepts)
-is tracked separately and this file will be updated as those integrations
-land, with a final accuracy pass at the end of the program.
+here is aspirational: the CLM scoring and tuios session/inbox integrations have
+landed and are reflected below. Remaining planned work (Mojo workers, SoL-Pi
+harness features, NVlabs GPU-compute adaptations) is tracked separately and
+this file will be updated as those integrations land, with a final accuracy
+pass at the end of the program.
 
 Derivation (re-run to check drift):
 
@@ -18,9 +20,9 @@ grep -rn 'path = "\.\./' crates/*/Cargo.toml
 ls crates/*/src
 ```
 
-The workspace is 15 crates: the 14 port crates plus `phlow-inference`, a
-pre-existing supporting crate that is not part of the port and is not covered
-by the Python-parity gates.
+The workspace is 16 crates: the 14 port crates plus `phlow-inference` and
+`phlow-tuios`, supporting crates that are not part of the port and are not
+covered by the Python-parity gates.
 
 ## System architecture
 
@@ -153,6 +155,7 @@ graph TB
         wsp["phlow-workspace"]
         inf["phlow-inference"]
         tui["phlow-tui"]
+        tio["phlow-tuios"]
     end
 
     subgraph L1["Layer 1 — foundation only"]
@@ -358,6 +361,7 @@ Derived from each crate's `src/` module list.
 | `phlow-codegen` | `app_generator`, `profiles`, `validator`, `error` | Code generation profiles (8 effective), 256-file cap |
 | `phlow-self-improve` | `feedback`, `prompt_evolver`, `skill_store`, `error` | Feedback records and prompt evolution; disabled by default |
 | `phlow-inference` | `kv_policy`, `speculative`, `tiered_cache`, `two_stage`, `projection`, `vector_arena` | Inference-serving primitives (DeepSeek-V4.1-Flash ideas); projection-head trait + bounded vector-arena embedding cache (CLM-adapted); supporting crate |
+| `phlow-tuios` | `state`, `mailbox`, `hooks`, `protocol`, `server`, `daemon`, `tape`, `error` | Session multiplexing for agents: agent-state machine, bounded per-session inbox ring with ask graph, daemon/client hook split, JSON-line Unix-socket control protocol, declarative tapes; supporting crate (tuios concepts adapted, no tuios code ported) |
 
 ## Trust boundaries
 
@@ -382,7 +386,12 @@ Derived from each crate's `src/` module list.
 - The CLM integration (contrastive System-1 scoring, bounded vector-arena
   cache, best-of-N verifier) has landed in `phlow-agent` + `phlow-inference`;
   the diagrams above already reflect it.
-- When the tuios integration lands (agent states, inbox, JSON control
-  protocol, hooks, session daemon), extend the entry-surface and TUI sections.
+- The tuios integration has landed as `phlow-tuios` (agent states, bounded
+  inbox ring, JSON-line control protocol, daemon/client hooks, session daemon,
+  declarative tapes); the TUI section above is extended, and the TUI itself
+  will become a client of the crate in a later change.
+- Remaining planned work: Mojo workers (`workers/phlow-mojo-worker`,
+  `kernels/mojo`), SoL-Pi agent-harness features, NVlabs GPU-compute
+  adaptations.
 - The mdbook chapter `docs/book/src/architecture.md` is the ELI5 companion;
   keep the two consistent on crate roles and product naming.
