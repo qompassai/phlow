@@ -11,11 +11,11 @@
 # ROSTER SCHEME (two levels — read this before extending):
 # - `gauntletRoster` declares EVERY task as pure data: { id, name, kind },
 #   split into `tasks01to105` (implemented: drivers for 01-105 all landed
-#   in this crate, waves 01-20), `tasks116to120` (implemented: diver
-#   harness Phase-2 acceptance probes, wave 116-120), `tasks106to115`
-#   (pending: designed in the extension docs, wave 21, drivers not yet
-#   landed), and `tasks121to130` (pending: designed in the Phase-2 doc,
-#   drivers not yet landed).
+#   in this crate, waves 01-20), `tasks116to125` (implemented: diver
+#   harness Phase-2 acceptance probes, waves 116-120 and 121-125),
+#   `tasks106to115` (pending: designed in the extension docs, wave 21,
+#   drivers not yet landed), and `tasks126to130` (pending: designed in the
+#   Phase-2 doc, drivers not yet landed).
 #   Roster asserts validate ALL 130 entries.
 # - Apps (`apps.task-NN`), the `gauntlet` runner, and `checks.task-list`
 #   cover IMPLEMENTED tasks only. The flake never claims an app for a
@@ -28,8 +28,8 @@
 #   checks all consume the two segments via `gauntletRoster` and
 #   `implementedTasks` — no other edits needed. Waves through 96-100
 #   landed every designed task, so the implemented side is complete
-#   through task-105 plus tasks 116-120; the pending side holds tasks
-#   106-115 and 121-130 until their drivers land.
+#   through task-105 plus tasks 116-125; the pending side holds tasks
+#   106-115 and 126-130 until their drivers land.
 # - `tasks01to60` was once referenced but never defined (dangling binding
 #   in the 70-task flake); it is defined here so the implemented
 #   concatenation evaluates. Nothing is hardcoded to 130 except the
@@ -720,7 +720,7 @@
         }
       ];
 
-      tasks121to130 = [
+      tasks121to125 = [
         {
           id = "task-121";
           name = "deny-all default and explicit opt-in";
@@ -746,6 +746,9 @@
           name = "run selection TOCTOU for cancel/resume";
           kind = "nvim-lua";
         }
+      ];
+
+      tasks126to130 = [
         {
           id = "task-126";
           name = "sink-append wakes supervision, no poll";
@@ -841,8 +844,9 @@
       tasks01to95 = tasks01to90 ++ tasks91to95;
       tasks01to100 = tasks01to95 ++ tasks96to100;
       tasks01to105 = tasks01to100 ++ tasks101to105;
-      rosterImplemented = tasks01to105 ++ tasks116to120;
-      rosterPending = tasks106to115 ++ tasks121to130;
+      tasks116to125 = tasks116to120 ++ tasks121to125;
+      rosterImplemented = tasks01to105 ++ tasks116to125;
+      rosterPending = tasks106to115 ++ tasks126to130;
 
       # Full declared roster: segments concatenated, nothing hardcoded.
       gauntletRoster = rosterImplemented ++ rosterPending;

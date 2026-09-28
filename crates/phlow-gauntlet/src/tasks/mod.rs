@@ -24,6 +24,11 @@ pub mod task_118;
 pub mod task_119;
 pub mod task_12;
 pub mod task_120;
+pub mod task_121;
+pub mod task_122;
+pub mod task_123;
+pub mod task_124;
+pub mod task_125;
 pub mod task_13;
 pub mod task_14;
 pub mod task_15;
@@ -131,7 +136,8 @@ pub const TASK_IDS: [&str; crate::TASK_COUNT_MAX] = [
     "task-81", "task-82", "task-83", "task-84", "task-85", "task-86", "task-87", "task-88",
     "task-89", "task-90", "task-91", "task-92", "task-93", "task-94", "task-95", "task-96",
     "task-97", "task-98", "task-99", "task-100", "task-101", "task-102", "task-103", "task-104",
-    "task-105", "task-116", "task-117", "task-118", "task-119", "task-120",
+    "task-105", "task-116", "task-117", "task-118", "task-119", "task-120", "task-121", "task-122",
+    "task-123", "task-124", "task-125",
 ];
 
 /// Run one task by id and record a `TaskReport`.
@@ -303,6 +309,36 @@ pub fn run_task(id: &str, ctx: &Ctx) -> Result<TaskReport, GauntletError> {
             task_120::KIND,
             task_120::run(ctx),
         ),
+        task_121::ID => (
+            task_121::ID,
+            task_121::NAME,
+            task_121::KIND,
+            task_121::run(ctx),
+        ),
+        task_122::ID => (
+            task_122::ID,
+            task_122::NAME,
+            task_122::KIND,
+            task_122::run(ctx),
+        ),
+        task_123::ID => (
+            task_123::ID,
+            task_123::NAME,
+            task_123::KIND,
+            task_123::run(ctx),
+        ),
+        task_124::ID => (
+            task_124::ID,
+            task_124::NAME,
+            task_124::KIND,
+            task_124::run(ctx),
+        ),
+        task_125::ID => (
+            task_125::ID,
+            task_125::NAME,
+            task_125::KIND,
+            task_125::run(ctx),
+        ),
         _ => return Err(GauntletError::UnknownTask { id: id.to_string() }),
     };
     let duration_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
@@ -428,6 +464,11 @@ pub fn task_meta(id: &str) -> Option<(&'static str, TaskKind)> {
         task_118::ID => Some((task_118::NAME, task_118::KIND)),
         task_119::ID => Some((task_119::NAME, task_119::KIND)),
         task_120::ID => Some((task_120::NAME, task_120::KIND)),
+        task_121::ID => Some((task_121::NAME, task_121::KIND)),
+        task_122::ID => Some((task_122::NAME, task_122::KIND)),
+        task_123::ID => Some((task_123::NAME, task_123::KIND)),
+        task_124::ID => Some((task_124::NAME, task_124::KIND)),
+        task_125::ID => Some((task_125::NAME, task_125::KIND)),
         _ => None,
     }
 }
