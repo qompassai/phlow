@@ -882,12 +882,12 @@ impl Scheduler {
     /// Publishes a terminal result for an admitted node — at most once.
     ///
     /// Accepted: the node's current generation, a non-empty digest, and a
-    /// terminal state. Rejected: unknown node
+    /// terminal state. Rejected, in check order: non-terminal state
+    /// ([`ExperimentError::NotTerminal`]), unknown node
     /// ([`ExperimentError::UnknownNode`]), cancelled run
     /// ([`ExperimentError::RunCancelled`]), generation mismatch
     /// ([`ExperimentError::StaleGeneration`]), second publication
-    /// ([`ExperimentError::DuplicateResult`]), non-terminal state
-    /// ([`ExperimentError::NotTerminal`]), or an already-terminal node
+    /// ([`ExperimentError::DuplicateResult`]), or an already-terminal node
     /// ([`ExperimentError::BadTransition`]). A cancelled, stale, timed-out,
     /// or superseded result never publishes.
     pub fn publish_result(
@@ -903,11 +903,12 @@ impl Scheduler {
             });
         }
         let run_id: RunId = {
-            let node = self.nodes.get(node_id).ok_or_else(|| {
-                ExperimentError::UnknownNode {
+            let node = self
+                .nodes
+                .get(node_id)
+                .ok_or_else(|| ExperimentError::UnknownNode {
                     id: node_id.as_str().to_string(),
-                }
-            })?;
+                })?;
             node.run_id().clone()
         };
         if self.is_run_cancelled(&run_id) {
@@ -915,17 +916,12 @@ impl Scheduler {
                 run: run_id.as_str().to_string(),
             });
         }
-        let node = self.nodes.get_mut(node_id).ok_or_else(|| {
-            ExperimentError::UnknownNode {
+        let node = self
+            .nodes
+            .get_mut(node_id)
+            .ok_or_else(|| ExperimentError::UnknownNode {
                 id: node_id.as_str().to_string(),
-            }
-        })?;
-        if node.state().is_terminal() {
-            return Err(ExperimentError::BadTransition {
-                from: node.state().name(),
-                event: "publish_result",
-            });
-        }
+            })?;
         if generation != node.generation() {
             return Err(ExperimentError::StaleGeneration {
                 node: node_id.as_str().to_string(),
@@ -936,6 +932,12 @@ impl Scheduler {
         if self.published.contains_key(node_id) {
             return Err(ExperimentError::DuplicateResult {
                 node: node_id.as_str().to_string(),
+            });
+        }
+        if node.state().is_terminal() {
+            return Err(ExperimentError::BadTransition {
+                from: node.state().name(),
+                event: "publish_result",
             });
         }
         let digest = check_digest("result_digest", result_digest)?;

@@ -10,9 +10,8 @@ use common::{
     test_scheduler,
 };
 use phlow_experiment::{
-    CheckRecord, EvaluationRecord, ExperimentError, HumanApproval, ImprovementProposal,
+    CheckRecord, EvaluationRecord, Evaluator, ExperimentError, HumanApproval, ImprovementProposal,
     Lifecycle, LifecycleEvent, NodeId, NodeState, PromotionGate, RecordParams, parse_task_manifest,
-    Evaluator,
 };
 
 #[test]
@@ -104,9 +103,11 @@ fn scheduler_admit_publish_flow() {
     ok(scheduler.publish_result(&node_id, 0, "result-digest-1", NodeState::Succeeded));
     assert_eq!(scheduler.queue_len(), 0);
     assert_eq!(scheduler.published_count(), 1);
-    let node = ok(scheduler.node(&node_id).ok_or(ExperimentError::UnknownNode {
-        id: "n1".to_string(),
-    }));
+    let node = ok(scheduler
+        .node(&node_id)
+        .ok_or(ExperimentError::UnknownNode {
+            id: "n1".to_string(),
+        }));
     assert_eq!(node.state(), NodeState::Succeeded);
     assert_eq!(node.result_digest(), Some("result-digest-1"));
 }

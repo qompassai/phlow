@@ -59,7 +59,9 @@ impl CheckRecord {
         required: bool,
     ) -> Result<Self, ExperimentError> {
         if name.is_empty() {
-            return Err(ExperimentError::EmptyField { field: "check name" });
+            return Err(ExperimentError::EmptyField {
+                field: "check name",
+            });
         }
         if name.len() > RECORD_TEXT_CHARS_MAX {
             return Err(ExperimentError::TextTooLong {
@@ -69,7 +71,9 @@ impl CheckRecord {
             });
         }
         if argv.is_empty() {
-            return Err(ExperimentError::EmptyField { field: "check argv" });
+            return Err(ExperimentError::EmptyField {
+                field: "check argv",
+            });
         }
         Ok(Self {
             name: name.to_string(),

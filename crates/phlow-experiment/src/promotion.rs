@@ -127,9 +127,7 @@ impl Lifecycle {
     /// before promotion leaves the accepted baseline unchanged.
     pub fn transition(self, event: LifecycleEvent) -> Result<Lifecycle, ExperimentError> {
         if self.is_terminal() {
-            return Err(ExperimentError::LifecycleTerminal {
-                state: self.name(),
-            });
+            return Err(ExperimentError::LifecycleTerminal { state: self.name() });
         }
         let next = match (self, event) {
             (Self::Proposed, LifecycleEvent::ContractInvalid) => Self::Rejected,
@@ -268,9 +266,11 @@ impl HumanApproval {
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            let (key, value) = line.split_once(':').ok_or(ExperimentError::ApprovalRejected {
-                reason: "malformed line",
-            })?;
+            let (key, value) = line
+                .split_once(':')
+                .ok_or(ExperimentError::ApprovalRejected {
+                    reason: "malformed line",
+                })?;
             let key = key.trim();
             let value = value.trim();
             if !APPROVAL_KEYS.contains(&key) {
@@ -401,9 +401,10 @@ impl HumanApproval {
                 got: value.len(),
             });
         }
-        if !value.bytes().all(|b| {
-            b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'/'
-        }) {
+        if !value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'/')
+        {
             return Err(ExperimentError::ApprovalRejected {
                 reason: "scope has unexpected characters",
             });
@@ -692,15 +693,11 @@ pub fn check_proposal_surface(proposal: &ImprovementProposal) -> Result<(), Expe
             });
         }
         if path.starts_with('/') || path.contains("..") {
-            return Err(ExperimentError::BadPath {
-                path: path.clone(),
-            });
+            return Err(ExperimentError::BadPath { path: path.clone() });
         }
         for prefix in PROTECTED_PREFIXES {
             if path == *prefix || path.starts_with(&format!("{prefix}/")) {
-                return Err(ExperimentError::ProtectedSurface {
-                    path: path.clone(),
-                });
+                return Err(ExperimentError::ProtectedSurface { path: path.clone() });
             }
         }
     }

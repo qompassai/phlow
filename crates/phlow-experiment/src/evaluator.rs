@@ -93,7 +93,9 @@ impl CheckRun {
     /// too many argv entries, or an over-long argv entry.
     pub fn new(name: &str, argv: Vec<String>, passed: bool) -> Result<Self, ExperimentError> {
         if name.is_empty() {
-            return Err(ExperimentError::EmptyField { field: "check name" });
+            return Err(ExperimentError::EmptyField {
+                field: "check name",
+            });
         }
         if name.len() > EVIDENCE_NAME_CHARS_MAX {
             return Err(ExperimentError::TextTooLong {
@@ -103,7 +105,9 @@ impl CheckRun {
             });
         }
         if argv.is_empty() {
-            return Err(ExperimentError::EmptyField { field: "check argv" });
+            return Err(ExperimentError::EmptyField {
+                field: "check argv",
+            });
         }
         if argv.len() > CHECK_ARGV_MAX {
             return Err(ExperimentError::TooManyItems {
@@ -282,7 +286,10 @@ impl EvidenceBundle {
     /// stated coverage. Missing evidence is never "verified".
     pub fn is_complete(&self) -> bool {
         !self.checks.is_empty()
-            && self.checks.iter().all(|c| c.passed() && !c.argv().is_empty())
+            && self
+                .checks
+                .iter()
+                .all(|c| c.passed() && !c.argv().is_empty())
             && !self.artifacts.is_empty()
             && self.verification.verified()
             && !self.verification.coverage().is_empty()
@@ -375,25 +382,18 @@ impl BudgetTracker {
     /// [`ExperimentError::DeadlineExceeded`]; over-consumption yields
     /// [`ExperimentError::BudgetExhausted`]. Checked addition means usage
     /// can never wrap around to look small.
-    pub fn consume(
-        &mut self,
-        tool_calls: u64,
-        output_bytes: u64,
-    ) -> Result<(), ExperimentError> {
+    pub fn consume(&mut self, tool_calls: u64, output_bytes: u64) -> Result<(), ExperimentError> {
         if self.now_ms > self.deadline_ms {
             return Err(ExperimentError::DeadlineExceeded);
         }
         if tool_calls > self.tool_calls_remaining {
-            return Err(ExperimentError::BudgetExhausted {
-                what: "tool calls",
-            });
+            return Err(ExperimentError::BudgetExhausted { what: "tool calls" });
         }
-        let used = self
-            .output_bytes_used
-            .checked_add(output_bytes)
-            .ok_or(ExperimentError::BudgetExhausted {
+        let used = self.output_bytes_used.checked_add(output_bytes).ok_or(
+            ExperimentError::BudgetExhausted {
                 what: "output bytes",
-            })?;
+            },
+        )?;
         if used > self.output_bytes_max {
             return Err(ExperimentError::BudgetExhausted {
                 what: "output bytes",
@@ -482,11 +482,7 @@ impl Evaluator {
 
     /// Executes the bounded task, consuming budget. Skeleton: consumes the
     /// declared cost, then enforces order.
-    pub fn execute(
-        &mut self,
-        tool_calls: u64,
-        output_bytes: u64,
-    ) -> Result<(), ExperimentError> {
+    pub fn execute(&mut self, tool_calls: u64, output_bytes: u64) -> Result<(), ExperimentError> {
         if self.stage != EvalStage::Execute {
             return Err(ExperimentError::BadStageOrder {
                 expected: EvalStage::Execute.name(),
@@ -517,9 +513,7 @@ impl Evaluator {
         if self.budget.tool_calls_remaining == 0 {
             // Verification itself costs a tool call; an exhausted budget
             // cannot verify.
-            return Err(ExperimentError::BudgetExhausted {
-                what: "tool calls",
-            });
+            return Err(ExperimentError::BudgetExhausted { what: "tool calls" });
         }
         if !evidence.is_complete() {
             return Ok(false);

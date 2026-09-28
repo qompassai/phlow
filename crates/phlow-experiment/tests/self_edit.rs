@@ -5,9 +5,7 @@
 #[path = "common/mod.rs"]
 mod common;
 
-use common::{
-    complete_evidence, ok, operator_record, proposal_params, proposal_with_surface,
-};
+use common::{complete_evidence, ok, operator_record, proposal_params, proposal_with_surface};
 use phlow_experiment::{
     ExperimentError, HumanApproval, ImprovementProposal, PromotionGate, ReviewDecision,
     ReviewerDecision, RiskClass, WorkerRole, check_proposal_surface,

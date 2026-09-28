@@ -196,7 +196,10 @@ impl fmt::Display for ExperimentError {
                 write!(formatter, "{field} must be positive")
             }
             Self::QueueFull { capacity } => {
-                write!(formatter, "scheduler queue is full at {capacity} nodes; node rejected")
+                write!(
+                    formatter,
+                    "scheduler queue is full at {capacity} nodes; node rejected"
+                )
             }
             Self::DuplicateNode { id } => write!(formatter, "node {id} was already admitted"),
             Self::UnknownNode { id } => write!(formatter, "no admitted node {id}"),
@@ -224,7 +227,10 @@ impl fmt::Display for ExperimentError {
                 write!(formatter, "cannot apply event {event} from state {from}")
             }
             Self::LifecycleTerminal { state } => {
-                write!(formatter, "lifecycle is terminal in {state}; all events rejected")
+                write!(
+                    formatter,
+                    "lifecycle is terminal in {state}; all events rejected"
+                )
             }
             Self::ApprovalRejected { reason } => {
                 write!(formatter, "operator approval record rejected: {reason}")
@@ -244,7 +250,10 @@ impl fmt::Display for ExperimentError {
                 write!(formatter, "changed-surface path {path} is not allowed")
             }
             Self::ReviewerRejected { reviewer } => {
-                write!(formatter, "reviewer {reviewer} did not approve; promotion blocked")
+                write!(
+                    formatter,
+                    "reviewer {reviewer} did not approve; promotion blocked"
+                )
             }
             Self::ManifestInvalid { file, key, reason } => {
                 write!(formatter, "manifest {file}: key {key}: {reason}")
@@ -266,11 +275,7 @@ impl fmt::Display for ExperimentError {
 impl std::error::Error for ExperimentError {}
 
 /// Builds [`ExperimentError::ManifestInvalid`] with owned strings.
-pub(crate) fn manifest_invalid(
-    file: &'static str,
-    key: &str,
-    reason: &str,
-) -> ExperimentError {
+pub(crate) fn manifest_invalid(file: &'static str, key: &str, reason: &str) -> ExperimentError {
     ExperimentError::ManifestInvalid {
         file,
         key: key.to_string(),

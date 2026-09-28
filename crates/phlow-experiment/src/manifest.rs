@@ -327,7 +327,11 @@ pub fn parse_suite_manifest(
         })
     })?;
     if suites.is_empty() {
-        return Err(manifest_invalid(file, "suite", "at least one suite is required"));
+        return Err(manifest_invalid(
+            file,
+            "suite",
+            "at least one suite is required",
+        ));
     }
     Ok(SuiteManifest {
         schema_version: MANIFEST_SCHEMA_VERSION,
@@ -358,29 +362,34 @@ pub fn parse_language_manifest(
                 "tier must be one letter A-E",
             ));
         }
-        let languages = parse_array(item, file, "language", LANGUAGES_PER_TIER_MAX, |lang, li| {
-            let lat = format!("{at}.language[{li}]");
-            let lang = as_table(lang, file, &lat)?;
-            reject_unknown(
-                lang,
-                file,
-                &lat,
-                &[
-                    "name",
-                    "min_app",
-                    "required_checks",
-                    "adversarial_focus",
-                ],
-            )?;
-            Ok(LanguageDef {
-                name: get_name(lang, file, &lat, "name")?,
-                min_app: get_desc(lang, file, &lat, "min_app")?,
-                required_checks: get_string_array(lang, file, &lat, "required_checks", 32)?,
-                adversarial_focus: get_desc(lang, file, &lat, "adversarial_focus")?,
-            })
-        })?;
+        let languages = parse_array(
+            item,
+            file,
+            "language",
+            LANGUAGES_PER_TIER_MAX,
+            |lang, li| {
+                let lat = format!("{at}.language[{li}]");
+                let lang = as_table(lang, file, &lat)?;
+                reject_unknown(
+                    lang,
+                    file,
+                    &lat,
+                    &["name", "min_app", "required_checks", "adversarial_focus"],
+                )?;
+                Ok(LanguageDef {
+                    name: get_name(lang, file, &lat, "name")?,
+                    min_app: get_desc(lang, file, &lat, "min_app")?,
+                    required_checks: get_string_array(lang, file, &lat, "required_checks", 32)?,
+                    adversarial_focus: get_desc(lang, file, &lat, "adversarial_focus")?,
+                })
+            },
+        )?;
         if languages.is_empty() {
-            return Err(manifest_invalid(file, &at, "each tier needs at least one language"));
+            return Err(manifest_invalid(
+                file,
+                &at,
+                "each tier needs at least one language",
+            ));
         }
         Ok(TierDef {
             tier,
@@ -389,7 +398,11 @@ pub fn parse_language_manifest(
         })
     })?;
     if tiers.is_empty() {
-        return Err(manifest_invalid(file, "tier", "at least one tier is required"));
+        return Err(manifest_invalid(
+            file,
+            "tier",
+            "at least one tier is required",
+        ));
     }
     Ok(LanguageManifest {
         schema_version: MANIFEST_SCHEMA_VERSION,
@@ -484,8 +497,7 @@ pub fn parse_promotion_manifest(
         "thresholds",
         "p95_latency_increase_pct_max",
     )?;
-    let cost_increase_pct_max =
-        get_u64(thresholds, file, "thresholds", "cost_increase_pct_max")?;
+    let cost_increase_pct_max = get_u64(thresholds, file, "thresholds", "cost_increase_pct_max")?;
     Ok(PromotionManifest {
         schema_version: MANIFEST_SCHEMA_VERSION,
         thresholds: PromotionThresholds {
@@ -580,7 +592,11 @@ pub fn parse_task_manifest(
         })
     })?;
     if checks.is_empty() {
-        return Err(manifest_invalid(file, "checks", "at least one check is required"));
+        return Err(manifest_invalid(
+            file,
+            "checks",
+            "at least one check is required",
+        ));
     }
     let acceptance = as_table_value(
         table.get("acceptance"),
@@ -635,12 +651,7 @@ pub fn parse_task_manifest(
                 "forbidden_paths",
                 FORBIDDEN_PATHS_MAX,
             )?,
-            max_new_dependencies: get_u64(
-                acceptance,
-                file,
-                "acceptance",
-                "max_new_dependencies",
-            )?,
+            max_new_dependencies: get_u64(acceptance, file, "acceptance", "max_new_dependencies")?,
         },
     })
 }
@@ -785,7 +796,11 @@ fn get_bounded_string(
     match table.get(key) {
         Some(toml::Value::String(value)) => {
             if value.is_empty() {
-                return Err(manifest_invalid(file, &format!("{at}.{key}"), "must not be empty"));
+                return Err(manifest_invalid(
+                    file,
+                    &format!("{at}.{key}"),
+                    "must not be empty",
+                ));
             }
             if value.len() > max {
                 return Err(manifest_invalid(
@@ -796,8 +811,16 @@ fn get_bounded_string(
             }
             Ok(value.clone())
         }
-        Some(_) => Err(manifest_invalid(file, &format!("{at}.{key}"), "must be a string")),
-        None => Err(manifest_invalid(file, &format!("{at}.{key}"), "is required")),
+        Some(_) => Err(manifest_invalid(
+            file,
+            &format!("{at}.{key}"),
+            "must be a string",
+        )),
+        None => Err(manifest_invalid(
+            file,
+            &format!("{at}.{key}"),
+            "is required",
+        )),
     }
 }
 
@@ -810,26 +833,34 @@ fn get_bool(
 ) -> Result<bool, ExperimentError> {
     match table.get(key) {
         Some(toml::Value::Boolean(value)) => Ok(*value),
-        Some(_) => Err(manifest_invalid(file, &format!("{at}.{key}"), "must be a boolean")),
-        None => Err(manifest_invalid(file, &format!("{at}.{key}"), "is required")),
+        Some(_) => Err(manifest_invalid(
+            file,
+            &format!("{at}.{key}"),
+            "must be a boolean",
+        )),
+        None => Err(manifest_invalid(
+            file,
+            &format!("{at}.{key}"),
+            "is required",
+        )),
     }
 }
 
 /// Requires an integer >= 0.
-fn get_u64(
-    table: &Table,
-    file: &'static str,
-    at: &str,
-    key: &str,
-) -> Result<u64, ExperimentError> {
+fn get_u64(table: &Table, file: &'static str, at: &str, key: &str) -> Result<u64, ExperimentError> {
     match table.get(key) {
-        Some(toml::Value::Integer(value)) => {
-            u64::try_from(*value).map_err(|_| {
-                manifest_invalid(file, &format!("{at}.{key}"), "must not be negative")
-            })
-        }
-        Some(_) => Err(manifest_invalid(file, &format!("{at}.{key}"), "must be an integer")),
-        None => Err(manifest_invalid(file, &format!("{at}.{key}"), "is required")),
+        Some(toml::Value::Integer(value)) => u64::try_from(*value)
+            .map_err(|_| manifest_invalid(file, &format!("{at}.{key}"), "must not be negative")),
+        Some(_) => Err(manifest_invalid(
+            file,
+            &format!("{at}.{key}"),
+            "must be an integer",
+        )),
+        None => Err(manifest_invalid(
+            file,
+            &format!("{at}.{key}"),
+            "is required",
+        )),
     }
 }
 
@@ -868,7 +899,13 @@ fn get_string_array(
                 "must be an array of strings",
             ));
         }
-        None => return Err(manifest_invalid(file, &format!("{at}.{key}"), "is required")),
+        None => {
+            return Err(manifest_invalid(
+                file,
+                &format!("{at}.{key}"),
+                "is required",
+            ));
+        }
     };
     if values.len() > max {
         return Err(manifest_invalid(

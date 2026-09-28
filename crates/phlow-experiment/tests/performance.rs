@@ -1,4 +1,4 @@
-//! Performance tests: budget constants are sane, and a fixed-size no-op
+//! Performance tests: default limits are sane, and a fixed-size no-op
 //! workload completes exactly within its declared budget.
 //!
 //! Deterministic by construction: no wall-clock assertions, only exact
@@ -8,23 +8,22 @@
 mod common;
 
 use common::ok;
-use phlow_experiment::{
-    AGGREGATE_OUTPUT_BYTES_MAX_DEFAULT, AGGREGATE_TOOL_CALLS_MAX_DEFAULT, BudgetTracker,
-    DEPTH_MAX_DEFAULT, ExperimentError, QUEUE_CAPACITY_DEFAULT, SchedulerLimits,
-    TASK_DEADLINE_MS_DEFAULT, WORKERS_MAX_DEFAULT,
-};
+use phlow_experiment::{BudgetTracker, ExperimentError, SchedulerLimits};
 
 #[test]
 fn budget_constants_sane() {
-    assert!(WORKERS_MAX_DEFAULT > 0 && WORKERS_MAX_DEFAULT <= 64);
-    assert!(QUEUE_CAPACITY_DEFAULT > 0 && QUEUE_CAPACITY_DEFAULT <= 1_024);
-    assert!(DEPTH_MAX_DEFAULT > 0 && DEPTH_MAX_DEFAULT <= 16);
+    // Asserted on the runtime defaults, not the consts: asserting a
+    // constant expression is a compile error on current nightly.
+    let limits = SchedulerLimits::default();
+    assert!(limits.workers_max > 0 && limits.workers_max <= 64);
+    assert!(limits.queue_capacity > 0 && limits.queue_capacity <= 1_024);
+    assert!(limits.depth_max > 0 && limits.depth_max <= 16);
     // Deadline between one second and one day, in milliseconds.
-    assert!(TASK_DEADLINE_MS_DEFAULT >= 1_000 && TASK_DEADLINE_MS_DEFAULT <= 86_400_000);
-    assert!(AGGREGATE_TOOL_CALLS_MAX_DEFAULT > 0);
-    assert!(AGGREGATE_OUTPUT_BYTES_MAX_DEFAULT > 0);
+    assert!(limits.task_deadline_ms >= 1_000 && limits.task_deadline_ms <= 86_400_000);
+    assert!(limits.aggregate_tool_calls_max > 0);
+    assert!(limits.aggregate_output_bytes_max > 0);
     // The defaults validate as scheduler limits.
-    ok(SchedulerLimits::default().validate());
+    ok(limits.validate());
 }
 
 #[test]

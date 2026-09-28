@@ -7,13 +7,11 @@
 #[path = "common/mod.rs"]
 mod common;
 
-use common::{
-    manifest_text, ok, operator_record, proposal_params, root_capabilities, test_budget,
-};
+use common::{manifest_text, ok, operator_record, proposal_params, root_capabilities, test_budget};
 use phlow_experiment::{
-    ArtifactDigest, CheckRun, EvidenceBundle, ExperimentError, HumanApproval,
-    ImprovementProposal, Lifecycle, LifecycleEvent, PromotionGate, VerificationOutcome,
-    WorkerRole, parse_suite_manifest,
+    ArtifactDigest, CheckRun, EvidenceBundle, ExperimentError, HumanApproval, ImprovementProposal,
+    Lifecycle, LifecycleEvent, PromotionGate, VerificationOutcome, WorkerRole,
+    parse_suite_manifest,
 };
 
 #[test]
@@ -158,7 +156,10 @@ fn promotion_incomplete_evidence_fails_closed() {
         false,
     ))];
     let artifacts = vec![ok(ArtifactDigest::new("candidate.diff", "9f2b3c4d"))];
-    let verification = ok(VerificationOutcome::new(true, vec!["src/lib.rs".to_string()]));
+    let verification = ok(VerificationOutcome::new(
+        true,
+        vec!["src/lib.rs".to_string()],
+    ));
     let evidence = ok(EvidenceBundle::new(checks, artifacts, verification));
     assert!(!evidence.is_complete());
     let proposal = ok(ImprovementProposal::new(proposal_params()));
@@ -175,10 +176,7 @@ fn promotion_oversized_diff_summary_rejected() {
     let mut params = proposal_params();
     params.candidate_diff_summary = "x".repeat(4_097);
     let result = ImprovementProposal::new(params);
-    assert!(matches!(
-        result,
-        Err(ExperimentError::TextTooLong { .. })
-    ));
+    assert!(matches!(result, Err(ExperimentError::TextTooLong { .. })));
 }
 
 #[test]

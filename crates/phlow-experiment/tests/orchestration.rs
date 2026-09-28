@@ -8,9 +8,7 @@
 mod common;
 
 use common::{ok, test_node, test_scheduler};
-use phlow_experiment::{
-    ExperimentError, NodeId, NodeState, RunId, Scheduler, SchedulerLimits,
-};
+use phlow_experiment::{ExperimentError, NodeId, NodeState, RunId, Scheduler, SchedulerLimits};
 
 fn node_id(name: &str) -> NodeId {
     ok(NodeId::new(name))
@@ -79,9 +77,7 @@ fn stale_generation_result_rejected() {
     // is stale and never publishes.
     let stale = scheduler.publish_result(&id, 1, "digest-1", NodeState::Succeeded);
     match stale {
-        Err(ExperimentError::StaleGeneration {
-            expected, got, ..
-        }) => {
+        Err(ExperimentError::StaleGeneration { expected, got, .. }) => {
             assert_eq!(expected, 0);
             assert_eq!(got, 1);
         }
