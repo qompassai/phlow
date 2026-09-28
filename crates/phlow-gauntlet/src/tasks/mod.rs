@@ -901,6 +901,54 @@ pub fn run_task(id: &str, ctx: &Ctx) -> Result<TaskReport, GauntletError> {
             task_169::KIND,
             task_169::run(ctx),
         ),
+        task_170::ID => (
+            task_170::ID,
+            task_170::NAME,
+            task_170::KIND,
+            task_170::run(ctx),
+        ),
+        task_171::ID => (
+            task_171::ID,
+            task_171::NAME,
+            task_171::KIND,
+            task_171::run(ctx),
+        ),
+        task_172::ID => (
+            task_172::ID,
+            task_172::NAME,
+            task_172::KIND,
+            task_172::run(ctx),
+        ),
+        task_173::ID => (
+            task_173::ID,
+            task_173::NAME,
+            task_173::KIND,
+            task_173::run(ctx),
+        ),
+        task_174::ID => (
+            task_174::ID,
+            task_174::NAME,
+            task_174::KIND,
+            task_174::run(ctx),
+        ),
+        task_175::ID => (
+            task_175::ID,
+            task_175::NAME,
+            task_175::KIND,
+            task_175::run(ctx),
+        ),
+        task_176::ID => (
+            task_176::ID,
+            task_176::NAME,
+            task_176::KIND,
+            task_176::run(ctx),
+        ),
+        task_177::ID => (
+            task_177::ID,
+            task_177::NAME,
+            task_177::KIND,
+            task_177::run(ctx),
+        ),
         _ => return Err(GauntletError::UnknownTask { id: id.to_string() }),
     };
     let duration_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
@@ -1108,6 +1156,14 @@ pub fn task_meta(id: &str) -> Option<(&'static str, TaskKind)> {
         task_167::ID => Some((task_167::NAME, task_167::KIND)),
         task_168::ID => Some((task_168::NAME, task_168::KIND)),
         task_169::ID => Some((task_169::NAME, task_169::KIND)),
+        task_170::ID => Some((task_170::NAME, task_170::KIND)),
+        task_171::ID => Some((task_171::NAME, task_171::KIND)),
+        task_172::ID => Some((task_172::NAME, task_172::KIND)),
+        task_173::ID => Some((task_173::NAME, task_173::KIND)),
+        task_174::ID => Some((task_174::NAME, task_174::KIND)),
+        task_175::ID => Some((task_175::NAME, task_175::KIND)),
+        task_176::ID => Some((task_176::NAME, task_176::KIND)),
+        task_177::ID => Some((task_177::NAME, task_177::KIND)),
         _ => None,
     }
 }
