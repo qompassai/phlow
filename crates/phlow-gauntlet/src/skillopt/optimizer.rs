@@ -53,6 +53,10 @@ pub struct TrajSummary {
     pub expected: String,
     /// What the target emitted.
     pub got: String,
+    /// Task-110: true when this summary was fabricated or altered by
+    /// trajectory poisoning. The scripted double is NOT told — it must
+    /// fall for it exactly like a real model reading a poisoned trace.
+    pub poisoned: bool,
 }
 
 /// Everything an optimizer may consult in one reflection step.
@@ -81,6 +85,9 @@ pub struct ReflectCtx {
     pub l_t: usize,
     /// Step index (for ledgers).
     pub step: usize,
+    /// The learner seed this reflection belongs to (task-110: binds
+    /// attribution to a seed; step indices repeat across seeds).
+    pub seed: usize,
     /// Epoch index (0-based). The scripted mock uses it to gate
     /// later-epoch mechanisms (e.g. task-104's twist rediscovery).
     pub epoch: usize,
@@ -178,6 +185,24 @@ struct Template {
     weight: f64,
 }
 
+/// One template consideration recorded for task-110 attribution.
+#[derive(Debug, Clone)]
+pub struct ProposalNote {
+    /// Learner step this consideration belongs to.
+    pub step: usize,
+    /// Learner seed this consideration belongs to.
+    pub seed: usize,
+    /// Template direction, e.g. `order:add:0`.
+    pub direction: String,
+    /// True when at least one reflection failure blaming this direction
+    /// was poisoned (task-110's ANY-rule: the reflection context was
+    /// contaminated for this direction).
+    pub poison_induced: bool,
+    /// True when the rejected-edit buffer suppressed this template
+    /// before ranking.
+    pub suppressed: bool,
+}
+
 /// Fixed-competence scripted optimizer (MOCK). The candidate generator
 /// re-samples from a fixed template pool every step, so without the
 /// rejected-edit buffer it re-proposes dead directions — the load-bearing
@@ -186,6 +211,9 @@ struct Template {
 pub struct ScriptedOptimizer {
     /// Suppressions in the last `propose` call (task-103 hit rate).
     last_suppressed: std::cell::Cell<usize>,
+    /// Per-template attribution log (task-110): drained by the driver
+    /// via [`ScriptedOptimizer::take_attribution`].
+    attribution: std::cell::RefCell<Vec<ProposalNote>>,
 }
 
 impl ScriptedOptimizer {
@@ -193,7 +221,13 @@ impl ScriptedOptimizer {
     pub fn new() -> Self {
         ScriptedOptimizer {
             last_suppressed: std::cell::Cell::new(0),
+            attribution: std::cell::RefCell::new(Vec::new()),
         }
+    }
+
+    /// Drain the task-110 attribution log recorded by `templates()`.
+    pub fn take_attribution(&self) -> Vec<ProposalNote> {
+        self.attribution.borrow_mut().drain(..).collect()
     }
 
     /// Twist rediscovery + bundled displacement (task-104's forgetting
@@ -288,11 +322,32 @@ impl ScriptedOptimizer {
     fn templates(&self, ctx: &ReflectCtx, skill: &SkillDoc) -> (Vec<Template>, usize) {
         let mut out = Vec::new();
         let mut suppressed_count = 0usize;
+        // Task-110 attribution: an F-order good template is
+        // poison-induced when any reflection failure blaming its profile
+        // is a poisoned summary (ANY-rule: the reflection context was
+        // contaminated for this direction). Distractors and bind/ledger
+        // templates are never attributed to poisoning.
+        let poison_dir = |direction: &str| -> bool {
+            let profile: Option<u8> = direction
+                .strip_prefix("order:add:")
+                .and_then(|p| p.parse().ok());
+            let Some(p) = profile else {
+                return false;
+            };
+            ctx.fail.iter().any(|s| s.profile == p && s.poisoned)
+        };
         let mut suppressed = |direction: &str| {
             let hit = ctx.rejected.iter().any(|r| r == direction);
             if hit {
                 suppressed_count += 1;
             }
+            self.attribution.borrow_mut().push(ProposalNote {
+                step: ctx.step,
+                seed: ctx.seed,
+                direction: direction.to_string(),
+                poison_induced: poison_dir(direction),
+                suppressed: hit,
+            });
             hit
         };
         let kept = |line: &str| {
@@ -989,6 +1044,7 @@ mod tests {
 
     fn ctx_for(skill: &SkillDoc) -> ReflectCtx {
         ReflectCtx {
+            seed: 0,
             skill_text: skill.render_for_optimizer(),
             keep_lines: skill.keep_lines(),
             epoch_accepted_lines: Vec::new(),
@@ -998,6 +1054,7 @@ mod tests {
                 profile: 0,
                 expected: "fetch parse validate emit".into(),
                 got: "emit fetch parse validate".into(),
+                poisoned: false,
             }],
             rejected: Vec::new(),
             meta_text: String::new(),

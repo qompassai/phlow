@@ -92,6 +92,10 @@ pub struct Trajectory {
     pub expected: String,
     /// What the target emitted (for reflection).
     pub got: String,
+    /// Task-110: true when the reflection view of this trajectory was
+    /// poisoned. The target never sets this — only the learner's
+    /// poisoning pass does.
+    pub poisoned: bool,
 }
 
 /// The frozen agent. Implementations must be deterministic given
@@ -524,6 +528,7 @@ fn rollout_order(skill: &SkillDoc, case: &TaskCase) -> Trajectory {
         reward,
         expected: required.join(" "),
         got: emitted.join(" "),
+        poisoned: false,
     }
 }
 
@@ -549,6 +554,7 @@ fn rollout_bind(skill: &SkillDoc, case: &TaskCase) -> Trajectory {
         reward: u8::from(got == city),
         expected: city.to_string(),
         got,
+        poisoned: false,
     }
 }
 
@@ -579,6 +585,7 @@ fn rollout_ledger(skill: &SkillDoc, case: &TaskCase) -> Trajectory {
         } else {
             "broken ledger".to_string()
         },
+        poisoned: false,
     }
 }
 

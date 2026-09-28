@@ -19,7 +19,10 @@
 //! - [`learner`]: the loop: rollout → reflect → propose → gate → apply,
 //!   epoch-end slow/meta updates.
 //! - [`harness`]: the safety boundary (sandbox, approval-gated export).
+//! - [`adversarial`]: the labeled adversarial optimizer for task-109
+//!   (adversarial edit catch rate).
 
+pub mod adversarial;
 pub mod doc;
 pub mod driver;
 pub mod gate;

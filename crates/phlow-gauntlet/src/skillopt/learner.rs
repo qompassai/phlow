@@ -157,6 +157,12 @@ pub struct LearnerConfig {
     pub seeds: Vec<u64>,
     /// D_tr fraction in (0, 1].
     pub d_tr_frac: f64,
+    /// Trajectory poisoning rate in [0, 1] (task-110): fraction of
+    /// rollout trajectories whose reflection summary is fabricated
+    /// (misleading failure blaming the wrong family) or inflated (a
+    /// failure reported as a success). 0.0 = no poisoning. The optimizer
+    /// is NOT told; it must fall for the poisoned evidence.
+    pub poison_rate: f64,
 }
 
 /// One recorded step.
@@ -192,6 +198,13 @@ pub struct StepRecord {
     pub reproposal_within3: usize,
     /// Optimizer error text, if the step failed to propose.
     pub error: Option<String>,
+    /// Which component decided the step's fate (task-106 edit ledger):
+    /// `accepted:gate-strict` / `accepted:gate-off` when the gate applied
+    /// the candidate, `rejected:gate-strict` when the gate vetoed a
+    /// well-formed candidate, `rejected:empty` when there was nothing to
+    /// judge, `rejected:apply-failed` when the candidate did not apply
+    /// cleanly.
+    pub veto: String,
 }
 
 /// The full evidence of one seed.
@@ -211,8 +224,15 @@ pub struct SeedLog {
     pub d_sel_initial: f64,
     /// Final skill body (for retention/ledger inspection).
     pub final_body: String,
+    /// Final protected section (KEEP/GUIDE lines). Together with
+    /// `final_body` this is the exact frozen artifact bytes for
+    /// cross-harness transfer (task-108).
+    pub final_protected: String,
     /// Canonical lines accepted during epoch 1 (retention baseline).
     pub epoch1_canonical: Vec<String>,
+    /// Every accepted edit line across the run, in acceptance order
+    /// (task-106 single-edit-gain analysis).
+    pub accepted_edits: Vec<String>,
 }
 
 /// Learner failures: configuration or safety, never silent.
@@ -351,6 +371,8 @@ impl Learner {
 /// each phase under the 70-line house rule.
 struct SeedState<'a> {
     cfg: &'a LearnerConfig,
+    /// The seed this state runs (task-110: binds attribution to a seed).
+    seed: u64,
     splits: Splits,
     total_steps: usize,
     unbounded: bool,
@@ -362,6 +384,10 @@ struct SeedState<'a> {
     rejected_log: Vec<(String, usize)>,
     meta_cats: HashMap<String, CatStats>,
     epoch_accepted: Vec<String>,
+    /// Every accepted edit line across the whole run (unlike
+    /// `epoch_accepted`, never cleared) — feeds task-106's
+    /// single-edit-gain analysis.
+    all_accepted: Vec<String>,
     epoch_obs: Vec<(String, f64)>,
     steps: Vec<StepRecord>,
     step_idx: usize,
@@ -392,6 +418,7 @@ impl<'a> SeedState<'a> {
         let d_sel_initial = target.score(&skill, &splits.d_sel);
         let d_test_initial = target.score(&skill, &splits.d_test);
         Ok(Self {
+            seed,
             total_steps: cfg.epochs * splits.d_tr.len().div_ceil(cfg.batch_size).max(1),
             unbounded: matches!(cfg.schedule, LtSchedule::Unbounded),
             rng: XorShift::new(seed ^ 0x10EA_0001),
@@ -402,6 +429,7 @@ impl<'a> SeedState<'a> {
             rejected_log: Vec::new(),
             meta_cats: HashMap::new(),
             epoch_accepted: Vec::new(),
+            all_accepted: Vec::new(),
             epoch_obs: Vec::new(),
             steps: Vec::new(),
             step_idx: 0,
@@ -435,6 +463,7 @@ impl<'a> SeedState<'a> {
             buffer_suppressed: 0,
             reproposal_within3: 0,
             error: None,
+            veto: String::new(),
         };
         match optimizer.propose(&self.skill, &ctx, &mut self.rng) {
             Ok(proposals) => self.apply_candidate(proposals, &mut record),
@@ -452,14 +481,95 @@ impl<'a> SeedState<'a> {
         Ok(())
     }
 
+    /// Task-110 trajectory poisoning. Each rollout trajectory is
+    /// poisoned independently with probability `cfg.poison_rate`:
+    ///
+    /// - a *failure* becomes either a **misleading failure** (the trace
+    ///   is rewritten to blame the other family — e.g. a bind failure
+    ///   reported as an order failure, so the optimizer is pulled toward
+    ///   the opposite fix) or a **lucky success** (the failure is
+    ///   reported as `reward = 1`, hiding the signal entirely);
+    /// - successes are never altered.
+    ///
+    /// The returned success count is post-poisoning (lucky successes
+    /// inflate it). The optimizer is NOT told which summaries are
+    /// poisoned — it must fall for them at the reflection stage; the
+    /// test is whether the downstream gate and rejected-edit buffer
+    /// contain the damage.
+    fn poison_view(
+        &mut self,
+        batch: &[TaskCase],
+        trajs: Vec<super::target::Trajectory>,
+    ) -> (Vec<super::target::Trajectory>, usize) {
+        if self.cfg.poison_rate <= 0.0 {
+            let n_succ = trajs.iter().filter(|t| t.reward == 1).count();
+            return (trajs, n_succ);
+        }
+        let mut n_succ = 0usize;
+        let mut out = Vec::with_capacity(trajs.len());
+        for mut t in trajs {
+            if t.reward == 1 {
+                n_succ += 1;
+                out.push(t);
+                continue;
+            }
+            if self.rng.next_f64() >= self.cfg.poison_rate {
+                out.push(t);
+                continue;
+            }
+            // Poison this failure: misleading blame or lucky success.
+            if self.rng.next_f64() < 0.5 {
+                let case = batch.iter().find(|c| c.id == t.case_id);
+                let blamed = match case.map(|c| c.family) {
+                    Some(Family::FBind) => Family::FOrder,
+                    _ => Family::FBind,
+                };
+                t.poisoned = true;
+                match blamed {
+                    Family::FOrder => {
+                        // A bind failure rewritten as an order failure:
+                        // the emitted tool order is "wrong" for the
+                        // blamed profile, so the mock proposes the
+                        // opposite fix.
+                        let p = (self.rng.next_u64() % 10) as u8;
+                        t.expected = format!("ORDER[{p}]: ...");
+                        t.got = format!("ORDER[{p}]: wrong order");
+                    }
+                    Family::FBind => {
+                        // Shaped so the double reads it as a bind
+                        // failure (its `got.starts_with('~')` cue):
+                        // poisoned evidence blaming binding for what was
+                        // really an order failure.
+                        t.expected = "verbatim city span".to_string();
+                        t.got = "~paraphrased span~".to_string();
+                    }
+                    Family::FLedger => {
+                        t.expected = "ledger(h=?, twist=None)".to_string();
+                        t.got = "broken order".to_string();
+                    }
+                }
+                out.push(t);
+            } else {
+                // Lucky success: the failure is hidden from reflection.
+                t.reward = 1;
+                n_succ += 1;
+                out.push(t);
+            }
+        }
+        (out, n_succ)
+    }
+
     /// Roll out the batch and build the reflection context.
-    fn reflect(&self, batch: &[TaskCase], l_t: usize, epoch: usize) -> (ReflectCtx, f64) {
+    fn reflect(&mut self, batch: &[TaskCase], l_t: usize, epoch: usize) -> (ReflectCtx, f64) {
         let target = MixedTarget;
         let trajs: Vec<_> = batch
             .iter()
             .map(|c| ScriptedTarget::new(c.family).rollout(&self.skill, c))
             .collect();
-        let n_succ = trajs.iter().filter(|t| t.reward == 1).count();
+        // Task-110: poison the reflection view BEFORE the minibatch take,
+        // so poisoned summaries compete for the optimizer's attention
+        // exactly like real evidence would.
+        let (trajs, n_succ) = self.poison_view(batch, trajs);
         let fail: Vec<TrajSummary> = trajs
             .iter()
             .filter(|t| t.reward == 0)
@@ -475,6 +585,7 @@ impl<'a> SeedState<'a> {
                     profile,
                     expected: t.expected.clone(),
                     got: t.got.clone(),
+                    poisoned: t.poisoned,
                 }
             })
             .collect();
@@ -489,6 +600,7 @@ impl<'a> SeedState<'a> {
             meta_cats: self.meta_cats.clone(),
             l_t,
             step: self.step_idx,
+            seed: self.seed as usize,
             epoch,
             families: self.cfg.families.clone(),
         };
@@ -541,6 +653,20 @@ impl<'a> SeedState<'a> {
         // The candidate applies cleanly iff the probe did.
         let mut cand_skill = self.skill.clone();
         let applies = cand_skill.apply_all(&candidate).is_ok();
+        // Task-106 ledger: name the deciding component for every step.
+        record.veto = if candidate.is_empty() {
+            "rejected:empty".to_string()
+        } else if !applies {
+            "rejected:apply-failed".to_string()
+        } else if accepted {
+            match self.cfg.gate {
+                GateMode::Strict => "accepted:gate-strict".to_string(),
+                GateMode::TieAccepts => "accepted:gate-tie-accepts".to_string(),
+                GateMode::Off => "accepted:gate-off".to_string(),
+            }
+        } else {
+            "rejected:gate-strict".to_string()
+        };
         if accepted && applies {
             record.accepted = true;
             record.n_applied = candidate.len();
@@ -549,6 +675,7 @@ impl<'a> SeedState<'a> {
             for (edit, delta) in candidate.iter().zip(record.per_edit_delta.iter()) {
                 self.epoch_obs.push((edit.category().to_string(), *delta));
                 track_accepted_line(&mut self.epoch_accepted, edit);
+                track_accepted_line(&mut self.all_accepted, edit);
             }
             self.skill = cand_skill;
         } else {
@@ -599,7 +726,9 @@ impl<'a> SeedState<'a> {
             d_sel_final: target.score(&self.skill, &self.splits.d_sel),
             d_sel_initial: self.d_sel_initial,
             final_body: self.skill.body().to_string(),
+            final_protected: self.skill.protected().to_string(),
             epoch1_canonical: self.epoch1_canonical,
+            accepted_edits: self.all_accepted,
         }
     }
 }
@@ -624,6 +753,11 @@ fn validate(cfg: &LearnerConfig) -> Result<(), LearnerError> {
     if !(0.0 < cfg.d_tr_frac && cfg.d_tr_frac <= 1.0) {
         return Err(LearnerError::Config {
             detail: "d_tr_frac must be in (0, 1]".to_string(),
+        });
+    }
+    if !(0.0 <= cfg.poison_rate && cfg.poison_rate <= 1.0) {
+        return Err(LearnerError::Config {
+            detail: "poison_rate must be in [0, 1]".to_string(),
         });
     }
     if let LtSchedule::Constant(0) = cfg.schedule {
@@ -767,6 +901,7 @@ mod tests {
             meta: true,
             seeds: vec![101, 102, 103],
             d_tr_frac: 1.0,
+            poison_rate: 0.0,
         }
     }
 
