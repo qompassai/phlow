@@ -113,6 +113,10 @@ pub mod task_19;
 pub mod task_190;
 pub mod task_191;
 pub mod task_192;
+pub mod task_193;
+pub mod task_194;
+pub mod task_195;
+pub mod task_196;
 pub mod task_20;
 pub mod task_21;
 pub mod task_22;
@@ -739,6 +743,30 @@ pub fn run_task(id: &str, ctx: &Ctx) -> Result<TaskReport, GauntletError> {
             task_192::KIND,
             task_192::run(ctx),
         ),
+        task_193::ID => (
+            task_193::ID,
+            task_193::NAME,
+            task_193::KIND,
+            task_193::run(ctx),
+        ),
+        task_194::ID => (
+            task_194::ID,
+            task_194::NAME,
+            task_194::KIND,
+            task_194::run(ctx),
+        ),
+        task_195::ID => (
+            task_195::ID,
+            task_195::NAME,
+            task_195::KIND,
+            task_195::run(ctx),
+        ),
+        task_196::ID => (
+            task_196::ID,
+            task_196::NAME,
+            task_196::KIND,
+            task_196::run(ctx),
+        ),
         task_136::ID => (
             task_136::ID,
             task_136::NAME,
@@ -1018,6 +1046,10 @@ pub fn task_meta(id: &str) -> Option<(&'static str, TaskKind)> {
         task_190::ID => Some((task_190::NAME, task_190::KIND)),
         task_191::ID => Some((task_191::NAME, task_191::KIND)),
         task_192::ID => Some((task_192::NAME, task_192::KIND)),
+        task_193::ID => Some((task_193::NAME, task_193::KIND)),
+        task_194::ID => Some((task_194::NAME, task_194::KIND)),
+        task_195::ID => Some((task_195::NAME, task_195::KIND)),
+        task_196::ID => Some((task_196::NAME, task_196::KIND)),
         task_136::ID => Some((task_136::NAME, task_136::KIND)),
         task_137::ID => Some((task_137::NAME, task_137::KIND)),
         task_138::ID => Some((task_138::NAME, task_138::KIND)),
