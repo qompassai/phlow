@@ -6,9 +6,10 @@
 //! gauntlet list
 //! gauntlet run <task-id> [--nvim-bin PATH] [--diver-lua PATH] [--work-dir PATH]
 //! gauntlet run-all [--report-dir DIR] [--nvim-bin PATH] [--diver-lua PATH] [--work-dir PATH]
+//! gauntlet verify-claims <ledger.json>
 //! ```
 //!
-//! Argument parsing is manual and bounded: three subcommands, four flags, no
+//! Argument parsing is manual and bounded: four subcommands, four flags, no
 //! external CLI framework. Unknown flags are rejected, never ignored.
 
 use phlow_gauntlet::{Ctx, GauntletError, TaskOutcome, TaskReport, bound_evidence, tasks};
@@ -17,7 +18,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 /// Usage text printed on bad invocation.
-const USAGE: &str = "usage:\n  gauntlet list\n  gauntlet run <task-id> [--nvim-bin PATH] [--diver-lua PATH] [--work-dir PATH]\n  gauntlet run-all [--report-dir DIR] [--nvim-bin PATH] [--diver-lua PATH] [--work-dir PATH]";
+const USAGE: &str = "usage:\n  gauntlet list\n  gauntlet run <task-id> [--nvim-bin PATH] [--diver-lua PATH] [--work-dir PATH]\n  gauntlet run-all [--report-dir DIR] [--nvim-bin PATH] [--diver-lua PATH] [--work-dir PATH]\n  gauntlet verify-claims <ledger.json>";
 
 /// Parsed CLI options. All paths are required for `run`/`run-all`: the
 /// gauntlet never guesses where Matt's editor or config live.
@@ -116,10 +117,22 @@ fn report_json(r: &TaskReport) -> String {
 }
 
 fn cmd_list() -> ExitCode {
+    let mut unwired = 0;
     for id in tasks::TASK_IDS {
-        if let Some((name, kind)) = tasks::task_meta(id) {
-            println!("{id}\t{kind}\t{name}");
+        // Loud, never silent: a listed-but-unwired id is exactly how the
+        // wave-28 summary shipped fiction. task_meta alone would hide it.
+        if tasks::is_wired(id) {
+            if let Some((name, kind)) = tasks::task_meta(id) {
+                println!("{id}\t{kind}\t{name}");
+            }
+        } else {
+            println!("{id}\tUNWIRED");
+            unwired += 1;
         }
+    }
+    if unwired > 0 {
+        eprintln!("gauntlet: {unwired} listed task(s) have no dispatch/metadata arms");
+        return ExitCode::from(1);
     }
     ExitCode::SUCCESS
 }
@@ -196,6 +209,101 @@ fn cmd_run_all(opts: &Opts) -> ExitCode {
     }
 }
 
+/// The ledger names the exact code commit the producer's claims were
+/// written against. The verifier's checkout must contain that commit
+/// (ancestor check, not equality: the ledger itself lives in a child
+/// commit, since a commit hash covers the ledger and can never name its
+/// own tree). Fail closed on any git failure.
+fn ledger_commit_ok(ledger: &Value) -> Result<(), String> {
+    let Some(commit) = ledger.get("commit").and_then(Value::as_str) else {
+        return Ok(());
+    };
+    if commit.is_empty() {
+        return Err("ledger 'commit' is empty".to_string());
+    }
+    let status = std::process::Command::new("git")
+        .args(["merge-base", "--is-ancestor", commit, "HEAD"])
+        .status()
+        .map_err(|e| format!("git unavailable ({e}); cannot bind ledger to a commit"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "ledger names commit '{commit}' which is not an ancestor of HEAD: \
+             check out the claimed tree first"
+        ))
+    }
+}
+
+/// Gate zero: a wave's claim ledger is checked against the wiring tables
+/// BEFORE any expensive gate runs.
+///
+/// Ledger shape:
+///   {"wave": "wave-32", "commit": "<sha>", "claims": ["task-197", ...]}
+///
+/// Every claim must name a real task id AND be wired in both dispatch and
+/// metadata. Exit 0 = all verified, 1 = claim rejected, 2 = bad invocation.
+fn cmd_verify_claims(path: &str) -> ExitCode {
+    const CLAIMS_MAX: usize = 1024;
+
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) => {
+            eprintln!("gauntlet: cannot read ledger '{path}': {e}");
+            return ExitCode::from(2);
+        }
+    };
+    let ledger: Value = match serde_json::from_str(&text) {
+        Ok(ledger) => ledger,
+        Err(e) => {
+            eprintln!("gauntlet: ledger is not valid JSON: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    if let Err(e) = ledger_commit_ok(&ledger) {
+        eprintln!("gauntlet: {e}");
+        return ExitCode::from(1);
+    }
+    let claims = match ledger.get("claims").and_then(Value::as_array) {
+        Some(claims) => claims,
+        None => {
+            eprintln!("gauntlet: ledger needs a 'claims' array of task ids");
+            return ExitCode::from(2);
+        }
+    };
+    if claims.is_empty() || claims.len() > CLAIMS_MAX {
+        eprintln!("gauntlet: ledger must claim between 1 and {CLAIMS_MAX} tasks");
+        return ExitCode::from(2);
+    }
+    let mut seen = std::collections::HashSet::with_capacity(claims.len());
+    for claim in claims {
+        let id = match claim.as_str() {
+            Some(id) => id,
+            None => {
+                eprintln!("gauntlet: claim is not a string: {claim}");
+                return ExitCode::from(2);
+            }
+        };
+        if !seen.insert(id) {
+            eprintln!("gauntlet: duplicate claim '{id}'");
+            return ExitCode::from(2);
+        }
+        if !tasks::TASK_IDS.contains(&id) {
+            eprintln!("gauntlet: unknown task id '{id}'");
+            return ExitCode::from(1);
+        }
+        if !tasks::is_wired(id) {
+            eprintln!("gauntlet: CLAIMED BUT NOT WIRED: '{id}'");
+            return ExitCode::from(1);
+        }
+    }
+    println!(
+        "gauntlet: {} claim(s) verified: every claimed task is wired",
+        claims.len()
+    );
+    ExitCode::SUCCESS
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some((sub, rest)) = args.split_first() else {
@@ -230,6 +338,17 @@ fn main() -> ExitCode {
                 ExitCode::from(2)
             }
         },
+        "verify-claims" => {
+            let Some((path, flags)) = rest.split_first() else {
+                eprintln!("gauntlet verify-claims needs a ledger path\n{USAGE}");
+                return ExitCode::from(2);
+            };
+            if !flags.is_empty() {
+                eprintln!("gauntlet verify-claims takes no flags\n{USAGE}");
+                return ExitCode::from(2);
+            }
+            cmd_verify_claims(path)
+        }
         other => {
             eprintln!("gauntlet: unknown subcommand '{other}'\n{USAGE}");
             ExitCode::from(2)

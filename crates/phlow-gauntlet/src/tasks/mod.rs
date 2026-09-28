@@ -1167,3 +1167,245 @@ pub fn task_meta(id: &str) -> Option<(&'static str, TaskKind)> {
         _ => None,
     }
 }
+
+/// Gate-zero wiring probe: true only when `id` resolves in BOTH the
+/// dispatch table (`run_task`) and the metadata table (`task_meta`).
+///
+/// Added after the wave-28 incident (2026-09-28): tasks 170-177 were listed
+/// in TASK_IDS and claimed complete by a wave summary, but had arms in
+/// neither match, and no gate observed the artifact. `gauntlet
+/// verify-claims` runs this probe so a wave summary can never again advance
+/// the program on unwired claims.
+pub fn is_wired(id: &str) -> bool {
+    // Dispatch check without running anything: mirrors run_task's match keys.
+    let dispatched = matches!(
+        id,
+        task_01::ID
+            | task_02::ID
+            | task_03::ID
+            | task_04::ID
+            | task_05::ID
+            | task_06::ID
+            | task_07::ID
+            | task_08::ID
+            | task_09::ID
+            | task_10::ID
+            | task_11::ID
+            | task_12::ID
+            | task_13::ID
+            | task_14::ID
+            | task_15::ID
+            | task_16::ID
+            | task_17::ID
+            | task_18::ID
+            | task_19::ID
+            | task_20::ID
+            | task_21::ID
+            | task_22::ID
+            | task_23::ID
+            | task_24::ID
+            | task_25::ID
+            | task_26::ID
+            | task_27::ID
+            | task_28::ID
+            | task_29::ID
+            | task_30::ID
+            | task_31::ID
+            | task_32::ID
+            | task_33::ID
+            | task_34::ID
+            | task_35::ID
+            | task_36::ID
+            | task_37::ID
+            | task_38::ID
+            | task_39::ID
+            | task_40::ID
+            | task_41::ID
+            | task_42::ID
+            | task_43::ID
+            | task_44::ID
+            | task_45::ID
+            | task_46::ID
+            | task_47::ID
+            | task_48::ID
+            | task_49::ID
+            | task_50::ID
+            | task_51::ID
+            | task_52::ID
+            | task_53::ID
+            | task_54::ID
+            | task_55::ID
+            | task_56::ID
+            | task_57::ID
+            | task_58::ID
+            | task_59::ID
+            | task_60::ID
+            | task_61::ID
+            | task_62::ID
+            | task_63::ID
+            | task_64::ID
+            | task_65::ID
+            | task_66::ID
+            | task_67::ID
+            | task_68::ID
+            | task_69::ID
+            | task_70::ID
+            | task_71::ID
+            | task_72::ID
+            | task_73::ID
+            | task_74::ID
+            | task_75::ID
+            | task_76::ID
+            | task_77::ID
+            | task_78::ID
+            | task_79::ID
+            | task_80::ID
+            | task_81::ID
+            | task_82::ID
+            | task_83::ID
+            | task_84::ID
+            | task_85::ID
+            | task_86::ID
+            | task_87::ID
+            | task_88::ID
+            | task_89::ID
+            | task_90::ID
+            | task_91::ID
+            | task_92::ID
+            | task_93::ID
+            | task_94::ID
+            | task_95::ID
+            | task_96::ID
+            | task_97::ID
+            | task_98::ID
+            | task_99::ID
+            | task_100::ID
+            | task_101::ID
+            | task_102::ID
+            | task_103::ID
+            | task_104::ID
+            | task_105::ID
+            | task_106::ID
+            | task_107::ID
+            | task_108::ID
+            | task_109::ID
+            | task_110::ID
+            | task_111::ID
+            | task_112::ID
+            | task_113::ID
+            | task_114::ID
+            | task_115::ID
+            | task_116::ID
+            | task_117::ID
+            | task_118::ID
+            | task_119::ID
+            | task_120::ID
+            | task_121::ID
+            | task_122::ID
+            | task_123::ID
+            | task_124::ID
+            | task_125::ID
+            | task_126::ID
+            | task_127::ID
+            | task_128::ID
+            | task_129::ID
+            | task_130::ID
+            | task_131::ID
+            | task_132::ID
+            | task_133::ID
+            | task_134::ID
+            | task_135::ID
+            | task_136::ID
+            | task_137::ID
+            | task_138::ID
+            | task_139::ID
+            | task_140::ID
+            | task_141::ID
+            | task_142::ID
+            | task_143::ID
+            | task_144::ID
+            | task_145::ID
+            | task_146::ID
+            | task_147::ID
+            | task_148::ID
+            | task_149::ID
+            | task_150::ID
+            | task_151::ID
+            | task_152::ID
+            | task_153::ID
+            | task_154::ID
+            | task_155::ID
+            | task_156::ID
+            | task_157::ID
+            | task_158::ID
+            | task_159::ID
+            | task_160::ID
+            | task_161::ID
+            | task_162::ID
+            | task_163::ID
+            | task_164::ID
+            | task_165::ID
+            | task_166::ID
+            | task_167::ID
+            | task_168::ID
+            | task_169::ID
+            | task_170::ID
+            | task_171::ID
+            | task_172::ID
+            | task_173::ID
+            | task_174::ID
+            | task_175::ID
+            | task_176::ID
+            | task_177::ID
+            | task_178::ID
+            | task_179::ID
+            | task_180::ID
+            | task_181::ID
+            | task_182::ID
+            | task_183::ID
+            | task_184::ID
+            | task_185::ID
+            | task_186::ID
+            | task_187::ID
+            | task_188::ID
+            | task_189::ID
+            | task_190::ID
+            | task_191::ID
+            | task_192::ID
+            | task_193::ID
+            | task_194::ID
+            | task_195::ID
+            | task_196::ID
+            | task_197::ID
+            | task_198::ID
+            | task_199::ID
+            | task_200::ID
+    );
+    dispatched && task_meta(id).is_some()
+}
+
+#[cfg(test)]
+mod wiring_tests {
+    use super::*;
+
+    /// Regression test for the wave-28 incident: every id advertised in
+    /// TASK_IDS must be wired in both tables. Failed for task-170..177
+    /// before the fix commit.
+    #[test]
+    fn every_listed_task_is_wired() {
+        for id in TASK_IDS {
+            assert!(
+                is_wired(id),
+                "task '{id}' is listed in TASK_IDS but not wired"
+            );
+        }
+    }
+
+    /// The probe itself must fail closed on unknown ids.
+    #[test]
+    fn unknown_ids_are_not_wired() {
+        assert!(!is_wired("task-999"));
+        assert!(!is_wired(""));
+        assert!(!is_wired("task-01 "));
+    }
+}
