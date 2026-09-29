@@ -1563,10 +1563,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "phlow-approval"
+version = "0.1.0"
+dependencies = [
+ "phlow-json",
+ "serde_json",
+]
+
+[[package]]
 name = "phlow-checks"
 version = "0.2.0"
 dependencies = [
  "phlow-config",
+ "phlow-seccomp",
  "phlow-workspace",
  "rustix",
  "sha2 0.10.9",
@@ -1648,6 +1657,7 @@ dependencies = [
  "ml-dsa",
  "percent-encoding",
  "phlow-agent",
+ "phlow-approval",
  "phlow-cli",
  "phlow-config",
  "phlow-council",
@@ -1729,12 +1739,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "phlow-seccomp"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "seccompiler",
+]
+
+[[package]]
 name = "phlow-self-improve"
 version = "0.1.0"
 dependencies = [
  "phlow-workspace",
  "rusqlite",
  "serde_json",
+]
+
+[[package]]
+name = "phlow-system1"
+version = "0.1.0"
+dependencies = [
+ "phlow-approval",
+ "phlow-llm",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -2248,6 +2278,15 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+
+[[package]]
+name = "seccompiler"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4ae55de56877481d112a559bbc12667635fdaf5e005712fd4e2b2fa50ffc884"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "semver"

@@ -1,17 +1,20 @@
 //! task-226: permission delta set edges.
 //!
-//! Honest scope: The real approval queue must calculate set differences, not compare cardinality or
-//! summaries. No test-local delta implementation is used.
-//! Fixtures use installed diver-fixed modules without changing either Neovim config.
+//! Honest scope: Rescoped from Diver Lua to phlow-approval. The queue must calculate true set
+//! differences, not compare cardinality or summaries. No test-local delta implementation is used.
 
+use serde_json::{Value, json};
+
+use super::task_209::run_cases;
+use super::task_225::{delta_of, is_delta};
 use crate::{Ctx, TaskKind, TaskOutcome};
 
 /// Stable task identifier.
 pub const ID: &str = "task-226";
 /// Desired invariant.
 pub const NAME: &str = "permission delta set edges";
-/// Runs the actual fixed-config Neovim modules.
-pub const KIND: TaskKind = TaskKind::NvimLua;
+/// Drives the phlow-approval queue directly.
+pub const KIND: TaskKind = TaskKind::Rust;
 /// Two validation cases, then two adversarial cases.
 pub const CASES: [&str; 4] = [
     "add_only",
@@ -20,83 +23,50 @@ pub const CASES: [&str; 4] = [
     "equal_size_disjoint",
 ];
 
-const PROBES: [&str; 4] = [
-    r#"
-local request = req()
-request.permissions_before = { "a" }
-request.permissions_after = { "a", "b" }
+/// Run the four cases; retain all case outcomes, including failures.
+pub fn run(_ctx: &Ctx) -> TaskOutcome {
+    run_cases(ID, &CASES, case)
+}
 
-local queue = a.new()
-local id, err = a.request(queue, "delta-run", request)
-assert(id, err)
-local record = a.get(queue, id)
-return vim.deep_equal(record.permission_delta, { added = { "b" }, removed = {} })
-"#,
-    r#"
-local request = req()
-request.permissions_before = { "a", "b" }
-request.permissions_after = { "b" }
-
-local queue = a.new()
-local id, err = a.request(queue, "delta-run", request)
-assert(id, err)
-local record = a.get(queue, id)
-return vim.deep_equal(record.permission_delta, { added = {}, removed = { "a" } })
-"#,
-    r#"
-local request = req()
-request.permissions_before = { "old" }
-request.permissions_after = { "new" }
-
-local queue = a.new()
-local id, err = a.request(queue, "delta-run", request)
-assert(id, err)
-local record = a.get(queue, id)
-return vim.deep_equal(record.permission_delta, { added = { "new" }, removed = { "old" } })
-"#,
-    r#"
-local request = req()
-request.permissions_before = { "a", "b" }
-request.permissions_after = { "c", "d" }
-
-local queue = a.new()
-local id, err = a.request(queue, "delta-run", request)
-assert(id, err)
-local record = a.get(queue, id)
-return vim.deep_equal(record.permission_delta, { added = { "c", "d" }, removed = { "a", "b" } })
-"#,
-];
-
-/// Run all four cases with bounded subprocess execution and per-case evidence.
-pub fn run(ctx: &Ctx) -> TaskOutcome {
-    super::task_225::run_probes(ctx, ID, &CASES, &PROBES)
+fn case(index: usize) -> Result<bool, String> {
+    let (before, after, added, removed): (Value, Value, &[&str], &[&str]) = match index {
+        0 => (json!(["a"]), json!(["a", "b"]), &["b"], &[]),
+        1 => (json!(["a", "b"]), json!(["b"]), &[], &["a"]),
+        2 => (json!(["old"]), json!(["new"]), &["new"], &["old"]),
+        3 => (
+            json!(["a", "b"]),
+            json!(["c", "d"]),
+            &["c", "d"],
+            &["a", "b"],
+        ),
+        _ => return Err("case index outside fixed array".to_owned()),
+    };
+    Ok(is_delta(&delta_of(before, after)?, added, removed))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CASES, PROBES};
-
     #[test]
     fn add_only() {
-        let result = super::super::task_225::probe(std::path::Path::new("nvim"), PROBES[0]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[0]);
+        let result = super::case(0);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn remove_only() {
-        let result = super::super::task_225::probe(std::path::Path::new("nvim"), PROBES[1]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[1]);
+        let result = super::case(1);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn rename_remove_add() {
-        let result = super::super::task_225::probe(std::path::Path::new("nvim"), PROBES[2]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[2]);
+        let result = super::case(2);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn equal_size_disjoint() {
-        let result = super::super::task_225::probe(std::path::Path::new("nvim"), PROBES[3]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[3]);
+        let result = super::case(3);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 }

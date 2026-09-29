@@ -1,0 +1,23 @@
+[package]
+name = "phlow-seccomp"
+version = "0.1.0"
+edition = "2024"
+description = "Linux seccomp egress filter for phlow check children: socket(AF_INET/AF_INET6) and io_uring_setup fail with EPERM. The crate's single unsafe block is the pre_exec registration."
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "phlow_seccomp"
+path = "src/lib.rs"
+
+# Linux only: seccomp does not exist elsewhere, and apply_egress_filter is a
+# documented no-op there.
+[target.'cfg(target_os = "linux")'.dependencies]
+# seccompiler 0.5.0 (rust-vmm / Firecracker, Apache-2.0 OR BSD-3-Clause):
+# compiles the BPF program in the parent and installs it with
+# prctl(PR_SET_NO_NEW_PRIVS) + seccomp(SECCOMP_SET_MODE_FILTER) — raw
+# syscalls, no allocation — so it is callable between fork and exec. Its
+# only dependency is libc. Default features only (no json/serde).
+seccompiler = "=0.5.0"
+# libc: syscall numbers, address families and errno values for the rules.
+# Already locked for the workspace; seccompiler's own dependency.
+libc = "0.2"

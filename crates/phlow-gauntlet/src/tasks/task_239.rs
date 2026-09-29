@@ -1,18 +1,24 @@
 //! task-239: policy state isolation.
 //!
-//! Honest scope: The real policy constructor and decision engine are the closest enforcer seam.
-//! Caller-owned tables and direct state writes must not widen policy; this does not claim OS
-//! isolation.
-//! Fixtures use installed diver-fixed modules without changing either Neovim config.
+//! Honest scope: Rescoped from Diver Lua to phlow-approval. A parsed `Policy` shares nothing with
+//! its input document and has no mutating API; a direct rule write does not compile (proved by
+//! the crate's `compile_fail` doctest, which this runtime case cannot express). At runtime the
+//! only write an agent can make is replacing its own copy, which must not reach the operator's
+//! policy. This does not claim OS isolation.
 
+use phlow_approval::{Policy, Verdict, decide};
+use serde_json::json;
+
+use super::task_209::{policy, req, rule, run_cases};
+use super::task_233::err;
 use crate::{Ctx, TaskKind, TaskOutcome};
 
 /// Stable task identifier.
 pub const ID: &str = "task-239";
 /// Desired invariant.
 pub const NAME: &str = "policy state isolation";
-/// Runs the actual fixed-config Neovim modules.
-pub const KIND: TaskKind = TaskKind::NvimLua;
+/// Drives the phlow-approval policy parser and seam directly.
+pub const KIND: TaskKind = TaskKind::Rust;
 /// Two validation cases, then two adversarial cases.
 pub const CASES: [&str; 4] = [
     "deny_default",
@@ -21,58 +27,61 @@ pub const CASES: [&str; 4] = [
     "agent_write_refused",
 ];
 
-const PROBES: [&str; 4] = [
-    r#"
-return p.decide(p.new({}), req()).decision == "deny"
-"#,
-    r#"
-return p.decide(policy("allow"), req()).decision == "allow"
-"#,
-    r#"
-local rule = rule_for("deny")
-local state = assert(p.new({ rules = { rule } }))
-rule.decision = "allow"
-return p.decide(state, req()).decision == "deny"
-"#,
-    r#"
-local state = policy("deny")
-local ok = pcall(function()
-	state.rules[1].decision = "allow"
-end)
-return not ok and p.decide(state, req()).decision == "deny"
-"#,
-];
+/// Run the four cases; retain all case outcomes, including failures.
+pub fn run(_ctx: &Ctx) -> TaskOutcome {
+    run_cases(ID, &CASES, case)
+}
 
-/// Run all four cases with bounded subprocess execution and per-case evidence.
-pub fn run(ctx: &Ctx) -> TaskOutcome {
-    super::task_225::run_probes(ctx, ID, &CASES, &PROBES)
+fn case(index: usize) -> Result<bool, String> {
+    let scope = req()?.scope().clone();
+    match index {
+        0 => {
+            let empty = Policy::from_json(&json!({ "version": 1 })).map_err(err)?;
+            Ok(decide(Some(&empty), &scope).verdict == Verdict::Deny)
+        }
+        1 => Ok(decide(Some(&policy("allow")?), &scope).verdict == Verdict::Allow),
+        2 => {
+            let mut input = json!({ "version": 1, "rules": [rule("deny")] });
+            let parsed = Policy::from_json(&input).map_err(err)?;
+            input["rules"][0]["decision"] = json!("allow");
+            Ok(decide(Some(&parsed), &scope).verdict == Verdict::Deny)
+        }
+        3 => {
+            let operator = policy("deny")?;
+            let mut agent_copy = operator.clone();
+            let copy_before = decide(Some(&agent_copy), &scope).verdict;
+            agent_copy = policy("allow")?;
+            Ok(copy_before == Verdict::Deny
+                && decide(Some(&agent_copy), &scope).verdict == Verdict::Allow
+                && decide(Some(&operator), &scope).verdict == Verdict::Deny)
+        }
+        _ => Err("case index outside fixed array".to_owned()),
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CASES, PROBES};
-
     #[test]
     fn deny_default() {
-        let result = super::super::task_225::probe(std::path::Path::new("nvim"), PROBES[0]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[0]);
+        let result = super::case(0);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn explicit_allow() {
-        let result = super::super::task_225::probe(std::path::Path::new("nvim"), PROBES[1]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[1]);
+        let result = super::case(1);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn input_alias_cannot_grant() {
-        let result = super::super::task_225::probe(std::path::Path::new("nvim"), PROBES[2]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[2]);
+        let result = super::case(2);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn agent_write_refused() {
-        let result = super::super::task_225::probe(std::path::Path::new("nvim"), PROBES[3]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[3]);
+        let result = super::case(3);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 }

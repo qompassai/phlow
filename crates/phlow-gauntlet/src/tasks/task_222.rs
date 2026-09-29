@@ -1,19 +1,21 @@
 //! task-222: emergency approval revocation.
 //!
-//! Honest scope: No revoke API exists. The closest existing transition is decide(denied)
-//! after approval; it must remove authority immediately while preserving human attribution.
-//! Executor integration remains unproven.
-//! Fixtures use the installed diver-fixed modules, never mocks or live config edits.
+//! Honest scope: Rescoped from Diver Lua to phlow-approval. `ApprovalQueue::revoke` withdraws an
+//! approval immediately while keeping the original human attribution beside the revocation; a
+//! denial stays final. Executor integration remains unproven.
 
-use super::task_209::run_probes;
+use phlow_approval::{Error, HumanVerdict, State};
+
+use super::task_209::{HUMAN, OPERATOR, pending, record, run_cases};
+use super::task_233::err;
 use crate::{Ctx, TaskKind, TaskOutcome};
 
 /// Stable task identifier.
 pub const ID: &str = "task-222";
 /// Desired permission invariant.
 pub const NAME: &str = "emergency approval revocation";
-/// Real policy and approval modules in fixed-config headless Neovim.
-pub const KIND: TaskKind = TaskKind::NvimLua;
+/// Drives the phlow-approval queue directly.
+pub const KIND: TaskKind = TaskKind::Rust;
 /// Two validation cases followed by two adversarial cases.
 pub const CASES: [&str; 4] = [
     "pending_can_be_denied",
@@ -22,64 +24,76 @@ pub const CASES: [&str; 4] = [
     "revocation_visible_on_next_read",
 ];
 
-const PROBES: [&str; 4] = [
-    r#"
-local q, id = fixture.pending()
-fixture.a.decide(q, id, "denied", "human")
-return fixture.a.get(q, id).state == "denied"
-"#,
-    r#"
-local q, id = fixture.pending()
-fixture.a.decide(q, id, "denied", "human")
-return not fixture.a.decide(q, id, "approved", "human")
-"#,
-    r#"
-local q, id = fixture.pending()
-fixture.a.decide(q, id, "approved", "human")
-fixture.a.decide(q, id, "denied", "human")
-return fixture.a.get(q, id).state ~= "approved"
-"#,
-    r#"
-local q, id = fixture.pending()
-fixture.a.decide(q, id, "approved", "human")
-local snapshot = vim.deepcopy(fixture.a.get(q, id))
-fixture.a.decide(q, id, "denied", "human")
-return snapshot.state == "approved" and fixture.a.get(q, id).state == "denied"
-"#,
-];
+/// Run the four cases; retain all case outcomes, including failures.
+pub fn run(_ctx: &Ctx) -> TaskOutcome {
+    run_cases(ID, &CASES, case)
+}
 
-/// Run four bounded real-seam probes; retain all case outcomes, including failures.
-pub fn run(ctx: &Ctx) -> TaskOutcome {
-    run_probes(ctx, ID, &CASES, &PROBES)
+fn case(index: usize) -> Result<bool, String> {
+    let (mut queue, id) = pending()?;
+    match index {
+        0 => {
+            queue
+                .decide(&id, HumanVerdict::Deny, Some(HUMAN))
+                .map_err(err)?;
+            Ok(record(&queue, &id)?.state == State::Denied)
+        }
+        1 => {
+            queue
+                .decide(&id, HumanVerdict::Deny, Some(HUMAN))
+                .map_err(err)?;
+            let again = queue.decide(&id, HumanVerdict::Approve, Some(HUMAN));
+            Ok(again
+                == Err(Error::WrongState {
+                    state: State::Denied,
+                }))
+        }
+        2 => {
+            queue
+                .decide(&id, HumanVerdict::Approve, Some(HUMAN))
+                .map_err(err)?;
+            let revoked = queue.revoke(&id, Some(OPERATOR));
+            Ok(revoked.is_ok() && record(&queue, &id)?.state == State::Revoked)
+        }
+        3 => {
+            queue
+                .decide(&id, HumanVerdict::Approve, Some(HUMAN))
+                .map_err(err)?;
+            let snapshot = record(&queue, &id)?;
+            queue.revoke(&id, Some(OPERATOR)).map_err(err)?;
+            let now = record(&queue, &id)?;
+            Ok(snapshot.state == State::Approved
+                && now.state == State::Revoked
+                && now.revoked_by.as_deref() == Some(OPERATOR)
+                && now.decided_by.as_deref() == Some(HUMAN))
+        }
+        _ => Err("case index outside fixed array".to_owned()),
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CASES, PROBES};
-    use crate::tasks::task_209::probe;
-    use std::path::Path;
-
     #[test]
     fn pending_can_be_denied() {
-        let result = probe(Path::new("nvim"), PROBES[0]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[0]);
+        let result = super::case(0);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn denied_cannot_be_reapproved() {
-        let result = probe(Path::new("nvim"), PROBES[1]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[1]);
+        let result = super::case(1);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn approved_can_be_revoked() {
-        let result = probe(Path::new("nvim"), PROBES[2]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[2]);
+        let result = super::case(2);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn revocation_visible_on_next_read() {
-        let result = probe(Path::new("nvim"), PROBES[3]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[3]);
+        let result = super::case(3);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 }

@@ -1,19 +1,21 @@
 //! task-219: append only approval history.
 //!
-//! Honest scope: Approval.get is the closest ledger read seam. History must survive attempted
-//! edits/deletion through returned records. No durable ledger exists here; disk persistence
-//! is not tested.
-//! Fixtures use the installed diver-fixed modules, never mocks or live config edits.
+//! Honest scope: Rescoped from Diver Lua to phlow-approval. `ApprovalQueue::get` returns owned
+//! snapshots: a second decision cannot overwrite the first, and editing a returned record cannot
+//! change state or erase attribution. The queue is in memory; no durable ledger is claimed.
 
-use super::task_209::run_probes;
+use phlow_approval::{Error, HumanVerdict, State};
+
+use super::task_209::{HUMAN, pending, record, run_cases};
+use super::task_233::err;
 use crate::{Ctx, TaskKind, TaskOutcome};
 
 /// Stable task identifier.
 pub const ID: &str = "task-219";
 /// Desired permission invariant.
 pub const NAME: &str = "append only approval history";
-/// Real policy and approval modules in fixed-config headless Neovim.
-pub const KIND: TaskKind = TaskKind::NvimLua;
+/// Drives the phlow-approval queue directly.
+pub const KIND: TaskKind = TaskKind::Rust;
 /// Two validation cases followed by two adversarial cases.
 pub const CASES: [&str; 4] = [
     "decision_remains_readable",
@@ -22,66 +24,63 @@ pub const CASES: [&str; 4] = [
     "reader_cannot_delete_attribution",
 ];
 
-const PROBES: [&str; 4] = [
-    r#"
-local q, id = fixture.pending()
-fixture.a.decide(q, id, "approved", "human")
-return fixture.a.get(q, id).state == "approved"
-"#,
-    r#"
-local q, id = fixture.pending()
-fixture.a.decide(q, id, "approved", "human")
-local ok = fixture.a.decide(q, id, "denied", "human")
-return not ok and fixture.a.get(q, id).state == "approved"
-"#,
-    r#"
-local q, id = fixture.pending()
-fixture.a.decide(q, id, "approved", "human")
-local record = fixture.a.get(q, id)
-record.state = "pending"
-return fixture.a.get(q, id).state == "approved"
-"#,
-    r#"
-local q, id = fixture.pending()
-fixture.a.decide(q, id, "approved", "human")
-local record = fixture.a.get(q, id)
-record.decided_by = nil
-return fixture.a.get(q, id).decided_by == "human"
-"#,
-];
+/// Run the four cases; retain all case outcomes, including failures.
+pub fn run(_ctx: &Ctx) -> TaskOutcome {
+    run_cases(ID, &CASES, case)
+}
 
-/// Run four bounded real-seam probes; retain all case outcomes, including failures.
-pub fn run(ctx: &Ctx) -> TaskOutcome {
-    run_probes(ctx, ID, &CASES, &PROBES)
+fn case(index: usize) -> Result<bool, String> {
+    let (mut queue, id) = pending()?;
+    queue
+        .decide(&id, HumanVerdict::Approve, Some(HUMAN))
+        .map_err(err)?;
+    match index {
+        0 => Ok(record(&queue, &id)?.state == State::Approved),
+        1 => {
+            let second = queue.decide(&id, HumanVerdict::Deny, Some(HUMAN));
+            Ok(second
+                == Err(Error::WrongState {
+                    state: State::Approved,
+                })
+                && record(&queue, &id)?.state == State::Approved)
+        }
+        2 => {
+            let mut copy = record(&queue, &id)?;
+            copy.state = State::Pending;
+            Ok(record(&queue, &id)?.state == State::Approved)
+        }
+        3 => {
+            let mut copy = record(&queue, &id)?;
+            copy.decided_by = None;
+            Ok(record(&queue, &id)?.decided_by.as_deref() == Some(HUMAN))
+        }
+        _ => Err("case index outside fixed array".to_owned()),
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CASES, PROBES};
-    use crate::tasks::task_209::probe;
-    use std::path::Path;
-
     #[test]
     fn decision_remains_readable() {
-        let result = probe(Path::new("nvim"), PROBES[0]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[0]);
+        let result = super::case(0);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn second_decision_cannot_overwrite() {
-        let result = probe(Path::new("nvim"), PROBES[1]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[1]);
+        let result = super::case(1);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn reader_cannot_edit_history() {
-        let result = probe(Path::new("nvim"), PROBES[2]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[2]);
+        let result = super::case(2);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn reader_cannot_delete_attribution() {
-        let result = probe(Path::new("nvim"), PROBES[3]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[3]);
+        let result = super::case(3);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 }

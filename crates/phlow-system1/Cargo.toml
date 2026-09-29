@@ -1,0 +1,31 @@
+[package]
+name = "phlow-system1"
+version = "0.1.0"
+edition = "2024"
+description = "Fast System 1 decision layer for phlow: a bounded client for the Jev system-one wire protocol (as served by laya-serve), a scripted mock backend, and a confidence-gated approval risk fast path that can only escalate to the existing human path."
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "phlow_system1"
+path = "src/lib.rs"
+
+[dependencies]
+# phlow-approval: the real policy Decision/Scope/Risk types the risk fast
+# path routes. Read-only use; the human-bound queue is never written here.
+phlow-approval = { path = "../phlow-approval" }
+# phlow-llm: the shared credential redaction scanner (redact.rs) applied to
+# transport error text before it can reach a model-visible surface.
+phlow-llm = { path = "../phlow-llm" }
+# reqwest: the workspace's existing HTTP stack, same pin and TLS posture as
+# phlow-gauntlet (no default features, rustls with webpki roots). The async
+# client is used because System1Decider is async; no second HTTP stack.
+reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls-webpki-roots"] }
+# serde: derive the closed wire shapes (deny_unknown_fields) of the protocol.
+serde = { version = "1", features = ["derive"] }
+# serde_json: wire encoding and bounded response decoding.
+serde_json = "1"
+
+[dev-dependencies]
+# tokio: a current-thread runtime to drive the async reqwest client against
+# a loopback-only scripted server in tests. Same features as phlow-runtime.
+tokio = { version = "1", features = ["rt", "sync", "time", "net"] }

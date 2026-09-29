@@ -1,18 +1,23 @@
 //! task-220: proposal expiry enforced at decision.
 //!
-//! Honest scope: Uses real monotonic time and sweep_expired. Decide must enforce TTL even
-//! without a sweep; the wait is bounded to 10 ms, with a 1 ms proposal TTL.
-//! Fixtures use the installed diver-fixed modules, never mocks or live config edits.
+//! Honest scope: Rescoped from Diver Lua to phlow-approval. Uses the queue's real monotonic
+//! clock and `sweep_expired`. `decide` enforces the deadline even without a sweep; the unswept
+//! case waits a bounded 10 ms past a 1 ms TTL.
 
-use super::task_209::run_probes;
+use std::time::Duration;
+
+use phlow_approval::{Error, HumanVerdict, State};
+
+use super::task_209::{HUMAN, RUN, pending, queue, record, req, run_cases};
+use super::task_233::err;
 use crate::{Ctx, TaskKind, TaskOutcome};
 
 /// Stable task identifier.
 pub const ID: &str = "task-220";
 /// Desired permission invariant.
 pub const NAME: &str = "proposal expiry enforced at decision";
-/// Real policy and approval modules in fixed-config headless Neovim.
-pub const KIND: TaskKind = TaskKind::NvimLua;
+/// Drives the phlow-approval queue directly.
+pub const KIND: TaskKind = TaskKind::Rust;
 /// Two validation cases followed by two adversarial cases.
 pub const CASES: [&str; 4] = [
     "before_deadline_stays_pending",
@@ -21,64 +26,71 @@ pub const CASES: [&str; 4] = [
     "unswept_expired_cannot_approve",
 ];
 
-const PROBES: [&str; 4] = [
-    r#"
-local q, id = fixture.pending()
-local count = fixture.a.sweep_expired(q, fixture.a.get(q, id).created_ns)
-return count == 0 and fixture.a.get(q, id).state == "pending"
-"#,
-    r#"
-local q, id = fixture.pending()
-local count = fixture.a.sweep_expired(q, fixture.a.get(q, id).deadline_ns)
-return count == 1 and fixture.a.get(q, id).state == "expired"
-"#,
-    r#"
-local q, id = fixture.pending()
-fixture.a.sweep_expired(q, fixture.a.get(q, id).deadline_ns)
-return not fixture.a.decide(q, id, "approved", "human")
-"#,
-    r#"
-local q = fixture.a.new()
-local id = fixture.a.request(q, "run", fixture.req(), { timeout_ms = 1 })
-assert(id ~= nil)
-vim.wait(10)
-local ok = fixture.a.decide(q, id, "approved", "human")
-return not ok and fixture.a.get(q, id).state ~= "approved"
-"#,
-];
+/// Run the four cases; retain all case outcomes, including failures.
+pub fn run(_ctx: &Ctx) -> TaskOutcome {
+    run_cases(ID, &CASES, case)
+}
 
-/// Run four bounded real-seam probes; retain all case outcomes, including failures.
-pub fn run(ctx: &Ctx) -> TaskOutcome {
-    run_probes(ctx, ID, &CASES, &PROBES)
+fn case(index: usize) -> Result<bool, String> {
+    if index == 3 {
+        return unswept_expired_cannot_approve();
+    }
+    let (mut queue, id) = pending()?;
+    let stored = record(&queue, &id)?;
+    match index {
+        0 => {
+            let expired_count = queue.sweep_expired(stored.created_at);
+            Ok(expired_count == 0 && record(&queue, &id)?.state == State::Pending)
+        }
+        1 => {
+            let expired_count = queue.sweep_expired(stored.deadline);
+            Ok(expired_count == 1 && record(&queue, &id)?.state == State::Expired)
+        }
+        2 => {
+            queue.sweep_expired(stored.deadline);
+            let late = queue.decide(&id, HumanVerdict::Approve, Some(HUMAN));
+            Ok(late
+                == Err(Error::WrongState {
+                    state: State::Expired,
+                }))
+        }
+        _ => Err("case index outside fixed array".to_owned()),
+    }
+}
+
+fn unswept_expired_cannot_approve() -> Result<bool, String> {
+    const TTL: Duration = Duration::from_millis(1);
+    const WAIT: Duration = Duration::from_millis(10);
+    let mut queue = queue()?;
+    let id = queue.request(RUN, req()?, TTL).map_err(err)?;
+    std::thread::sleep(WAIT);
+    let late = queue.decide(&id, HumanVerdict::Approve, Some(HUMAN));
+    Ok(late == Err(Error::Expired) && record(&queue, &id)?.state == State::Expired)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CASES, PROBES};
-    use crate::tasks::task_209::probe;
-    use std::path::Path;
-
     #[test]
     fn before_deadline_stays_pending() {
-        let result = probe(Path::new("nvim"), PROBES[0]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[0]);
+        let result = super::case(0);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn deadline_sweep_expires() {
-        let result = probe(Path::new("nvim"), PROBES[1]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[1]);
+        let result = super::case(1);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn swept_expired_cannot_approve() {
-        let result = probe(Path::new("nvim"), PROBES[2]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[2]);
+        let result = super::case(2);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn unswept_expired_cannot_approve() {
-        let result = probe(Path::new("nvim"), PROBES[3]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[3]);
+        let result = super::case(3);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 }

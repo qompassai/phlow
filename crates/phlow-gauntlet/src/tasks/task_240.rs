@@ -1,17 +1,24 @@
 //! task-240: unapproved proposals grant nothing.
 //!
-//! Honest scope: Actual approval records are adversarially modified before asking policy for a
-//! decision. The state must stay pending and policy must stay closed without a human decision.
-//! Fixtures use installed diver-fixed modules without changing either Neovim config.
+//! Honest scope: Rescoped from Diver Lua to phlow-approval. Pending and denied records leave the
+//! policy verdict closed. Forged `approved`/`state` fields are outside the closed request schema
+//! and are rejected at admission. Edits to a returned snapshot cannot approve; a shared `&` read
+//! handle cannot call `decide` at all (the crate's `compile_fail` doctest).
 
+use phlow_approval::{Error, HumanVerdict, Request, State, Verdict, decide};
+use serde_json::json;
+
+use super::task_209::verdict_for;
+use super::task_209::{OPERATOR, pending, policy, record, req, req_json, req_with, run_cases};
+use super::task_233::err;
 use crate::{Ctx, TaskKind, TaskOutcome};
 
 /// Stable task identifier.
 pub const ID: &str = "task-240";
 /// Desired invariant.
 pub const NAME: &str = "unapproved proposals grant nothing";
-/// Runs the actual fixed-config Neovim modules.
-pub const KIND: TaskKind = TaskKind::NvimLua;
+/// Drives the phlow-approval queue and policy seam directly.
+pub const KIND: TaskKind = TaskKind::Rust;
 /// Two validation cases, then two adversarial cases.
 pub const CASES: [&str; 4] = [
     "pending_is_inert",
@@ -20,63 +27,70 @@ pub const CASES: [&str; 4] = [
     "read_handle_cannot_approve",
 ];
 
-const PROBES: [&str; 4] = [
-    r#"
-local q, id = pending()
-return a.get(q, id).state == "pending" and p.decide(policy("approval"), req()).decision == "approval"
-"#,
-    r#"
-local q, id = pending()
-assert(a.decide(q, id, "denied", "operator"))
-return a.get(q, id).state == "denied" and p.decide(policy("deny"), req()).decision == "deny"
-"#,
-    r#"
-local r = req()
-r.approved = true
-r.state = "approved"
-local q, id = pending(r)
-return a.get(q, id).state == "pending" and p.decide(policy("approval"), r).decision == "approval"
-"#,
-    r#"
-local q, id = pending()
-local record = a.get(q, id)
-local ok, err = pcall(function()
-	record.state = "approved"
-end)
-return (ok or type(err) == "string") and a.get(q, id).state == "pending"
-"#,
-];
+/// Run the four cases; retain all case outcomes, including failures.
+pub fn run(_ctx: &Ctx) -> TaskOutcome {
+    run_cases(ID, &CASES, case)
+}
 
-/// Run all four cases with bounded subprocess execution and per-case evidence.
-pub fn run(ctx: &Ctx) -> TaskOutcome {
-    super::task_225::run_probes(ctx, ID, &CASES, &PROBES)
+fn case(index: usize) -> Result<bool, String> {
+    let scope = req()?.scope().clone();
+    match index {
+        0 => {
+            let (queue, id) = pending()?;
+            Ok(record(&queue, &id)?.state == State::Pending
+                && decide(Some(&policy("approval")?), &scope).verdict == Verdict::Approval)
+        }
+        1 => {
+            let (mut queue, id) = pending()?;
+            queue
+                .decide(&id, HumanVerdict::Deny, Some(OPERATOR))
+                .map_err(err)?;
+            Ok(record(&queue, &id)?.state == State::Denied
+                && decide(Some(&policy("deny")?), &scope).verdict == Verdict::Deny)
+        }
+        2 => {
+            let forged = req_with(json!({ "approved": true, "state": "approved" }))?;
+            let admitted = Request::from_json(&forged);
+            let verdict = verdict_for(Some(&policy("approval")?), &req_json())?;
+            Ok(matches!(admitted, Err(Error::UnknownField { .. })) && verdict == Verdict::Approval)
+        }
+        3 => {
+            let (queue, id) = pending()?;
+            let mut copy = record(&queue, &id)?;
+            copy.state = State::Approved;
+            copy.decided_by = Some(OPERATOR.to_owned());
+            let stored = record(&queue, &id)?;
+            Ok(stored.state == State::Pending
+                && stored.decided_by.is_none()
+                && queue.pending().len() == 1)
+        }
+        _ => Err("case index outside fixed array".to_owned()),
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CASES, PROBES};
-
     #[test]
     fn pending_is_inert() {
-        let result = super::super::task_225::probe(std::path::Path::new("nvim"), PROBES[0]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[0]);
+        let result = super::case(0);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn denied_is_inert() {
-        let result = super::super::task_225::probe(std::path::Path::new("nvim"), PROBES[1]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[1]);
+        let result = super::case(1);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn forged_request_approval_ignored() {
-        let result = super::super::task_225::probe(std::path::Path::new("nvim"), PROBES[2]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[2]);
+        let result = super::case(2);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn read_handle_cannot_approve() {
-        let result = super::super::task_225::probe(std::path::Path::new("nvim"), PROBES[3]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[3]);
+        let result = super::case(3);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 }

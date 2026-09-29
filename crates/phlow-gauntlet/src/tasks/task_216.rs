@@ -1,19 +1,23 @@
 //! task-216: policy version pinning.
 //!
-//! Honest scope: Policy.new currently has no version contract. Version 1 is the desired
-//! initial schema, not an existing supported API; acceptance must preserve it and reject
-//! missing or unknown versions.
-//! Fixtures use the installed diver-fixed modules, never mocks or live config edits.
+//! Honest scope: Rescoped from Diver Lua to phlow-approval. `version` is required; version 1 is
+//! the only implemented schema and is retained on the parsed policy. Missing or unknown versions
+//! are rejected even when the rest of the document is valid.
 
-use super::task_209::run_probes;
+use phlow_approval::{Error, POLICY_VERSION, Policy};
+use phlow_json::JsonError;
+use serde_json::json;
+
+use super::task_209::run_cases;
+use super::task_233::err;
 use crate::{Ctx, TaskKind, TaskOutcome};
 
 /// Stable task identifier.
 pub const ID: &str = "task-216";
 /// Desired permission invariant.
 pub const NAME: &str = "policy version pinning";
-/// Real policy and approval modules in fixed-config headless Neovim.
-pub const KIND: TaskKind = TaskKind::NvimLua;
+/// Drives the phlow-approval policy parser directly.
+pub const KIND: TaskKind = TaskKind::Rust;
 /// Two validation cases followed by two adversarial cases.
 pub const CASES: [&str; 4] = [
     "version_one_accepted",
@@ -22,55 +26,59 @@ pub const CASES: [&str; 4] = [
     "missing_version_rejected",
 ];
 
-const PROBES: [&str; 4] = [
-    r#"
-local result = fixture.p.new({ version = 1, default = "deny" })
-return result ~= nil
-"#,
-    r#"
-local result = fixture.p.new({ version = 1, default = "deny" })
-return result ~= nil and result.version == 1
-"#,
-    r#"
-return fixture.p.new({ version = 999, default = "allow" }) == nil
-"#,
-    r#"
-return fixture.p.new({ default = "allow" }) == nil
-"#,
-];
+/// Run the four cases; retain all case outcomes, including failures.
+pub fn run(_ctx: &Ctx) -> TaskOutcome {
+    run_cases(ID, &CASES, case)
+}
 
-/// Run four bounded real-seam probes; retain all case outcomes, including failures.
-pub fn run(ctx: &Ctx) -> TaskOutcome {
-    run_probes(ctx, ID, &CASES, &PROBES)
+fn case(index: usize) -> Result<bool, String> {
+    match index {
+        0 => Ok(Policy::from_json(&json!({ "version": 1, "default": "deny" })).is_ok()),
+        1 => {
+            let parsed = Policy::from_json(&json!({ "version": 1, "default": "deny" }));
+            Ok(parsed.map_err(err)?.version() == 1 && POLICY_VERSION == 1)
+        }
+        2 => {
+            let parsed = Policy::from_json(&json!({ "version": 999, "default": "allow" }));
+            Ok(matches!(
+                parsed,
+                Err(Error::UnsupportedVersion { version: 999 })
+            ))
+        }
+        3 => {
+            let parsed = Policy::from_json(&json!({ "default": "allow" }));
+            Ok(matches!(
+                parsed,
+                Err(Error::Json(JsonError::MissingField { field })) if field == "version"
+            ))
+        }
+        _ => Err("case index outside fixed array".to_owned()),
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CASES, PROBES};
-    use crate::tasks::task_209::probe;
-    use std::path::Path;
-
     #[test]
     fn version_one_accepted() {
-        let result = probe(Path::new("nvim"), PROBES[0]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[0]);
+        let result = super::case(0);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn version_one_retained() {
-        let result = probe(Path::new("nvim"), PROBES[1]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[1]);
+        let result = super::case(1);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn future_version_rejected() {
-        let result = probe(Path::new("nvim"), PROBES[2]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[2]);
+        let result = super::case(2);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn missing_version_rejected() {
-        let result = probe(Path::new("nvim"), PROBES[3]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[3]);
+        let result = super::case(3);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 }

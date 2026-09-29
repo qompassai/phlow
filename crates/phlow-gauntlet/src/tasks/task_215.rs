@@ -1,18 +1,21 @@
 //! task-215: no permissive policy parsing.
 //!
-//! Honest scope: No parser mode is currently declared. Proposed bypass flags must be rejected
-//! as unsupported rather than ignored; malformed scope elements must also fail admission.
-//! Fixtures use the installed diver-fixed modules, never mocks or live config edits.
+//! Honest scope: Rescoped from Diver Lua to phlow-approval. No parser mode exists: bypass flags
+//! (`legacy`, `permissive`) are unknown fields and are rejected, and a malformed scope element
+//! fails admission on its own, with or without such a flag.
 
-use super::task_209::run_probes;
+use phlow_approval::{Error, Policy};
+use serde_json::{Value, json};
+
+use super::task_209::{policy, run_cases};
 use crate::{Ctx, TaskKind, TaskOutcome};
 
 /// Stable task identifier.
 pub const ID: &str = "task-215";
 /// Desired permission invariant.
 pub const NAME: &str = "no permissive policy parsing";
-/// Real policy and approval modules in fixed-config headless Neovim.
-pub const KIND: TaskKind = TaskKind::NvimLua;
+/// Drives the phlow-approval policy parser directly.
+pub const KIND: TaskKind = TaskKind::Rust;
 /// Two validation cases followed by two adversarial cases.
 pub const CASES: [&str; 4] = [
     "known_default_accepted",
@@ -21,56 +24,58 @@ pub const CASES: [&str; 4] = [
     "permissive_malformed_scope_rejected",
 ];
 
-const PROBES: [&str; 4] = [
-    r#"
-return fixture.p.new({ default = "deny" }) ~= nil
-"#,
-    r#"
-return fixture.policy("allow") ~= nil
-"#,
-    r#"
-return fixture.p.new({ legacy = true, default = "allow" }) == nil
-"#,
-    r#"
-return fixture.p.new({
-	permissive = true,
-	rules = { { risk = "local_reversible", decision = "allow", paths = { 42 } } },
-}) == nil
-"#,
-];
+/// Run the four cases; retain all case outcomes, including failures.
+pub fn run(_ctx: &Ctx) -> TaskOutcome {
+    run_cases(ID, &CASES, case)
+}
 
-/// Run four bounded real-seam probes; retain all case outcomes, including failures.
-pub fn run(ctx: &Ctx) -> TaskOutcome {
-    run_probes(ctx, ID, &CASES, &PROBES)
+fn case(index: usize) -> Result<bool, String> {
+    match index {
+        0 => Ok(Policy::from_json(&json!({ "version": 1, "default": "deny" })).is_ok()),
+        1 => Ok(policy("allow").is_ok()),
+        2 => {
+            let document = json!({ "version": 1, "legacy": true, "default": "allow" });
+            let parsed = Policy::from_json(&document);
+            Ok(matches!(parsed, Err(Error::UnknownField { field, .. }) if field == "legacy"))
+        }
+        3 => {
+            let flagged = json!({ "version": 1, "permissive": true, "rules": [malformed_rule()] });
+            let plain = json!({ "version": 1, "rules": [malformed_rule()] });
+            let plain_error = Policy::from_json(&plain);
+            Ok(Policy::from_json(&flagged).is_err()
+                && matches!(plain_error, Err(Error::InvalidValue { field: "paths", .. })))
+        }
+        _ => Err("case index outside fixed array".to_owned()),
+    }
+}
+
+fn malformed_rule() -> Value {
+    json!({ "risk": "local_reversible", "decision": "allow", "tools": ["fs.write"], "paths": [42] })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CASES, PROBES};
-    use crate::tasks::task_209::probe;
-    use std::path::Path;
-
     #[test]
     fn known_default_accepted() {
-        let result = probe(Path::new("nvim"), PROBES[0]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[0]);
+        let result = super::case(0);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn known_scope_accepted() {
-        let result = probe(Path::new("nvim"), PROBES[1]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[1]);
+        let result = super::case(1);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn legacy_bypass_flag_rejected() {
-        let result = probe(Path::new("nvim"), PROBES[2]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[2]);
+        let result = super::case(2);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn permissive_malformed_scope_rejected() {
-        let result = probe(Path::new("nvim"), PROBES[3]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[3]);
+        let result = super::case(3);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 }

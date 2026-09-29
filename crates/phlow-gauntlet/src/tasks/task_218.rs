@@ -1,19 +1,21 @@
 //! task-218: wildcard scope escalation.
 //!
-//! Honest scope: The path and endpoint allowlists in policy.decide are the closest effective-
-//! grant seam. Every requested resource must fit the grant; these do not claim glob syntax is
-//! supported.
-//! Fixtures use the installed diver-fixed modules, never mocks or live config edits.
+//! Honest scope: Rescoped from Diver Lua to phlow-approval. An allow rule's path and endpoint
+//! lists are exact-match grants: every requested resource must be listed, so one matched item
+//! cannot carry an unmatched one. No glob syntax exists.
 
-use super::task_209::run_probes;
+use phlow_approval::Verdict;
+use serde_json::json;
+
+use super::task_209::{policy, policy_of, req_json, req_with, rule, run_cases, verdict_for};
 use crate::{Ctx, TaskKind, TaskOutcome};
 
 /// Stable task identifier.
 pub const ID: &str = "task-218";
 /// Desired permission invariant.
 pub const NAME: &str = "wildcard scope escalation";
-/// Real policy and approval modules in fixed-config headless Neovim.
-pub const KIND: TaskKind = TaskKind::NvimLua;
+/// Drives the phlow-approval policy seam directly.
+pub const KIND: TaskKind = TaskKind::Rust;
 /// Two validation cases followed by two adversarial cases.
 pub const CASES: [&str; 4] = [
     "exact_path_allowed",
@@ -22,61 +24,61 @@ pub const CASES: [&str; 4] = [
     "mixed_endpoints_denied",
 ];
 
-const PROBES: [&str; 4] = [
-    r#"
-return fixture.p.decide(fixture.policy("allow"), fixture.req()).decision == "allow"
-"#,
-    r#"
-local r = fixture.req()
-r.paths = { "/work/b" }
-return fixture.p.decide(fixture.policy("allow"), r).decision == "deny"
-"#,
-    r#"
-local r = fixture.req()
-r.paths = { "/work/a", "/work/b" }
-return fixture.p.decide(fixture.policy("allow"), r).decision == "deny"
-"#,
-    r#"
-local r = fixture.req()
-r.endpoints = { "https://allowed.invalid", "https://other.invalid" }
-local grant = fixture.rule("allow")
-grant.endpoints = { "https://allowed.invalid" }
-return fixture.p.decide(fixture.p.new({ rules = { grant } }), r).decision == "deny"
-"#,
-];
+/// Run the four cases; retain all case outcomes, including failures.
+pub fn run(_ctx: &Ctx) -> TaskOutcome {
+    run_cases(ID, &CASES, case)
+}
 
-/// Run four bounded real-seam probes; retain all case outcomes, including failures.
-pub fn run(ctx: &Ctx) -> TaskOutcome {
-    run_probes(ctx, ID, &CASES, &PROBES)
+fn case(index: usize) -> Result<bool, String> {
+    let allow = policy("allow")?;
+    match index {
+        0 => Ok(verdict_for(Some(&allow), &req_json())? == Verdict::Allow),
+        1 => {
+            let request = req_with(json!({ "paths": ["/work/b"] }))?;
+            Ok(verdict_for(Some(&allow), &request)? == Verdict::Deny)
+        }
+        2 => {
+            let request = req_with(json!({ "paths": ["/work/a", "/work/b"] }))?;
+            Ok(verdict_for(Some(&allow), &request)? == Verdict::Deny)
+        }
+        3 => {
+            let mut grant = rule("allow");
+            grant["endpoints"] = json!(["https://allowed.invalid"]);
+            let granted = policy_of(json!([grant]))?;
+            let only = req_with(json!({ "endpoints": ["https://allowed.invalid"] }))?;
+            let mixed = req_with(json!({
+                "endpoints": ["https://allowed.invalid", "https://other.invalid"],
+            }))?;
+            Ok(verdict_for(Some(&granted), &only)? == Verdict::Allow
+                && verdict_for(Some(&granted), &mixed)? == Verdict::Deny)
+        }
+        _ => Err("case index outside fixed array".to_owned()),
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CASES, PROBES};
-    use crate::tasks::task_209::probe;
-    use std::path::Path;
-
     #[test]
     fn exact_path_allowed() {
-        let result = probe(Path::new("nvim"), PROBES[0]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[0]);
+        let result = super::case(0);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn unmatched_path_denied() {
-        let result = probe(Path::new("nvim"), PROBES[1]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[1]);
+        let result = super::case(1);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn mixed_paths_denied() {
-        let result = probe(Path::new("nvim"), PROBES[2]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[2]);
+        let result = super::case(2);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn mixed_endpoints_denied() {
-        let result = probe(Path::new("nvim"), PROBES[3]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[3]);
+        let result = super::case(3);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 }

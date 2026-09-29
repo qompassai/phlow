@@ -1,63 +1,68 @@
 # Blocked gauntlet tasks
 
+Rust-kind, blocked on an operator trust decision (zero fix attempts):
+
+- (task-242, check-child AF_INET/AF_INET6 socket() is not denied: ipv4_raw_socket_denied, ipv6_raw_socket_denied. The EPERM requirement needs a seccomp filter on the spawning thread, which children inherit. phlow-checks is `forbid(unsafe_code)`; rustix's seccomp surface could not be verified from this sandbox, and no seccomp crate (seccompiler/libseccomp) is in Cargo.lock. Unblock by approving either a reviewed seccomp dependency or a scoped unsafe boundary. Landlock and network namespaces do not make socket() itself fail.)
+
+## Rescope round (2026-09-29): 31 tasks unblocked
+
+Per Matt's decision the Diver-probing NvimLua tasks were rescoped to phlow: each file is now
+`TaskKind::Rust` and drives the new `crates/phlow-approval` crate directly (no Neovim, Diver
+untouched). IDs, names and case names are unchanged. Every task passed on the first attempt,
+measured with `cargo test -p phlow-gauntlet --lib` (124/124 cases for these 31 tasks).
+
+- (task-209, denials retain tool and exact paths: `decide` returns `Decision { verdict, reason, scope }`)
+- (task-210, extra `permissions`/`tools` rejected: closed request schema in `Request::from_json`)
+- (task-211, forged and consumed IDs refused: queue-bound IDs, `WrongState` on replay, queue not `Clone`)
+- (task-212, anonymous and agent approval refused: explicit operator allowlist on `ApprovalQueue::new`)
+- (task-213, pending/approved scope cannot expand: queue owns admitted scope; widening needs a new request)
+- (task-214, unknown top-level and rule fields rejected by name: `Error::UnknownField`)
+- (task-215, `legacy`/`permissive` flags and malformed scopes rejected: no parser modes exist)
+- (task-216, `version` required, 1 retained, others rejected: `POLICY_VERSION`, `Error::UnsupportedVersion`)
+- (task-217, allow/deny conflict denies in either order: most restrictive matching rule wins)
+- (task-218, mixed paths/endpoints denied: allow rules must cover every requested resource)
+- (task-219, readers cannot edit history or attribution: `get` returns owned snapshots; no re-decide)
+- (task-220, expired requests refused even unswept: `decide` checks the deadline and marks `Expired`)
+- (task-221, denial builds an exact narrowed proposal: `Decision::proposal`)
+- (task-222, approvals revocable, revocation visible: `ApprovalQueue::revoke`, attribution kept)
+- (task-223, `false`/map rules and invalid defaults fail closed: parse error, `decide(None, ..)` denies)
+- (task-224, union of separately approved scopes denied: no rule combining)
+- (task-225, permission_delta exposed on records: `PermissionDelta::between` at admission)
+- (task-226, true set-difference delta: `BTreeSet` difference, not cardinality)
+- (task-227, byte-deterministic delta: sorted lists, canonical `PermissionDelta::to_json`)
+- (task-228, delta independent of model claims: summary inert; claimed `permission_delta` rejected at admission)
+- (task-229, before/after snapshots retained and isolated: owned `PermissionSet`s on the record)
+- (task-230, permission sets bounded and validated: `PERMISSIONS_MAX` = 4096; non-string/sparse rejected)
+- (task-231, permission identity byte-exact: case and scope changes are revoke + grant)
+- (task-232, pending/get surfaces agree on the computed delta: `ApprovalQueue::pending`)
+- (task-239, policy state isolated from input and agents: parsed copy, no mutating API, `compile_fail` doctest)
+- (task-240, read handles cannot approve: `&mut` transitions, snapshot edits inert, forged fields rejected)
+- (task-241, missing and model actors refused: allowlist plus `RESERVED_ACTORS` at queue construction)
+- (task-246, decisions carry actor and monotonic timestamp; scope not rewritable: `decided_by`/`decided_at`)
+- (task-247, denials carry tool, risk and scope: same `Decision` record as task-209)
+- (task-248, events append-only and owned: `EventSink` stores and returns copies)
+- (task-249, envelopes reject empty spawn identity and pre/at-epoch time: `make_envelope`)
+
+## History: Diver-probe root cause (2026-09-28, resolved by the rescope above)
+
 Common root cause for task-209 .. task-225: every probe spawns `nvim` with
 `NVIM_APPNAME=diver-fixed` and calls Diver's `ai.harness.policy`,
 `ai.harness.approval` (and `ai.harness.events` for task-225). Those modules
 live only in `~/.config/diver-fixed/lua/ai/harness/` (upstream:
 `qompassai/diver/lua/ai/harness/`). No phlow source reaches these probes, and
 the brief forbids editing `~/.config/diver-fixed`. Zero fix attempts were
-made: every possible fix is in a forbidden directory. Unblock by implementing
-the listed invariants in the Diver repo, then refreshing diver-fixed.
+made: every possible fix is in a forbidden directory.
 
-Failing cases measured with `cargo test -p phlow-gauntlet --lib` (the task
-files' own `#[cfg(test)]` probes, real headless Neovim), 2026-09-28.
-Case names are measured; the one-line reasons are paraphrased from the case
-names and each file's "Honest scope" doc, not traced through the Lua source.
+The task-226 .. task-249 NvimLua batch (appended 2026-09-28) had the same root
+cause via the shared `task_225::probe` prelude: 41 failing cases, every one
+`Ok(false)`, and 15 positive controls passed.
 
-- (task-209, policy.decide omits `tool` and `paths` from deny decisions: denial_retains_tool, denial_retains_exact_paths)
-- (task-210, policy accepts extra tools/permissions beyond the single approved scope: extra_tools_rejected, extra_permissions_rejected)
-- (task-211, approval accepts forged and copied consumed tokens: forged_id_rejected, copied_consumed_token_rejected)
-- (task-212, approval accepts anonymous and agent self-approval: anonymous_approval_rejected, agent_self_approval_rejected)
-- (task-213, approved and pending scope can be expanded after request: approved_scope_cannot_expand, pending_scope_cannot_expand)
-- (task-214, policy.new accepts unknown top-level and rule fields: unknown_top_level_rejected, unknown_rule_field_rejected)
-- (task-215, policy.new accepts legacy bypass flag and malformed permissive scope: legacy_bypass_flag_rejected, permissive_malformed_scope_rejected)
-- (task-216, no policy version field contract: missing_version_rejected, version_one_retained, future_version_rejected)
-- (task-217, allow rule before deny rule allows instead of denying: allow_then_deny_denies)
-- (task-218, request mixing matched and unmatched paths/endpoints is allowed: mixed_paths_denied, mixed_endpoints_denied)
-- (task-219, readers can mutate decision history/attribution: reader_cannot_edit_history, reader_cannot_delete_attribution)
-- (task-220, expired request can be approved before a sweep: unswept_expired_cannot_approve)
-- (task-221, denial record lacks proposal/scope round-trip: denial_is_sufficient_for_proposal, denial_round_trip_preserves_only_scope)
-- (task-222, no revocation of approved requests: approved_can_be_revoked, revocation_visible_on_next_read)
-- (task-223, map-shaped or `false` rules do not fail closed: map_rules_fail_closed, false_rules_fail_closed)
-- (task-224, union of separately approved scopes is allowed: union_of_scopes_denied, union_with_unapproved_scope_denied)
-- (task-225, approval queue drops permissions_before/after; no permission_delta: all four cases)
+## task-242 round 2 (2026-09-29): resolved, not blocked
 
-## task-226 .. task-250 batch (appended 2026-09-28)
-
-Same root cause for every NvimLua-kind task below: the probes (shared
-`task_225::probe` prelude) require Diver's `ai.harness.approval`,
-`ai.harness.policy` and `ai.harness.events` from `~/.config/diver-fixed`, a
-forbidden directory. Zero fix attempts were made. Measured with
-`cargo test -p phlow-gauntlet --lib`, real headless Neovim: 41 failing cases,
-every one `Ok(false)` (the probe ran and the invariant did not hold; no
-fixture/driver errors), and 15 positive controls passed. Reasons are
-paraphrased from the case names and "Honest scope" docs, not traced through Lua.
-
-- (task-226, approval records no set-difference permission_delta: add_only, remove_only, rename_remove_add, equal_size_disjoint)
-- (task-227, permission_delta not byte-deterministic/sorted set: identical_inputs_identical_bytes, sorted_additions, permutation_invariant, duplicates_are_set_members)
-- (task-228, delta not computed independently of model-supplied summary/delta: summary_absent, summary_descriptive, lying_summary_ignored, forged_delta_ignored)
-- (task-229, before/after permission snapshots not retained or isolated from aliasing: input_retained, two_independent_requests, caller_mutation_isolated, reader_mutation_isolated)
-- (task-230, permission sets not validated or bounded: single_permission, large_valid_set, non_string_member_rejected, sparse_set_rejected)
-- (task-231, permission identity not preserved exactly: exact_scope_unchanged, independent_scopes, case_change_is_change, scope_widening_visible)
-- (task-232, pending/get surfaces lack a faithful delta: pending_exposes_delta, get_and_pending_agree, summary_cannot_hide_revoke, empty_claim_cannot_hide_rename)
-- (task-239, policy state can be widened by aliases/direct writes: input_alias_cannot_grant, agent_write_refused)
-- (task-240, a read handle can approve: read_handle_cannot_approve)
-- (task-241, approval accepts a missing or model actor: missing_actor_refused, model_actor_refused)
-- (task-246, approval record lacks decision timestamp; scope rewritable: decision_has_timestamp, scope_cannot_be_rewritten)
-- (task-247, denial record lacks tool and scope: denial_has_tool, denial_has_scope)
-- (task-248, events append/read aliases can rewrite or erase history: append_input_cannot_rewrite, reader_cannot_erase_scope)
-- (task-249, make_envelope accepts empty spawn identity and invalid time: empty_spawn_rejected, invalid_time_rejected)
-
-Rust-kind, blocked on an operator trust decision (zero fix attempts):
-
-- (task-242, check-child AF_INET/AF_INET6 socket() is not denied: ipv4_raw_socket_denied, ipv6_raw_socket_denied. The EPERM requirement needs a seccomp filter on the spawning thread, which children inherit. phlow-checks is `forbid(unsafe_code)`; rustix's seccomp surface could not be verified from this sandbox, and no seccomp crate (seccompiler/libseccomp) is in Cargo.lock. Unblock by approving either a reviewed seccomp dependency or a scoped unsafe boundary. Landlock and network namespaces do not make socket() itself fail.)
+Matt approved the seccompiler dependency and a scoped unsafe boundary. New crate
+`crates/phlow-seccomp` (seccompiler =0.5.0, Apache-2.0 OR BSD-3-Clause, rust-vmm)
+installs a pre_exec filter in every check child spawned by `phlow-checks`:
+socket(AF_INET/AF_INET6) and io_uring_setup (plus x86_64 x32 aliases) -> EPERM.
+`phlow-checks` stays `forbid(unsafe_code)`. First attempt: 4/4 cases pass
+(`cargo test -p phlow-gauntlet --lib task_242`). The task-242 entry at the top of
+this file is stale and can be removed by its owner.

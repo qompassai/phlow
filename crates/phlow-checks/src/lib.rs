@@ -6,6 +6,9 @@
 //! on timeout the whole process group is killed and reaped, so no orphan
 //! keeps running after the report. Each program is pinned by canonical
 //! path and SHA-256 at admission ([`pin`]) and re-verified before spawn.
+//! On Unix each run gets a private 0700 scratch directory as its `TMPDIR`
+//! (`scratch`); on Linux the child also runs under `phlow-seccomp`'s egress
+//! filter (no AF_INET/AF_INET6 sockets, no io_uring, no privilege gain).
 //!
 //! The legacy `shell_exec` and `lsp_check` tools are fail-closed here:
 //! [`disabled`] preserves their exact denial behavior as typed values,
@@ -16,6 +19,8 @@
 pub mod disabled;
 pub mod pin;
 pub mod runner;
+#[cfg(unix)]
+mod scratch;
 
 pub use disabled::{DisabledError, DisabledTool, LSP_CHECK_DENIAL, SHELL_DENIAL};
 pub use phlow_config::CheckKind;

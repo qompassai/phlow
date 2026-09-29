@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use phlow_agent::{
     ConversationContext, DEFAULT_MAX_MESSAGES, MemoryError, MemoryStore, Orchestrator,
+    RESPONSE_CHARS_MAX,
 };
 use phlow_llm::transport::LlmTransport;
 use phlow_runtime::Runtime;
@@ -92,7 +93,13 @@ impl ScratchDb {
 
 impl Drop for ScratchDb {
     fn drop(&mut self) {
+        // WAL mode leaves `-wal`/`-shm` sidecars next to the database.
         let _ = std::fs::remove_file(&self.path);
+        for suffix in ["-wal", "-shm"] {
+            let mut sidecar = self.path.clone().into_os_string();
+            sidecar.push(suffix);
+            let _ = std::fs::remove_file(sidecar);
+        }
     }
 }
 
@@ -288,6 +295,217 @@ fn memory_schema_matches_python() {
     assert!(
         names.contains(&"memories_ai".to_owned()),
         "tables: {names:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Memory store: concurrency and crash safety
+// ---------------------------------------------------------------------------
+
+/// Crash-test writer's database path; set only in the spawned child.
+const CRASH_DB_ENV: &str = "PHLOW_AGENT_CRASH_DB";
+/// Rows the crash-test writer attempts before exiting on its own.
+const CRASH_WRITER_ROWS_MAX: u32 = 20_000;
+/// Rows the parent waits to see committed before killing the writer.
+const CRASH_ROWS_BEFORE_KILL: i64 = 50;
+/// Kill/recover cycles against one database file.
+const CRASH_CYCLES: u32 = 5;
+
+/// The response a crash-test row must carry: any other value is torn.
+fn crash_response(query: &str) -> String {
+    format!("crashbody {}", query.repeat(64))
+}
+
+#[test]
+fn memory_open_enables_wal() {
+    let db = ScratchDb::new("wal");
+    drop(db.open());
+    // journal_mode=WAL persists in the file header, so a fresh
+    // connection observes it.
+    let connection = rusqlite::Connection::open(&db.path).expect("reopen works");
+    let mode: String = connection
+        .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+        .expect("journal mode reads");
+    assert_eq!(mode, "wal");
+}
+
+#[test]
+fn memory_open_twice_is_idempotent() {
+    let db = ScratchDb::new("idempotent");
+    let first = db.open();
+    first
+        .store("kept query", "kept answer", &[])
+        .expect("store works");
+    // A second live handle re-runs the schema DDL while the first is open.
+    let second = db.open();
+    second
+        .store("second query", "second answer", &[])
+        .expect("store works");
+    drop(first);
+    drop(second);
+    let reopened = db.open();
+    assert_eq!(reopened.recent(10).expect("recent works").len(), 2);
+    assert_eq!(reopened.search("kept", 5).len(), 1);
+}
+
+#[test]
+fn memory_wal_rejects_in_memory_database() {
+    // Adversarial: SQLite's in-memory database cannot do WAL; open must
+    // refuse rather than silently run without concurrency safety.
+    let result = MemoryStore::open(std::path::Path::new(":memory:"));
+    assert!(
+        matches!(result, Err(MemoryError::WalUnavailable { .. })),
+        "unexpected: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn memory_concurrent_readers_and_writer_never_busy() {
+    // Adversarial: one writer plus four readers on separate connections.
+    // Every call must succeed; an escaped SQLITE_BUSY fails the test.
+    // Near-maximal responses keep each commit (and its lock) long enough
+    // that a rollback journal without a busy timeout reliably collides.
+    const WRITES: u32 = 300;
+    const READERS: usize = 4;
+    const READS_PER_READER: u32 = 300;
+    let db = ScratchDb::new("concurrent");
+    drop(db.open());
+    let path = db.path.clone();
+    let response = "answer ".repeat(RESPONSE_CHARS_MAX / 8);
+    std::thread::scope(|scope| {
+        let writer = scope.spawn(|| {
+            let store = MemoryStore::open(&path).expect("writer opens");
+            for index in 0..WRITES {
+                store
+                    .store(&format!("sharedword {index}"), &response, &[])
+                    .expect("write never sees SQLITE_BUSY");
+            }
+        });
+        let readers: Vec<_> = (0..READERS)
+            .map(|_| {
+                scope.spawn(|| {
+                    let store = MemoryStore::open(&path).expect("reader opens");
+                    for _ in 0..READS_PER_READER {
+                        store.recent(20).expect("read never sees SQLITE_BUSY");
+                    }
+                })
+            })
+            .collect();
+        writer.join().expect("writer thread finishes");
+        for reader in readers {
+            reader.join().expect("reader thread finishes");
+        }
+    });
+    let store = db.open();
+    assert_eq!(
+        store.recent(1_000).expect("recent works").len(),
+        WRITES as usize
+    );
+    assert_eq!(store.search("sharedword", 100).len(), 100);
+}
+
+/// Child half of the crash test: writes rows until killed. Runs only when
+/// spawned by [`memory_survives_kill_9_mid_insert`] (env var set).
+#[test]
+#[ignore = "helper process for memory_survives_kill_9_mid_insert"]
+fn memory_crash_writer_child() {
+    let Some(path) = std::env::var_os(CRASH_DB_ENV) else {
+        return;
+    };
+    let store = MemoryStore::open(std::path::Path::new(&path)).expect("child opens");
+    // PID-qualified: rows stay unique across kill/recover cycles.
+    let pid = std::process::id();
+    for index in 0..CRASH_WRITER_ROWS_MAX {
+        let query = format!("crashrow{pid}x{index}");
+        store
+            .store(&query, &crash_response(&query), &["crash"])
+            .expect("child store works");
+    }
+}
+
+/// Count committed rows through a fresh connection.
+fn committed_rows(path: &std::path::Path) -> i64 {
+    let Ok(connection) = rusqlite::Connection::open(path) else {
+        return 0;
+    };
+    let _ = connection.busy_timeout(std::time::Duration::from_secs(5));
+    connection
+        .query_row("SELECT count(*) FROM memories", [], |row| row.get(0))
+        .unwrap_or(0)
+}
+
+/// Spawn the writer child, wait for committed rows, then SIGKILL it.
+fn crash_writer_once(path: &std::path::Path) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let baseline = committed_rows(path);
+    let mut child = std::process::Command::new(std::env::current_exe().expect("test exe"))
+        .args([
+            "--exact",
+            "memory_crash_writer_child",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env(CRASH_DB_ENV, path)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("child spawns");
+    while committed_rows(path) < baseline + CRASH_ROWS_BEFORE_KILL {
+        assert!(std::time::Instant::now() < deadline, "writer child stalled");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    // `Child::kill` is SIGKILL on Unix: no destructors, no clean close.
+    child.kill().expect("SIGKILL delivered");
+    let status = child.wait().expect("child reaped");
+    // A clean exit means the writer finished first: no crash was tested.
+    assert_eq!(
+        std::os::unix::process::ExitStatusExt::signal(&status),
+        Some(9),
+        "writer was not killed mid-run: {status}"
+    );
+}
+
+#[test]
+fn memory_survives_kill_9_mid_insert() {
+    let db = ScratchDb::new("crash");
+    drop(db.open());
+    for _ in 0..CRASH_CYCLES {
+        crash_writer_once(&db.path);
+    }
+    let connection = rusqlite::Connection::open(&db.path).expect("reopen works");
+    let integrity: String = connection
+        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+        .expect("integrity check runs");
+    assert_eq!(integrity, "ok");
+    // FTS5 external-content check: index agrees with `memories` exactly.
+    connection
+        .execute(
+            "INSERT INTO memories_fts(memories_fts) VALUES('integrity-check')",
+            [],
+        )
+        .expect("fts index matches content");
+    drop(connection);
+    let store = db.open();
+    let entries = store.recent(1_000).expect("recent works");
+    assert!(
+        entries.len() >= (CRASH_ROWS_BEFORE_KILL as usize),
+        "rows: {}",
+        entries.len()
+    );
+    for entry in &entries {
+        assert_eq!(
+            entry.response,
+            crash_response(&entry.query),
+            "torn row surfaced"
+        );
+    }
+    // Every surviving row is findable: no row committed without its index.
+    let newest = &entries[0].query;
+    assert_eq!(
+        store.search(newest, 5).len(),
+        1,
+        "newest row missing from FTS"
     );
 }
 

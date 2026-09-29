@@ -1,17 +1,25 @@
 //! task-230: bounded permission delta.
 //!
-//! Honest scope: The queue admission seam must support 4096 unique permissions within one second
-//! and reject malformed sets. Outer Neovim execution has a 15-second deadline.
-//! Fixtures use installed diver-fixed modules without changing either Neovim config.
+//! Honest scope: Rescoped from Diver Lua to phlow-approval. Admission must accept 4096 unique
+//! permissions (`PERMISSIONS_MAX`) and compute their delta within one second, and must reject
+//! malformed sets: non-string members, and sparse tables (a JSON object standing in for an array,
+//! or an array with `null` holes).
 
+use std::time::{Duration, Instant};
+
+use phlow_approval::{PERMISSIONS_MAX, Request};
+use serde_json::{Value, json};
+
+use super::task_209::{req_with, run_cases};
+use super::task_225::{delta_of, is_delta};
 use crate::{Ctx, TaskKind, TaskOutcome};
 
 /// Stable task identifier.
 pub const ID: &str = "task-230";
 /// Desired invariant.
 pub const NAME: &str = "bounded permission delta";
-/// Runs the actual fixed-config Neovim modules.
-pub const KIND: TaskKind = TaskKind::NvimLua;
+/// Drives the phlow-approval admission seam and queue directly.
+pub const KIND: TaskKind = TaskKind::Rust;
 /// Two validation cases, then two adversarial cases.
 pub const CASES: [&str; 4] = [
     "single_permission",
@@ -20,83 +28,64 @@ pub const CASES: [&str; 4] = [
     "sparse_set_rejected",
 ];
 
-const PROBES: [&str; 4] = [
-    r#"
-local request = req()
-request.permissions_before = {}
-request.permissions_after = { "x" }
+/// Run the four cases; retain all case outcomes, including failures.
+pub fn run(_ctx: &Ctx) -> TaskOutcome {
+    run_cases(ID, &CASES, case)
+}
 
-local queue = a.new()
-local id, err = a.request(queue, "delta-run", request)
-assert(id, err)
-local record = a.get(queue, id)
-return vim.deep_equal(record.permission_delta, { added = { "x" }, removed = {} })
-"#,
-    r#"
-local request = req()
-request.permissions_before = {}
-request.permissions_after = {}
-local PERMISSIONS_MAX = 4096
-for index = 1, PERMISSIONS_MAX do
-	request.permissions_after[index] = string.format("permission-%04d", index)
-end
-local q = a.new()
-local started = vim.uv.hrtime()
-local id, err = a.request(q, "run", request)
-assert(id, err)
-local d = a.get(q, id).permission_delta
-return type(d) == "table"
-	and #d.added == PERMISSIONS_MAX
-	and #d.removed == 0
-	and vim.deep_equal(d.added, request.permissions_after)
-	and vim.uv.hrtime() - started < 1000000000
-"#,
-    r#"
-local r = req()
-r.permissions_before = {}
-r.permissions_after = { false }
-local id, err = a.request(a.new(), "run", r)
-return id == nil and type(err) == "string"
-"#,
-    r#"
-local r = req()
-r.permissions_before = {}
-r.permissions_after = { [2] = "root" }
-local id, err = a.request(a.new(), "run", r)
-return id == nil and type(err) == "string"
-"#,
-];
+fn case(index: usize) -> Result<bool, String> {
+    match index {
+        0 => Ok(is_delta(&delta_of(json!([]), json!(["x"]))?, &["x"], &[])),
+        1 => large_valid_set(),
+        2 => rejected(json!([false])),
+        3 => Ok(rejected(json!({ "2": "root" }))? && rejected(json!([null, "root"]))?),
+        _ => Err("case index outside fixed array".to_owned()),
+    }
+}
 
-/// Run all four cases with bounded subprocess execution and per-case evidence.
-pub fn run(ctx: &Ctx) -> TaskOutcome {
-    super::task_225::run_probes(ctx, ID, &CASES, &PROBES)
+fn large_valid_set() -> Result<bool, String> {
+    const DEADLINE: Duration = Duration::from_secs(1);
+    let after: Vec<String> = (1..=PERMISSIONS_MAX)
+        .map(|i| format!("permission-{i:04}"))
+        .collect();
+    let started = Instant::now();
+    let delta = delta_of(json!([]), json!(after))?;
+    let elapsed = started.elapsed();
+    Ok(PERMISSIONS_MAX == 4096
+        && delta.added == after
+        && delta.removed.is_empty()
+        && elapsed < DEADLINE)
+}
+
+fn rejected(permissions_after: Value) -> Result<bool, String> {
+    let input =
+        req_with(json!({ "permissions_before": [], "permissions_after": permissions_after }))?;
+    Ok(Request::from_json(&input).is_err_and(|error| !error.to_string().is_empty()))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CASES, PROBES};
-
     #[test]
     fn single_permission() {
-        let result = super::super::task_225::probe(std::path::Path::new("nvim"), PROBES[0]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[0]);
+        let result = super::case(0);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn large_valid_set() {
-        let result = super::super::task_225::probe(std::path::Path::new("nvim"), PROBES[1]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[1]);
+        let result = super::case(1);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn non_string_member_rejected() {
-        let result = super::super::task_225::probe(std::path::Path::new("nvim"), PROBES[2]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[2]);
+        let result = super::case(2);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn sparse_set_rejected() {
-        let result = super::super::task_225::probe(std::path::Path::new("nvim"), PROBES[3]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[3]);
+        let result = super::case(3);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 }

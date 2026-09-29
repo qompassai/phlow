@@ -3,7 +3,9 @@
 //! [`CheckRunner`] executes one operator-approved check at a time. The
 //! child always starts in its own process group (`process_group(0)`, a safe
 //! std wrapper — no `unsafe` in this crate), with the workspace as its cwd,
-//! stdin closed, and stdout/stderr captured through bounded tail buffers.
+//! a private per-run scratch directory as its `TMPDIR` (Unix), the
+//! `phlow-seccomp` egress filter installed (Linux), stdin closed, and
+//! stdout/stderr captured through bounded tail buffers.
 //! On timeout the whole process group is killed and reaped, so a check can
 //! never outlive its report as an orphan.
 //!
@@ -477,7 +479,21 @@ fn execute(root: &Path, executable: &Path, argv: &[String], timeout_ms: u64) -> 
     if argv.iter().any(|arg| arg.contains('\0')) {
         return ExecutionOutcome::failed(CheckStatus::Error, "check argv contains NUL");
     }
-    let mut child = match spawn_pinned(root, executable, program, args) {
+    // Held until the child is reaped at the end of this function; dropping
+    // it removes the directory. No scratch directory, no run.
+    #[cfg(unix)]
+    let scratch = match crate::scratch::Scratch::create() {
+        Ok(scratch) => scratch,
+        Err(err) => {
+            let error = format!("check scratch directory unavailable: {err}");
+            return ExecutionOutcome::failed(CheckStatus::Error, error);
+        }
+    };
+    #[cfg(unix)]
+    let tmpdir = Some(scratch.path());
+    #[cfg(not(unix))]
+    let tmpdir = None;
+    let mut child = match spawn_pinned(root, executable, program, args, tmpdir) {
         Ok(child) => child,
         Err(outcome) => return outcome,
     };
@@ -540,15 +556,27 @@ fn classify_wait(wait: WaitOutcome, timeout_ms: u64) -> (CheckStatus, Option<i32
 /// kill takes the whole tree, never our group. The admitted canonical
 /// `executable` is spawned (no second PATH lookup); `program` stays argv[0]
 /// so multi-call binaries still see the name the operator configured.
+/// `tmpdir`, when given, becomes the child's `TMPDIR`. On Linux the child
+/// runs under the `phlow-seccomp` egress filter; if the filter cannot be
+/// built or installed the spawn fails, never runs unfiltered.
 fn spawn_pinned(
     root: &Path,
     executable: &Path,
     program: &str,
     args: &[String],
+    tmpdir: Option<&Path>,
 ) -> Result<Child, ExecutionOutcome> {
     let mut command = std::process::Command::new(executable);
     command.args(args);
     command.current_dir(root);
+    if let Some(tmpdir) = tmpdir {
+        command.env("TMPDIR", tmpdir);
+    }
+    #[cfg(target_os = "linux")]
+    if let Err(err) = phlow_seccomp::apply_egress_filter(&mut command) {
+        let error = format!("check egress filter unavailable: {err}");
+        return Err(ExecutionOutcome::failed(CheckStatus::Error, error));
+    }
     command.stdin(Stdio::null());
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
@@ -868,6 +896,75 @@ mod tests {
         let report = runner.run("pwd");
         assert_eq!(report.status, CheckStatus::Ok);
         assert!(report.stdout.trim_end() == dir.to_string_lossy());
+        cleanup(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn check_tmpdir_is_a_fresh_private_scratch_dir() {
+        let dir = temp_dir("scratch");
+        write_tool(
+            &dir,
+            "#!/bin/sh\nprintf '%s\\n' \"$TMPDIR\"\nstat -c %a \"$TMPDIR\"\npwd\n",
+        );
+        let (workspace, checks) = fixture_in(&dir, "[checks.t]\ncmd = [\"./tool\"]\n", true);
+        let report = CheckRunner::new(&workspace, checks).run("t");
+        assert_eq!(report.status, CheckStatus::Ok, "{report:?}");
+        let lines: Vec<&str> = report.stdout.lines().collect();
+        assert_eq!(lines.len(), 3, "{lines:?}");
+        let expected_base = crate::scratch::scratch_base(
+            std::env::var_os("XDG_RUNTIME_DIR"),
+            std::env::var_os("TMPDIR"),
+            rustix::process::getuid().as_raw(),
+        );
+        let scratch = Path::new(lines[0]);
+        assert_eq!(scratch.parent(), Some(expected_base.as_path()));
+        assert_eq!(lines[1], "700");
+        // cwd is still the workspace; only TMPDIR moves.
+        assert_eq!(lines[2], dir.to_string_lossy());
+        assert!(
+            !scratch.exists(),
+            "scratch dir must be removed after the run"
+        );
+        cleanup(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scratch_cleanup_does_not_follow_planted_symlinks() {
+        let dir = temp_dir("escape");
+        let outside = temp_dir("outside");
+        std::fs::write(outside.join("keep"), "x").expect("test setup: write keep");
+        let body = format!(
+            "#!/bin/sh\nln -s '{}' \"$TMPDIR/escape\"\n",
+            outside.display()
+        );
+        write_tool(&dir, &body);
+        let (workspace, checks) = fixture_in(&dir, "[checks.t]\ncmd = [\"./tool\"]\n", true);
+        let report = CheckRunner::new(&workspace, checks).run("t");
+        assert_eq!(report.status, CheckStatus::Ok, "{report:?}");
+        assert!(outside.join("keep").exists());
+        cleanup(&dir);
+        cleanup(&outside);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn check_child_is_denied_inet_sockets_and_privilege() {
+        let dir = temp_dir("egress");
+        write_tool(
+            &dir,
+            "#!/bin/sh\ngrep NoNewPrivs /proc/self/status\nexec /usr/bin/python3 -c '\n\
+             import errno, socket, sys\n\
+             socket.socket(socket.AF_UNIX).close()\n\
+             try:\n socket.socket(socket.AF_INET6)\n\
+             except OSError as e:\n sys.exit(0 if e.errno == errno.EPERM else 73)\n\
+             sys.exit(42)'\n",
+        );
+        let (workspace, checks) = fixture_in(&dir, "[checks.t]\ncmd = [\"./tool\"]\n", true);
+        let report = CheckRunner::new(&workspace, checks).run("t");
+        assert_eq!(report.status, CheckStatus::Ok, "{report:?}");
+        assert_eq!(report.stdout.trim_end(), "NoNewPrivs:\t1");
         cleanup(&dir);
     }
 

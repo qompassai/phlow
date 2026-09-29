@@ -55,6 +55,10 @@ phlow-inference = { path = "../phlow-inference" }
 # (validate_arguments on the tool schema). Path dependency, same
 # workspace.
 phlow-mcp = { path = "../phlow-mcp" }
+# phlow-approval: the real policy/approval/delta/event subsystem under test
+# for the task-209..232 and task-239..249 rescope (formerly Diver Lua
+# probes). Path dependency, same workspace.
+phlow-approval = { path = "../phlow-approval" }
 # rmpv: the scripted msgpack-RPC socket peer in the task-25 driver —
 # the same codec the transport uses. No derive-based validation.
 # reqwest: the real SkillOpt optimizer backend speaks Ollama's

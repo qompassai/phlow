@@ -1,0 +1,19 @@
+[package]
+name = "phlow-approval"
+version = "0.1.0"
+edition = "2024"
+description = "Fail-closed approval and policy subsystem for phlow: versioned policy parsing, scope decisions, human-bound approval queue, permission deltas, and an append-only event ledger. In-memory only; no persistence."
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "phlow_approval"
+path = "src/lib.rs"
+
+[dependencies]
+# phlow-json: the checked narrowing layer over serde_json::Value. Policies
+# and requests are untrusted JSON; field/type narrowing is reused, not
+# re-implemented. Path dependency, same workspace.
+phlow-json = { path = "../phlow-json" }
+# serde_json: the JSON value model at the admission boundary and the
+# canonical delta encoding. No derive-based validation.
+serde_json = "1"

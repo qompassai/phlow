@@ -30,6 +30,8 @@ pub const RECENT_MAX: u32 = 1_000;
 pub const HIT_QUERY_CHARS: usize = 100;
 /// Chars of the response shown in a search hit (Python `r[1][:200]`).
 pub const HIT_RESPONSE_CHARS: usize = 200;
+/// How long a connection waits on a competing lock before `SQLITE_BUSY`.
+pub const BUSY_TIMEOUT: Duration = Duration::from_millis(5_000);
 
 /// Failures from the memory store. Expected storage/validation failures
 /// are typed; `search` swallows its errors into an empty list instead.
@@ -51,6 +53,12 @@ pub enum MemoryError {
     },
     /// The database path has no usable parent or file name.
     BadPath(PathBuf),
+    /// SQLite refused write-ahead logging (e.g. an in-memory database or a
+    /// filesystem without shared memory); concurrent access is unsafe.
+    WalUnavailable {
+        /// The journal mode SQLite reported instead of `wal`.
+        journal_mode: String,
+    },
 }
 
 impl std::fmt::Display for MemoryError {
@@ -65,6 +73,12 @@ impl std::fmt::Display for MemoryError {
             }
             Self::BadPath(path) => {
                 write!(f, "unusable memory database path: {}", path.display())
+            }
+            Self::WalUnavailable { journal_mode } => {
+                write!(
+                    f,
+                    "memory database refused WAL (journal mode {journal_mode})"
+                )
             }
         }
     }
@@ -114,6 +128,7 @@ impl MemoryStore {
             .ok_or_else(|| MemoryError::BadPath(db_path.to_path_buf()))?;
         std::fs::create_dir_all(parent).map_err(|_| MemoryError::BadPath(db_path.to_path_buf()))?;
         let connection = Connection::open(db_path).map_err(MemoryError::Database)?;
+        configure_connection(&connection)?;
         let store = Self {
             db_path: db_path.to_path_buf(),
             connection,
@@ -227,6 +242,22 @@ impl MemoryStore {
         )?;
         Ok(())
     }
+}
+
+/// Per-connection pragmas for one writer plus concurrent readers. The busy
+/// timeout comes first so the WAL switch itself waits out competing locks;
+/// rusqlite 0.37 already defaults it to 5 s, set here so the bound is ours.
+/// WAL + `synchronous=NORMAL` stays crash-consistent (a crash may lose the
+/// last commits, never corrupt the file); only power loss can drop them.
+fn configure_connection(connection: &Connection) -> Result<(), MemoryError> {
+    connection.busy_timeout(BUSY_TIMEOUT)?;
+    let journal_mode: String =
+        connection.query_row("PRAGMA journal_mode=WAL", [], |row| row.get(0))?;
+    if !journal_mode.eq_ignore_ascii_case("wal") {
+        return Err(MemoryError::WalUnavailable { journal_mode });
+    }
+    connection.execute_batch("PRAGMA synchronous=NORMAL;")?;
+    Ok(())
 }
 
 /// Reject a field longer than its char budget.

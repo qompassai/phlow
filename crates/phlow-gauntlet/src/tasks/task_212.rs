@@ -1,19 +1,20 @@
 //! task-212: human bound approval.
 //!
-//! Honest scope: Approval.decide accepts an unauthenticated by string. Agent and absent
-//! identities must be rejected at this closest human-decision seam; human strings here are
-//! controls, not identity proof.
-//! Fixtures use the installed diver-fixed modules, never mocks or live config edits.
+//! Honest scope: Rescoped from Diver Lua to phlow-approval. `ApprovalQueue::decide` accepts only
+//! actors on the queue's explicit operator allowlist; an agent identity or a missing actor is
+//! refused and leaves the record pending. Operator names are configuration, not identity proof.
 
-use super::task_209::run_probes;
+use phlow_approval::{Error, HumanVerdict, State};
+
+use super::task_209::{HUMAN, pending, record, run_cases};
 use crate::{Ctx, TaskKind, TaskOutcome};
 
 /// Stable task identifier.
 pub const ID: &str = "task-212";
 /// Desired permission invariant.
 pub const NAME: &str = "human bound approval";
-/// Real policy and approval modules in fixed-config headless Neovim.
-pub const KIND: TaskKind = TaskKind::NvimLua;
+/// Drives the phlow-approval queue directly.
+pub const KIND: TaskKind = TaskKind::Rust;
 /// Two validation cases followed by two adversarial cases.
 pub const CASES: [&str; 4] = [
     "human_approval_recorded",
@@ -22,61 +23,57 @@ pub const CASES: [&str; 4] = [
     "anonymous_approval_rejected",
 ];
 
-const PROBES: [&str; 4] = [
-    r#"
-local q, id = fixture.pending()
-local ok = fixture.a.decide(q, id, "approved", "human")
-return ok == true and fixture.a.get(q, id).decided_by == "human"
-"#,
-    r#"
-local q, id = fixture.pending()
-local ok = fixture.a.decide(q, id, "denied", "human")
-return ok == true and fixture.a.get(q, id).state == "denied"
-"#,
-    r#"
-local q, id = fixture.pending()
-local ok = fixture.a.decide(q, id, "approved", "agent")
-return not ok and fixture.a.get(q, id).state == "pending"
-"#,
-    r#"
-local q, id = fixture.pending()
-local ok = fixture.a.decide(q, id, "approved")
-return not ok and fixture.a.get(q, id).state == "pending"
-"#,
-];
+/// Run the four cases; retain all case outcomes, including failures.
+pub fn run(_ctx: &Ctx) -> TaskOutcome {
+    run_cases(ID, &CASES, case)
+}
 
-/// Run four bounded real-seam probes; retain all case outcomes, including failures.
-pub fn run(ctx: &Ctx) -> TaskOutcome {
-    run_probes(ctx, ID, &CASES, &PROBES)
+fn case(index: usize) -> Result<bool, String> {
+    let (mut queue, id) = pending()?;
+    match index {
+        0 => {
+            let decided = queue.decide(&id, HumanVerdict::Approve, Some(HUMAN));
+            Ok(decided.is_ok() && record(&queue, &id)?.decided_by.as_deref() == Some(HUMAN))
+        }
+        1 => {
+            let decided = queue.decide(&id, HumanVerdict::Deny, Some(HUMAN));
+            Ok(decided.is_ok() && record(&queue, &id)?.state == State::Denied)
+        }
+        2 => {
+            let refused = queue.decide(&id, HumanVerdict::Approve, Some("agent"));
+            Ok(refused == Err(Error::ActorRefused) && record(&queue, &id)?.state == State::Pending)
+        }
+        3 => {
+            let refused = queue.decide(&id, HumanVerdict::Approve, None);
+            Ok(refused == Err(Error::ActorRefused) && record(&queue, &id)?.state == State::Pending)
+        }
+        _ => Err("case index outside fixed array".to_owned()),
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{CASES, PROBES};
-    use crate::tasks::task_209::probe;
-    use std::path::Path;
-
     #[test]
     fn human_approval_recorded() {
-        let result = probe(Path::new("nvim"), PROBES[0]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[0]);
+        let result = super::case(0);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn human_denial_recorded() {
-        let result = probe(Path::new("nvim"), PROBES[1]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[1]);
+        let result = super::case(1);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn agent_self_approval_rejected() {
-        let result = probe(Path::new("nvim"), PROBES[2]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[2]);
+        let result = super::case(2);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 
     #[test]
     fn anonymous_approval_rejected() {
-        let result = probe(Path::new("nvim"), PROBES[3]);
-        assert!(matches!(result, Ok(true)), "{}: {result:?}", CASES[3]);
+        let result = super::case(3);
+        assert!(matches!(result, Ok(true)), "{result:?}");
     }
 }
