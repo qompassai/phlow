@@ -85,8 +85,27 @@
         # Linker matching the dev environment (clang + lld).
         rustLinkFlags = "-C linker=clang -C link-arg=-fuse-ld=lld";
 
+        # cleanCargoSource strips everything but Cargo inputs, but several
+        # crates vendor assets via include_str!/include_bytes!:
+        #   crates/phlow-codegen/profiles/*.toml (8 codegen profiles)
+        #   crates/phlow-runtime/skills/*.md (vendored system prompt)
+        #   CUDA *.ptx, test fixtures (*.json/*.jsonl), *.desc
+        # Keep those asset types alongside the Cargo sources.
+        crateSrc = pkgs.lib.cleanSourceWith {
+          src = craneLib.path ./.;
+          filter = path: type:
+            (craneLib.filterCargoSources path type)
+            || (type == "regular" && pkgs.lib.any
+              (ext: pkgs.lib.hasSuffix ext (builtins.toString path))
+              [ ".toml" ".md" ".json" ".jsonl" ".ptx" ".desc" ".lua" ]);
+        };
+
         commonArgs = {
-          src = craneLib.cleanCargoSource ./.;
+          src = crateSrc;
+          # The sandbox cannot run the integration tests: no /bin/sh,
+          # no nvim, no diver checkout. Tests run on the host via cargo;
+          # `nix build` compiles only.
+          doCheck = false;
           strictDeps = true;
           nativeBuildInputs = with pkgs; [
             clang
