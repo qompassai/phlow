@@ -42,6 +42,7 @@ pub mod wire;
 
 use std::fmt;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 /// Maximum number of tasks in the gauntlet. The task list is closed: adding
@@ -222,7 +223,10 @@ pub fn bound_evidence(lines: Vec<String>) -> Vec<String> {
 /// Run a headless-Neovim task driver and parse its JSON verdict.
 ///
 /// Spawns `ctx.nvim_bin --headless -l <gauntlet_lua_dir>/<script>` with
-/// `DIVER_LUA_DIR` and `GAUNTLET_WORK_DIR` in the environment. The driver
+/// `DIVER_LUA_DIR` and `GAUNTLET_WORK_DIR` in the environment. `DIVER_LUA_DIR`
+/// is a scratch rtp-root shim built from `ctx.diver_lua_dir` (see
+/// [`diver_rtp_shim`]): the drivers append it to the runtimepath and
+/// `require('ai.harness')`. The driver
 /// must print exactly one JSON verdict line to stdout:
 ///
 /// ```json
@@ -236,6 +240,37 @@ pub fn bound_evidence(lines: Vec<String>) -> Vec<String> {
 /// timeouts, and unparseable output all become `TaskOutcome::Fail`.
 pub fn run_nvim_lua_driver(ctx: &Ctx, script: &str, expected_id: &'static str) -> TaskOutcome {
     run_nvim_lua_driver_with_env(ctx, script, expected_id, &[])
+}
+
+/// Build the diver runtimepath shim for one driver invocation.
+///
+/// The Lua drivers append `DIVER_LUA_DIR` to Neovim's runtimepath and then
+/// `require('ai.harness')`, which needs `<rtp>/lua/ai/...` on the rtp.
+/// `ctx.diver_lua_dir` is diver's *lua* directory, not an rtp root, so it is
+/// bridged here with two symlinks — `lua -> <diver-lua>` and
+/// `ai -> <diver-lua>/ai` — in a process-unique scratch dir under the temp
+/// dir, never inside the driver's work dir (tests assert on work-dir
+/// contents). The real tree is never touched. A test that already built its
+/// own shim and passed it as `diver_lua_dir` simply gets a nested one, which
+/// resolves through both symlink layers to the same files.
+static RTP_SHIM_SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn diver_rtp_shim(ctx: &Ctx) -> Result<PathBuf, String> {
+    let shim = std::env::temp_dir().join(format!(
+        "gauntlet-diver-rtp-{}-{}",
+        std::process::id(),
+        RTP_SHIM_SEQ.fetch_add(1, Ordering::SeqCst)
+    ));
+    std::fs::create_dir_all(&shim)
+        .map_err(|e| format!("cannot create rtp shim {}: {e}", shim.display()))?;
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&ctx.diver_lua_dir, shim.join("lua"))
+            .map_err(|e| format!("cannot symlink rtp lua dir: {e}"))?;
+        std::os::unix::fs::symlink(ctx.diver_lua_dir.join("ai"), shim.join("ai"))
+            .map_err(|e| format!("cannot symlink rtp ai dir: {e}"))?;
+    }
+    Ok(shim)
 }
 
 /// [`run_nvim_lua_driver`] with extra environment variables for the driver
@@ -321,12 +356,24 @@ pub fn run_nvim_lua_driver_with_env(
             evidence: vec![],
         };
     }
+    // Bridge `ctx.diver_lua_dir` (diver's lua dir) to the rtp-root layout the
+    // drivers need; see `diver_rtp_shim`. Fail closed on I/O errors.
+    let diver_rtp = match diver_rtp_shim(ctx) {
+        Ok(shim) => shim,
+        Err(e) => {
+            return TaskOutcome::Fail {
+                where_: "spawn".to_string(),
+                how: e,
+                evidence: vec![],
+            };
+        }
+    };
 
     let mut cmd = Command::new(&ctx.nvim_bin);
     cmd.arg("--headless")
         .arg("-l")
         .arg(&script_path)
-        .env("DIVER_LUA_DIR", &ctx.diver_lua_dir)
+        .env("DIVER_LUA_DIR", &diver_rtp)
         .env("GAUNTLET_WORK_DIR", &work_dir)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -346,7 +393,7 @@ pub fn run_nvim_lua_driver_with_env(
 
     // Bounded wait: poll try_wait, kill on expiry. No blocking wait without
     // a deadline — a wedged driver must not wedge the gauntlet.
-    match wait_for_child(child, ctx.timeout) {
+    let outcome = match wait_for_child(child, ctx.timeout) {
         Err(e) => TaskOutcome::Fail {
             where_: "wait".to_string(),
             how: format!("cannot wait on nvim child: {e}"),
@@ -372,7 +419,10 @@ pub fn run_nvim_lua_driver_with_env(
             status,
             output: Ok(out),
         }) => parse_driver_verdict(&out, expected_id, status.code()),
-    }
+    };
+    // The shim is scratch, never evidence: release it on every path.
+    let _ = std::fs::remove_dir_all(&diver_rtp);
+    outcome
 }
 
 /// Accept only `task_NN.lua` or `task_NNN.lua`: no directories, no

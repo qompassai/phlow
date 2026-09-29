@@ -26,6 +26,11 @@ fn test_ctx(scenario: &str) -> Ctx {
     let diver_lua = std::env::var("GAUNTLET_DIVER_LUA")
         .unwrap_or_else(|_| format!("{home}/workspace/repos/diver/lua"));
     let diver_lua = PathBuf::from(diver_lua);
+    // GAUNTLET_DIVER_LUA is diver's *lua* dir. The driver runner bridges it to
+    // an rtp-root layout with a symlink shim (diver_rtp_shim in the crate),
+    // so the harness must resolve as <dir>/ai/harness/init.lua here. Fail
+    // closed: a missing harness means the gate is misconfigured, not that
+    // the task passed.
     if !diver_lua
         .join("ai")
         .join("harness")

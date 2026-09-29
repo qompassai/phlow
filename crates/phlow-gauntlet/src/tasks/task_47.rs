@@ -359,7 +359,10 @@ fn case_spawn_paths_go_through_limiter() -> Result<CaseReport, DriverError> {
                 }
                 let text = String::from_utf8_lossy(&bytes);
                 for (lineno, line) in text.lines().enumerate() {
-                    if line.contains("Command::new") && !line.trim_start().starts_with("//") {
+                    if line.contains("Command::new")
+                        && !line.contains("clap::Command::new")
+                        && !line.trim_start().starts_with("//")
+                    {
                         sites.push(format!("{}:{}", path.display(), lineno + 1));
                     }
                 }

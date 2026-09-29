@@ -148,12 +148,20 @@ fn workspace_root() -> Result<PathBuf, DriverError> {
 /// These name the design's required machinery: a secret-typed wrapper,
 /// a masked marker type, field-level debug skipping, memory-clearing
 /// wrappers, a third-party secret-type crate.
+///
+/// NOTE: the bare "zeroize" token is deliberately absent. A previous
+/// revision scanned for it and false-positived on `pairing.rs`'s free
+/// byte-clearing fn -- a manual overwrite loop for pairing-protocol
+/// crypto, not a structural secret type. Clearing bytes is not the
+/// same contract as a drop-clearing wrapper type (the crate-style
+/// `Zero` + `izing` token is still scanned for). The probe's own
+/// source must never spell a scanned token contiguously -- the scan
+/// covers this file too, so token names here stay split.
 fn wrapper_tokens() -> Vec<String> {
-    const HALVES: [(&str, &str); 6] = [
+    const HALVES: [(&str, &str); 5] = [
         ("Sec", "ret<"),
         ("Red", "acted"),
         ("debug", "(skip)"),
-        ("zer", "oize"),
         ("Zero", "izing"),
         ("sec", "recy"),
     ];
