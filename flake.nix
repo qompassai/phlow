@@ -4,9 +4,12 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    # Always-fresh codebase map for agents, from the repomap subflake in
+    # qompassai/nix (only the repomap/ dir is evaluated, not the NixOS config).
+    repomap.url = "github:qompassai/nix?dir=repomap";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils, repomap }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
@@ -62,13 +65,19 @@
             pkgs.nodejs
             pkgs.clang-tools 
             pkgs.git
+            repomap.packages.${system}.repomap
           ];
 
+          # Keep $PWD/.repomap.txt fresh for agents: regenerates only when a
+          # .rs file is newer than it, so entering the shell stays cheap.
+          # The map is a derived artifact (gitignored).
           shellHook = ''
             echo "Phlow dev environment loaded"
             echo "Python: $(python --version)"
             echo "Run: uv venv .venv && uv pip install --python .venv/bin/python -e '.[editor,dev]'"
-          '';
+          '' + repomap.lib.refreshHook {
+            pkg = repomap.packages.${system}.repomap;
+          };
         };
       }
     );
