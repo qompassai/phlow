@@ -1,24 +1,45 @@
+# Phlow — reproducible Rust builds.
+#
+# `nix build` compiles the Cargo workspace with the exact pinned nightly
+# from rust-toolchain.toml (via fenix) inside the Nix sandbox: no network
+# at build time, all inputs content-addressed. The resulting binaries are
+# bit-reproducible, so their hashes can serve as the expected pins for
+# phlow-checks' SHA-256 binary pinning (crates/phlow-checks/src/pin.rs).
+#
+# - `nix build`          -> full workspace (release)
+# - `nix build .#phlow`  -> just the `phlow` CLI binary
+# - `nix run`            -> run the `phlow` CLI
+# - `nix flake check`    -> fmt + clippy gates
+# - `nix develop`        -> dev shell with the pinned toolchain
+#                         (also refreshes $PWD/.repomap.txt, the
+#                         always-fresh codebase map for agents)
+#
+# Cargo remains the fast dev loop (`cargo build` on the host). This flake
+# is for reproducible release builds and build provenance, not iteration.
 {
-  description = "Phlow — Local AI Workflow System";
+  description = "Phlow — reproducible Rust builds (crane + pinned nightly)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    crane.url = "github:ipetkov/crane";
+    # Pinned Rust toolchain matching rust-toolchain.toml (nightly-2026-09-25).
+    # Serves the crane builds, the devShell, and the flake apps below so
+    # `nix run .#<app>` is hermetic; pinned in flake.lock like all inputs.
+    fenix = {
+      url = "github:nix-community/fenix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     # Always-fresh codebase map for agents, from the repomap subflake in
     # qompassai/nix (only the repomap/ dir is evaluated, not the NixOS config).
     repomap.url = "github:qompassai/nix?dir=repomap";
-    # Pinned Rust toolchain matching rust-toolchain.toml (nightly-2026-09-25).
-    # Used ONLY by the flake apps below so `nix run .#<app>` is hermetic;
-    # the devShell is untouched. fenix follows the same nixpkgs as everything
-    # else, and the input is pinned in flake.lock like all others.
-    fenix.url = "github:nix-community/fenix";
-    fenix.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nixpkgs, flake-utils, repomap, fenix }:
+  outputs = { self, nixpkgs, flake-utils, crane, fenix, repomap }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+
         # python3.12: the pinned nixpkgs' sphinx 9.1.0 (pulled in via
         # httpx's test closure) no longer supports 3.11.
         python = pkgs.python312;
@@ -45,16 +66,52 @@
           ];
         };
 
-        # Pinned Rust toolchain matching rust-toolchain.toml
-        # (nightly-2026-09-25), for the flake apps only. The devShell below
-        # is untouched.
-        rustToolchain = fenix.packages.${system}.fromToolchainFile {
+        # Exact toolchain from rust-toolchain.toml. The sha256 is the hash of
+        # the nightly channel manifest for the pinned date (not of the
+        # toolchain file itself). If rust-toolchain.toml bumps the nightly
+        # date, run `nix build` once with a dummy hash and paste the
+        # "got:" hash Nix reports.
+        toolchain = fenix.packages.${system}.fromToolchainFile {
           file = ./rust-toolchain.toml;
-          # Hash of the date-pinned channel manifest
-          # https://static.rust-lang.org/dist/2026-09-25/channel-rust-nightly.toml
-          # (immutable: the date is part of the URL).
           sha256 = "sha256-3ok3kaNc8lhDSnZ9bZAJwmHgUrdB9CC5m+ZJBwFPWnA=";
         };
+
+        # The flake apps below were written against this name for the same
+        # pinned toolchain.
+        rustToolchain = toolchain;
+
+        craneLib = (crane.mkLib pkgs).overrideToolchain toolchain;
+
+        # Linker matching the dev environment (clang + lld).
+        rustLinkFlags = "-C linker=clang -C link-arg=-fuse-ld=lld";
+
+        commonArgs = {
+          src = craneLib.cleanCargoSource ./.;
+          strictDeps = true;
+          nativeBuildInputs = with pkgs; [
+            clang
+            lld
+            perl # ring
+            pkg-config
+          ];
+          buildInputs = with pkgs; [
+            openssl
+            sqlite
+          ];
+          RUSTFLAGS = rustLinkFlags;
+        };
+
+        cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+
+        phlow-workspace = craneLib.buildPackage (commonArgs // {
+          inherit cargoArtifacts;
+        });
+
+        phlow-bin = craneLib.buildPackage (commonArgs // {
+          inherit cargoArtifacts;
+          pname = "phlow";
+          cargoExtraArgs = "-p phlow-cli";
+        });
 
         appCommonLib = builtins.readFile ./nix/lib/common.sh;
 
@@ -81,13 +138,23 @@
 
       in {
         packages = {
-          default = flowPkg;
-          phlow = flowPkg;
+          default = phlow-workspace;
+          phlow = phlow-bin;
         };
 
         apps.default = {
           type = "app";
-          program = "${flowPkg}/bin/phlow";
+          program = "${phlow-bin}/bin/phlow";
+        };
+
+        checks = {
+          clippy = craneLib.cargoClippy (commonArgs // {
+            inherit cargoArtifacts;
+            cargoClippyExtraArgs = "--all-targets -- --deny warnings";
+          });
+          fmt = craneLib.cargoFmt {
+            src = craneLib.cleanCargoSource ./.;
+          };
         };
 
         # --- Deterministic validation / release apps -----------------------
@@ -143,7 +210,9 @@
 
         devShells.default = pkgs.mkShell {
           name = "phlow-dev";
+          inputsFrom = [ phlow-workspace ];
           buildInputs = [
+            toolchain
             pythonEnv
             pkgs.ollama
             pkgs.ruff
@@ -172,6 +241,8 @@
             pkg = repomap.packages.${system}.repomap;
           };
         };
-      }
-    );
+
+        # Nix formatter matching the qompassai/nix convention (alejandra).
+        formatter = pkgs.alejandra;
+      });
 }
