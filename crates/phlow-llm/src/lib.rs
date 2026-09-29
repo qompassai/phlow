@@ -21,6 +21,7 @@
 pub mod error;
 pub mod payload;
 pub mod prompts;
+pub mod redact;
 pub mod transport;
 
 pub use error::LlmError;
@@ -30,4 +31,5 @@ pub use payload::{
 pub use prompts::{
     build_codegen_prompt, build_error_fix_prompt, default_system_prompt, load_system_prompt,
 };
+pub use redact::{REDACTED, redact_credentials, redact_value};
 pub use transport::{FakeLlmTransport, LlmTransport};

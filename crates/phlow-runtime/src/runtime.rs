@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use phlow_checks::CheckRunner;
+use phlow_checks::{CheckPins, CheckReport, CheckRunner, RunAllReport, pin_checks};
 use phlow_config::{FlowConfig, ModelRole};
 use phlow_editor::{EditorBridge, EditorTransport, TIMEOUT_DEFAULT};
 use phlow_llm::LlmTransport;
@@ -255,6 +255,61 @@ fn hex_encode(bytes: &[u8]) -> String {
     out
 }
 
+/// Append spawn-audit keys to each rendered check, after its Python-parity
+/// keys. They appear only when a spawn was decided (as `returncode` appears
+/// only when a process ran): who asked, when, and the pinned executable
+/// identity. A pre-spawn refusal also carries the pinned and observed
+/// identities side by side (`null` when the executable no longer resolves).
+fn insert_check_audit(result: &mut Value, run_all: &RunAllReport) {
+    let rendered = result
+        .get_mut("checks")
+        .and_then(Value::as_array_mut)
+        .expect("check report has a checks array");
+    assert_eq!(
+        rendered.len(),
+        run_all.checks.len(),
+        "one rendered entry per check report"
+    );
+    for (entry, report) in rendered.iter_mut().zip(&run_all.checks) {
+        let out = entry.as_object_mut().expect("rendered check is an object");
+        insert_audit_fields(out, report);
+    }
+}
+
+fn insert_audit_fields(out: &mut Map<String, Value>, report: &CheckReport) {
+    let path_value = |path: &Path| Value::String(path.to_string_lossy().into_owned());
+    let Some(started_at) = &report.started_at else {
+        return;
+    };
+    out.insert("actor".to_owned(), Value::String(report.actor.to_owned()));
+    out.insert("started_at".to_owned(), Value::String(started_at.clone()));
+    let Some(pin) = &report.pin else {
+        return;
+    };
+    out.insert("canonical_path".to_owned(), path_value(&pin.canonical_path));
+    out.insert("sha256".to_owned(), Value::String(pin.sha256.clone()));
+    let Some(refusal) = &report.pin_refusal else {
+        return;
+    };
+    let observed = refusal.observed.as_ref();
+    out.insert(
+        "pinned_canonical_path".to_owned(),
+        path_value(&pin.canonical_path),
+    );
+    out.insert(
+        "pinned_sha256".to_owned(),
+        Value::String(pin.sha256.clone()),
+    );
+    out.insert(
+        "observed_canonical_path".to_owned(),
+        observed.map_or(Value::Null, |seen| path_value(&seen.canonical_path)),
+    );
+    out.insert(
+        "observed_sha256".to_owned(),
+        observed.map_or(Value::Null, |seen| Value::String(seen.sha256.clone())),
+    );
+}
+
 /// The safe agent runtime. See the module docs for the safety contract.
 pub struct Runtime<L: LlmTransport, E: EditorTransport> {
     config: FlowConfig,
@@ -270,6 +325,9 @@ pub struct Runtime<L: LlmTransport, E: EditorTransport> {
     closed: bool,
     checked_editor_snapshot: Option<Value>,
     run_changed: BTreeSet<String>,
+    /// Check executables pinned at construction, the operator-config
+    /// admission point; every later check run verifies against these.
+    check_pins: CheckPins,
 }
 
 impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
@@ -290,6 +348,7 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
             .map(|path| vec![path.clone()])
             .unwrap_or_default();
         let workspace = Workspace::open(config.workspace_dir(), config.trusted(), &protected)?;
+        let check_pins = pin_checks(workspace.root(), config.checks());
         let backend = OllamaBackend::new(config.ollama().clone(), llm_transport);
         let editor = EditorBridge::new(nvim_socket.clone(), TIMEOUT_DEFAULT, editor_transport)?;
         Ok(Runtime {
@@ -303,6 +362,7 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
             closed: false,
             checked_editor_snapshot: None,
             run_changed: BTreeSet::new(),
+            check_pins,
         })
     }
 
@@ -439,7 +499,10 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
                 self.note_write(&path);
                 Ok(crate::report::write_result_to_value(&result))
             }
-            "flow_check" => Ok(self.run_checks(args.get("name").and_then(|name| name.as_str()))),
+            "flow_check" => Ok(self.run_checks(
+                args.get("name").and_then(|name| name.as_str()),
+                "model.flow_check",
+            )),
             _ if phlow_editor::contract::EDITOR_TOOLS.contains(&name) => {
                 self.editor_tool(name, args)
             }
@@ -981,8 +1044,9 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
     }
 
     /// Run the named checks (or all) with the editor freshness gates,
-    /// mirroring `_run_checks`.
-    fn run_checks(&mut self, name: Option<&str>) -> Value {
+    /// mirroring `_run_checks`. `actor` names the entry point that asked,
+    /// recorded on every check report for spawn audit.
+    fn run_checks(&mut self, name: Option<&str>, actor: &'static str) -> Value {
         self.checked_editor_snapshot = None;
         let mut before: Option<Value> = None;
         if self.editor_configured {
@@ -1009,8 +1073,17 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
                 }
             }
         }
-        let runner = CheckRunner::new(&self.workspace, self.config.checks().clone());
-        let mut result = run_all_report_to_value(&runner.run_all(name));
+        let runner = CheckRunner::with_pins(
+            &self.workspace,
+            self.config.checks().clone(),
+            self.check_pins.clone(),
+        );
+        let mut run_all = runner.run_all(name);
+        for check in &mut run_all.checks {
+            check.actor = actor;
+        }
+        let mut result = run_all_report_to_value(&run_all);
+        insert_check_audit(&mut result, &run_all);
         if self.editor_configured {
             let before = before.expect("editor context was fetched above");
             match self.editor_context() {
@@ -1044,7 +1117,7 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
     /// `_verification`. Evidence is host-computed; reviewer approval never
     /// substitutes for it.
     fn verification(&mut self) -> Result<Value, RuntimeError> {
-        let mut verification = self.run_checks(None);
+        let mut verification = self.run_checks(None, "runtime.verification");
         let checked_editor = self.checked_editor_snapshot.clone();
         let available: Vec<String> = self
             .editor
@@ -1641,7 +1714,7 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
         if self.closed {
             return error_report("Runtime closed");
         }
-        self.run_checks(name)
+        self.run_checks(name, "runtime.check")
     }
 
     /// Release the editor bridge and the model backend. Idempotent.

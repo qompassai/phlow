@@ -72,6 +72,8 @@ pub fn load_system_prompt(
 /// Build a code-generation prompt. Byte-exact with
 /// `prompts.build_codegen_prompt`, including the `\n\n## Existing Files\n`
 /// section when `existing_files` is non-empty (iteration order is the map's).
+/// Credentials in attached paths or content are redacted (see
+/// [`crate::redact`]); clean attachments are byte-exact.
 pub fn build_codegen_prompt(
     request: &str,
     language: &str,
@@ -86,6 +88,7 @@ pub fn build_codegen_prompt(
             files_section.push_str(&format!("\n### {path}\n```\n{content}\n```\n"));
         }
     }
+    let files_section = crate::redact::redact_credentials(&files_section);
     format!(
         "Generate a complete {language} {framework} application called \"{project_name}\".\n\
          \n\

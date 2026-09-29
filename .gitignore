@@ -13,3 +13,6 @@ venv/
 
 # Rust build output
 /target/
+
+# generated code index
+graft/

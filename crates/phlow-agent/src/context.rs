@@ -48,6 +48,8 @@ impl ConversationContext {
     }
 
     /// Append a message, evicting the oldest when the window is full.
+    /// Credentials in `content` are redacted at admission, so no snapshot or
+    /// clone of this context can ever carry a raw credential.
     pub fn add_message(&mut self, role: &str, content: &str) {
         if self.max_messages == 0 {
             return;
@@ -55,8 +57,9 @@ impl ConversationContext {
         while self.messages.len() >= self.max_messages {
             self.messages.pop_front();
         }
+        let content = phlow_llm::redact_credentials(content).into_owned();
         self.messages
-            .push_back(ChatMessage::new(role.to_owned(), content.to_owned()));
+            .push_back(ChatMessage::new(role.to_owned(), content));
     }
 
     /// A snapshot of the retained messages, oldest first.

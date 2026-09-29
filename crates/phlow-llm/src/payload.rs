@@ -8,6 +8,7 @@
 use serde_json::{Map, Value};
 
 use crate::error::LlmError;
+use crate::redact::redact_value;
 
 /// Completions are capped below the context window so the prompt always fits.
 pub const COMPLETION_TOKENS_MAX: u32 = 8192;
@@ -44,6 +45,8 @@ pub fn max_tokens_for(context_length: u32) -> u32 {
 /// - `tools` is included only when the slice is non-empty (Python's
 ///   `if tools:`).
 /// - Empty `messages` is rejected: Python asserts `len(messages) > 0`.
+/// - Credentials in message or tool string values are redacted before
+///   transport (see [`crate::redact`]); clean values are sent unchanged.
 pub fn build_chat_payload(
     cfg: &phlow_config::OllamaConfig,
     messages: &[Value],
@@ -64,7 +67,9 @@ pub fn build_chat_payload(
     }
     let mut payload = Map::with_capacity(6);
     payload.insert("model".to_owned(), Value::from(chosen));
-    payload.insert("messages".to_owned(), Value::Array(messages.to_vec()));
+    let mut messages = Value::Array(messages.to_vec());
+    redact_value(&mut messages);
+    payload.insert("messages".to_owned(), messages);
     payload.insert("temperature".to_owned(), Value::from(cfg.temperature()));
     payload.insert("stream".to_owned(), Value::from(false));
     payload.insert(
@@ -72,7 +77,9 @@ pub fn build_chat_payload(
         Value::from(max_tokens_for(cfg.context_length())),
     );
     if !tools.is_empty() {
-        payload.insert("tools".to_owned(), Value::Array(tools.to_vec()));
+        let mut tools = Value::Array(tools.to_vec());
+        redact_value(&mut tools);
+        payload.insert("tools".to_owned(), tools);
     }
     Ok(payload)
 }

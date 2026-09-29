@@ -13,3 +13,6 @@ phlow-config = { path = "../phlow-config" }
 # check's whole process tree dies. Safe wrappers only; the crate is
 # forbid(unsafe_code). Spawning uses std's safe CommandExt::process_group.
 rustix = { version = "1", features = ["process"] }
+# sha2: SHA-256 executable pins taken at admission and re-verified before
+# every spawn. RustCrypto; already locked for phlow-runtime (no new crate).
+sha2 = { version = "0.10" }

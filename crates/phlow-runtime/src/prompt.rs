@@ -54,7 +54,8 @@ pub fn system_prompt_for_role(role: &str) -> String {
 /// Mirrors `_normalize_tool_calls`: non-object calls are rejected, missing ids
 /// are assigned from `id_prefix`, ids must be non-empty unique strings, and
 /// every item is stamped `"type": "function"`. Arguments are preserved
-/// exactly.
+/// exactly, except that credentials inside them (including JSON encoded in
+/// a string) are redacted, so a raw key never becomes replayable authority.
 pub fn normalize_tool_calls(calls: &[Value], id_prefix: &str) -> Result<Vec<Value>, String> {
     let mut normalized: Vec<Value> = Vec::with_capacity(calls.len());
     let mut seen: Vec<String> = Vec::with_capacity(calls.len());
@@ -80,6 +81,12 @@ pub fn normalize_tool_calls(calls: &[Value], id_prefix: &str) -> Result<Vec<Valu
             return Err("Duplicate tool call ids".to_owned());
         }
         seen.push(id);
+        if let Some(arguments) = object
+            .get_mut("function")
+            .and_then(|function| function.get_mut("arguments"))
+        {
+            phlow_llm::redact_value(arguments);
+        }
         object.insert("type".to_owned(), Value::String("function".to_owned()));
         normalized.push(item);
     }

@@ -1569,6 +1569,7 @@ dependencies = [
  "phlow-config",
  "phlow-workspace",
  "rustix",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -1647,6 +1648,7 @@ dependencies = [
  "ml-dsa",
  "percent-encoding",
  "phlow-agent",
+ "phlow-cli",
  "phlow-config",
  "phlow-council",
  "phlow-editor",

@@ -8,12 +8,14 @@ use phlow_checks::{CheckReport, RunAllReport};
 use phlow_workspace::{ListResult, ReadResult, WriteResult};
 use serde_json::{Map, Value};
 
-/// Build a fresh run report, mirroring `_new_report`.
+/// Build a fresh run report, mirroring `_new_report`. Credentials in `task`
+/// are redacted: reports are logged and emitted to operators.
 pub fn new_report(task: &str) -> Value {
+    let task = phlow_llm::redact_credentials(task).into_owned();
     let mut report = Map::new();
     report.insert("status".to_owned(), Value::String("unverified".to_owned()));
     report.insert("verified".to_owned(), Value::Bool(false));
-    report.insert("task".to_owned(), Value::String(task.to_owned()));
+    report.insert("task".to_owned(), Value::String(task));
     report.insert("roles".to_owned(), Value::Array(Vec::new()));
     report.insert("events".to_owned(), Value::Array(Vec::new()));
     report.insert("changed_files".to_owned(), Value::Array(Vec::new()));

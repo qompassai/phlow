@@ -12,12 +12,14 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use phlow_config::{CHECK_ARGV_MAX, CheckConfig, FlowConfig};
 use phlow_workspace::Workspace;
+
+use crate::pin::{BinaryPin, CheckPins, pin_checks, pin_executable};
 
 /// Maximum stdout/stderr retained per check, in bytes. Only the tail is
 /// kept; anything more sets the `*_truncated` flag. Bounds check output the
@@ -35,6 +37,9 @@ const REPORT_SOURCE: &str = "flow.check";
 /// Reason text when verification does not hold.
 const UNVERIFIED_REASON: &str =
     "Every required check must run and pass; at least one required check must be configured";
+/// `actor` on reports from a runner used directly; the runtime overwrites
+/// it with the entry point that requested the check.
+const DIRECT_ACTOR: &str = "phlow_checks.runner";
 
 /// Outcome status of one check run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,6 +116,23 @@ pub struct CheckReport {
     pub duration_ms: u64,
     /// Human-readable failure detail; `None` when the check ran cleanly.
     pub error: Option<String>,
+    /// Entry point that requested the check (not an authenticated identity).
+    pub actor: &'static str,
+    /// UTC RFC 3339 wall-clock time of the spawn decision (admit or refuse);
+    /// `None` when an earlier gate (unknown, untrusted, stale) stopped the
+    /// check, so no spawn was ever decided.
+    pub started_at: Option<String>,
+    /// Executable identity pinned at admission; `None` when never pinned.
+    pub pin: Option<BinaryPin>,
+    /// Set when the pre-spawn identity disagreed with `pin`; nothing ran.
+    pub pin_refusal: Option<PinRefusal>,
+}
+
+/// Evidence for a pinned executable that was refused before spawn.
+#[derive(Debug, Clone)]
+pub struct PinRefusal {
+    /// Identity resolved just before spawn; `None` when it no longer resolves.
+    pub observed: Option<BinaryPin>,
 }
 
 /// Aggregate verification report for [`CheckRunner::run_all`].
@@ -131,26 +153,44 @@ pub struct RunAllReport {
 ///
 /// Holds a shared borrow of the [`Workspace`]: trust and freshness are
 /// re-checked on every `run`, so a workspace that lost trust or was
-/// replaced between runs cannot produce a stale "ok".
+/// replaced between runs cannot produce a stale "ok". Executables are
+/// pinned (see [`crate::pin`]) and re-verified before every spawn.
 pub struct CheckRunner<'w> {
     workspace: &'w Workspace,
     checks: BTreeMap<String, CheckConfig>,
+    pins: CheckPins,
 }
 
 impl<'w> CheckRunner<'w> {
-    /// Build a runner over an explicit check map.
+    /// Build a runner over an explicit check map, pinning every executable
+    /// now.
     ///
     /// The map is expected to come from validated configuration
     /// ([`FlowConfig::checks`]); the length bound is asserted so a future
     /// caller cannot silently widen it. Prefer [`CheckRunner::from_config`].
     pub fn new(workspace: &'w Workspace, checks: BTreeMap<String, CheckConfig>) -> CheckRunner<'w> {
+        let pins = pin_checks(workspace.root(), &checks);
+        CheckRunner::with_pins(workspace, checks, pins)
+    }
+
+    /// Build a runner that verifies against pins taken earlier, at the
+    /// caller's admission point. A check without a pin never runs.
+    pub fn with_pins(
+        workspace: &'w Workspace,
+        checks: BTreeMap<String, CheckConfig>,
+        pins: CheckPins,
+    ) -> CheckRunner<'w> {
         // The config schema already caps the map at CHECKS_MAX; assert the
         // shape here so a future caller cannot silently widen it.
         assert!(
             checks.len() <= phlow_config::CHECKS_MAX,
             "check map exceeds the validated limit"
         );
-        CheckRunner { workspace, checks }
+        CheckRunner {
+            workspace,
+            checks,
+            pins,
+        }
     }
 
     /// Build a runner from a loaded operator configuration.
@@ -175,8 +215,16 @@ impl<'w> CheckRunner<'w> {
             report.set_status(CheckStatus::Stale, &err.to_string());
             return report;
         }
+        let Some(executable) = self.admit_executable(name, check, &mut report) else {
+            return report;
+        };
         let started = Instant::now();
-        let outcome = execute(self.workspace.root(), check.cmd(), check.timeout_ms());
+        let outcome = execute(
+            self.workspace.root(),
+            &executable,
+            check.cmd(),
+            check.timeout_ms(),
+        );
         report.duration_ms = duration_ms_since(started);
         report.apply_outcome(outcome);
         if let Err(err) = self.workspace.assert_current() {
@@ -185,6 +233,47 @@ impl<'w> CheckRunner<'w> {
             report.set_status(CheckStatus::Stale, &err.to_string());
         }
         report
+    }
+
+    /// Re-resolve the check's program and compare it with the admission
+    /// pin. Returns the pinned canonical path to spawn, or `None` after
+    /// recording a refusal in `report`. Any identity change is an `Error`
+    /// regardless of `required`, so a refusal can never degrade to a
+    /// warning.
+    fn admit_executable(
+        &self,
+        name: &str,
+        check: &CheckConfig,
+        report: &mut CheckReport,
+    ) -> Option<PathBuf> {
+        report.started_at = Some(rfc3339_utc(SystemTime::now()));
+        let pin = match self.pins.get(name) {
+            Some(Ok(pin)) => pin,
+            Some(Err(reason)) => {
+                report.set_status(CheckStatus::Unavailable, reason);
+                return None;
+            }
+            None => {
+                report.set_status(CheckStatus::Error, "check executable was never pinned");
+                return None;
+            }
+        };
+        report.pin = Some(pin.clone());
+        let Some(program) = check.cmd().first() else {
+            report.set_status(CheckStatus::Error, "check argv is empty");
+            return None;
+        };
+        let (observed, reason) = match pin_executable(self.workspace.root(), program) {
+            Ok(observed) if observed == *pin => return Some(pin.canonical_path.clone()),
+            Ok(observed) => (
+                Some(observed),
+                "executable identity changed since admission; refusing to run".to_owned(),
+            ),
+            Err(error) => (None, format!("pinned executable unavailable: {error}")),
+        };
+        report.pin_refusal = Some(PinRefusal { observed });
+        report.set_status(CheckStatus::Error, &reason);
+        None
     }
 
     /// Run one named check, or every configured check when `name` is `None`.
@@ -254,6 +343,10 @@ impl CheckReport {
             stderr_truncated: false,
             duration_ms: 0,
             error: None,
+            actor: DIRECT_ACTOR,
+            started_at: None,
+            pin: None,
+            pin_refusal: None,
         }
     }
 
@@ -276,6 +369,10 @@ impl CheckReport {
             stderr_truncated: false,
             duration_ms: 0,
             error: Some(UNKNOWN_CHECK_ERROR.to_string()),
+            actor: DIRECT_ACTOR,
+            started_at: None,
+            pin: None,
+            pin_refusal: None,
         }
     }
 
@@ -363,7 +460,9 @@ enum WaitOutcome {
 /// whole process tree. Stdout/stderr drain on reader threads into bounded
 /// tails while the main thread polls the deadline; after the wait both
 /// readers are joined, so no output and no thread outlives the report.
-fn execute(root: &Path, argv: &[String], timeout_ms: u64) -> ExecutionOutcome {
+/// `executable` is the admitted canonical path; `argv[0]` is kept as the
+/// child's argv[0].
+fn execute(root: &Path, executable: &Path, argv: &[String], timeout_ms: u64) -> ExecutionOutcome {
     let (program, args) = match argv.split_first() {
         Some(pair) => pair,
         None => return ExecutionOutcome::failed(CheckStatus::Error, "check argv is empty"),
@@ -378,7 +477,7 @@ fn execute(root: &Path, argv: &[String], timeout_ms: u64) -> ExecutionOutcome {
     if argv.iter().any(|arg| arg.contains('\0')) {
         return ExecutionOutcome::failed(CheckStatus::Error, "check argv contains NUL");
     }
-    let mut child = match spawn_pinned(root, program, args) {
+    let mut child = match spawn_pinned(root, executable, program, args) {
         Ok(child) => child,
         Err(outcome) => return outcome,
     };
@@ -438,9 +537,16 @@ fn classify_wait(wait: WaitOutcome, timeout_ms: u64) -> (CheckStatus, Option<i32
 /// The workspace pins the child's cwd; stdin is closed so a check can
 /// never read from our terminal; stdout/stderr are piped for the bounded
 /// drain. On Unix the child leads its own process group, so the timeout
-/// kill takes the whole tree, never our group.
-fn spawn_pinned(root: &Path, program: &str, args: &[String]) -> Result<Child, ExecutionOutcome> {
-    let mut command = std::process::Command::new(program);
+/// kill takes the whole tree, never our group. The admitted canonical
+/// `executable` is spawned (no second PATH lookup); `program` stays argv[0]
+/// so multi-call binaries still see the name the operator configured.
+fn spawn_pinned(
+    root: &Path,
+    executable: &Path,
+    program: &str,
+    args: &[String],
+) -> Result<Child, ExecutionOutcome> {
+    let mut command = std::process::Command::new(executable);
     command.args(args);
     command.current_dir(root);
     command.stdin(Stdio::null());
@@ -449,10 +555,13 @@ fn spawn_pinned(root: &Path, program: &str, args: &[String]) -> Result<Child, Ex
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
+        command.arg0(program);
         // Safe std wrapper around setpgid(0, 0) in the child before exec;
         // no unsafe in this crate.
         command.process_group(0);
     }
+    #[cfg(not(unix))]
+    let _ = program;
     match command.spawn() {
         Ok(child) => Ok(child),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Err(ExecutionOutcome::failed(
@@ -554,6 +663,38 @@ fn read_tail<R: Read>(pipe: &mut R) -> Tail {
 /// absurd clocks.
 fn duration_ms_since(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+/// `YYYY-MM-DDTHH:MM:SS.mmmZ` for `time`, in UTC. A clock before the Unix
+/// epoch saturates to the epoch rather than wrapping. Civil-date math is
+/// Howard Hinnant's `civil_from_days` (proleptic Gregorian).
+fn rfc3339_utc(time: SystemTime) -> String {
+    const SECONDS_PER_DAY: u64 = 86_400;
+    let since_epoch = time.duration_since(UNIX_EPOCH).unwrap_or_default();
+    let seconds = since_epoch.as_secs();
+    let second_of_day = seconds % SECONDS_PER_DAY;
+    let days = i64::try_from(seconds / SECONDS_PER_DAY).expect("u64 seconds / 86400 fits i64");
+    let shifted = days + 719_468;
+    let era = shifted.div_euclid(146_097);
+    let day_of_era = shifted.rem_euclid(146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_index = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_index + 2) / 5 + 1;
+    let month = if month_index < 10 {
+        month_index + 3
+    } else {
+        month_index - 9
+    };
+    let year = year_of_era + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{:03}Z",
+        second_of_day / 3_600,
+        second_of_day % 3_600 / 60,
+        second_of_day % 60,
+        since_epoch.subsec_millis(),
+    )
 }
 
 #[cfg(test)]
@@ -930,6 +1071,92 @@ mod tests {
         let runner = CheckRunner::from_config(&workspace, &config);
         assert_eq!(runner.run("ok").status, CheckStatus::Ok);
         assert_eq!(checks.len(), 1);
+        cleanup(&dir);
+    }
+
+    /// Write an executable `tool` script into `dir`.
+    fn write_tool(dir: &Path, body: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("tool");
+        std::fs::write(&path, body).expect("test setup: write tool");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))
+            .expect("test setup: chmod tool");
+    }
+
+    #[test]
+    fn pinned_report_records_canonical_identity() {
+        let (dir, workspace, checks) = fixture("[checks.ok]\ncmd = [\"/bin/true\"]\n", true);
+        let runner = CheckRunner::new(&workspace, checks);
+        let report = runner.run("ok");
+        assert_eq!(report.status, CheckStatus::Ok);
+        let pin = report.pin.expect("pinned");
+        assert_eq!(
+            pin.canonical_path,
+            std::fs::canonicalize("/bin/true").expect("setup")
+        );
+        assert_eq!(pin.sha256.len(), 64);
+        assert!(report.pin_refusal.is_none());
+        assert_eq!(report.actor, DIRECT_ACTOR);
+        assert!(report.started_at.expect("spawn decided").ends_with('Z'));
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn untrusted_denial_decides_no_spawn() {
+        let (dir, workspace, checks) = fixture("[checks.ok]\ncmd = [\"/bin/true\"]\n", false);
+        let runner = CheckRunner::new(&workspace, checks);
+        let report = runner.run("ok");
+        assert_eq!(report.status, CheckStatus::Unverified);
+        assert!(report.started_at.is_none());
+        assert!(report.pin.is_none());
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn rfc3339_utc_known_instants() {
+        let at = |seconds: u64, millis: u64| {
+            rfc3339_utc(UNIX_EPOCH + Duration::from_millis(seconds * 1000 + millis))
+        };
+        assert_eq!(at(0, 0), "1970-01-01T00:00:00.000Z");
+        assert_eq!(at(951_782_400, 0), "2000-02-29T00:00:00.000Z");
+        assert_eq!(at(1_709_210_096, 789), "2024-02-29T12:34:56.789Z");
+        assert_eq!(
+            rfc3339_utc(UNIX_EPOCH - Duration::from_secs(1)),
+            "1970-01-01T00:00:00.000Z"
+        );
+    }
+
+    #[test]
+    fn rewritten_executable_is_refused_before_spawn() {
+        let dir = temp_dir("pin-rewrite");
+        write_tool(&dir, "#!/bin/sh\nexit 0\n");
+        let (workspace, checks) = fixture_in(&dir, "[checks.t]\ncmd = [\"./tool\"]\n", true);
+        let runner = CheckRunner::new(&workspace, checks);
+        write_tool(&dir, "#!/bin/sh\ntouch ran\nexit 0\n");
+        let report = runner.run("t");
+        assert_eq!(report.status, CheckStatus::Error);
+        assert!(!dir.join("ran").exists(), "tampered executable ran");
+        let pin = report.pin.expect("pinned");
+        let observed = report
+            .pin_refusal
+            .expect("refused")
+            .observed
+            .expect("still resolves");
+        assert_eq!(observed.canonical_path, pin.canonical_path);
+        assert_ne!(observed.sha256, pin.sha256);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn removed_executable_is_a_hard_error() {
+        let dir = temp_dir("pin-remove");
+        write_tool(&dir, "#!/bin/sh\nexit 0\n");
+        let (workspace, checks) = fixture_in(&dir, "[checks.t]\ncmd = [\"./tool\"]\n", true);
+        let runner = CheckRunner::new(&workspace, checks);
+        std::fs::remove_file(dir.join("tool")).expect("setup");
+        let report = runner.run("t");
+        assert_eq!(report.status, CheckStatus::Error);
+        assert!(report.pin_refusal.expect("refused").observed.is_none());
         cleanup(&dir);
     }
 

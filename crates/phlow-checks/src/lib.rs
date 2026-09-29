@@ -4,7 +4,8 @@
 //! operator's TOML — no shell, no model-chosen command, cwd, or
 //! environment. Each check runs to completion or its configured timeout;
 //! on timeout the whole process group is killed and reaped, so no orphan
-//! keeps running after the report.
+//! keeps running after the report. Each program is pinned by canonical
+//! path and SHA-256 at admission ([`pin`]) and re-verified before spawn.
 //!
 //! The legacy `shell_exec` and `lsp_check` tools are fail-closed here:
 //! [`disabled`] preserves their exact denial behavior as typed values,
@@ -13,8 +14,12 @@
 #![forbid(unsafe_code)]
 
 pub mod disabled;
+pub mod pin;
 pub mod runner;
 
 pub use disabled::{DisabledError, DisabledTool, LSP_CHECK_DENIAL, SHELL_DENIAL};
 pub use phlow_config::CheckKind;
-pub use runner::{CheckReport, CheckRunner, CheckStatus, OUTPUT_BYTES_MAX, RunAllReport};
+pub use pin::{BinaryPin, CheckPins, PIN_BYTES_MAX, pin_checks};
+pub use runner::{
+    CheckReport, CheckRunner, CheckStatus, OUTPUT_BYTES_MAX, PinRefusal, RunAllReport,
+};
