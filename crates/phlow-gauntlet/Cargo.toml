@@ -59,6 +59,10 @@ phlow-mcp = { path = "../phlow-mcp" }
 # for the task-209..232 and task-239..249 rescope (formerly Diver Lua
 # probes). Path dependency, same workspace.
 phlow-approval = { path = "../phlow-approval" }
+# phlow-system1: the real System 1 risk-scoring subsystem under test
+# for tasks 251-318 (RiskScorer::route over MockBackend answers).
+# Path dependency, same workspace.
+phlow-system1 = { path = "../phlow-system1" }
 # rmpv: the scripted msgpack-RPC socket peer in the task-25 driver —
 # the same codec the transport uses. No derive-based validation.
 # reqwest: the real SkillOpt optimizer backend speaks Ollama's

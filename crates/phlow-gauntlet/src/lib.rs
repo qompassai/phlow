@@ -46,8 +46,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 /// Maximum number of tasks in the gauntlet. The task list is closed: adding
-/// a 159th task is a design change, not an iteration.
-pub const TASK_COUNT_MAX: usize = 250;
+/// a 319th task is a design change, not an iteration.
+pub const TASK_COUNT_MAX: usize = 318;
 
 /// Maximum length in characters of a single evidence line in a report.
 /// Evidence is diagnostic text, not bulk data; oversized lines are truncated

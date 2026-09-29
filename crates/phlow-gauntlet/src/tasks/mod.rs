@@ -1,4 +1,4 @@
-//! The 130 gauntlet tasks. One module per task; each file has a single
+//! The 318 gauntlet tasks. One module per task; each file has a single
 //! owning worker during implementation (disjoint ownership).
 
 /// Shared subprocess harness for the wave-32 (CLI UX doctrine) task
@@ -257,6 +257,74 @@ pub mod task_247;
 pub mod task_248;
 pub mod task_249;
 pub mod task_250;
+pub mod task_251;
+pub mod task_252;
+pub mod task_253;
+pub mod task_254;
+pub mod task_255;
+pub mod task_256;
+pub mod task_257;
+pub mod task_258;
+pub mod task_259;
+pub mod task_260;
+pub mod task_261;
+pub mod task_262;
+pub mod task_263;
+pub mod task_264;
+pub mod task_265;
+pub mod task_266;
+pub mod task_267;
+pub mod task_268;
+pub mod task_269;
+pub mod task_270;
+pub mod task_271;
+pub mod task_272;
+pub mod task_273;
+pub mod task_274;
+pub mod task_275;
+pub mod task_276;
+pub mod task_277;
+pub mod task_278;
+pub mod task_279;
+pub mod task_280;
+pub mod task_281;
+pub mod task_282;
+pub mod task_283;
+pub mod task_284;
+pub mod task_285;
+pub mod task_286;
+pub mod task_287;
+pub mod task_288;
+pub mod task_289;
+pub mod task_290;
+pub mod task_291;
+pub mod task_292;
+pub mod task_293;
+pub mod task_294;
+pub mod task_295;
+pub mod task_296;
+pub mod task_297;
+pub mod task_298;
+pub mod task_299;
+pub mod task_300;
+pub mod task_301;
+pub mod task_302;
+pub mod task_303;
+pub mod task_304;
+pub mod task_305;
+pub mod task_306;
+pub mod task_307;
+pub mod task_308;
+pub mod task_309;
+pub mod task_310;
+pub mod task_311;
+pub mod task_312;
+pub mod task_313;
+pub mod task_314;
+pub mod task_315;
+pub mod task_316;
+pub mod task_317;
+pub mod task_318;
 
 use crate::{Ctx, GauntletError, TaskKind, TaskOutcome, TaskReport};
 use std::time::Instant;
@@ -1783,6 +1851,414 @@ pub const TASKS: [TaskEntry; crate::TASK_COUNT_MAX] = [
         name: task_250::NAME,
         kind: task_250::KIND,
         run: task_250::run,
+    },
+    TaskEntry {
+        id: task_251::ID,
+        name: task_251::NAME,
+        kind: task_251::KIND,
+        run: task_251::run,
+    },
+    TaskEntry {
+        id: task_252::ID,
+        name: task_252::NAME,
+        kind: task_252::KIND,
+        run: task_252::run,
+    },
+    TaskEntry {
+        id: task_253::ID,
+        name: task_253::NAME,
+        kind: task_253::KIND,
+        run: task_253::run,
+    },
+    TaskEntry {
+        id: task_254::ID,
+        name: task_254::NAME,
+        kind: task_254::KIND,
+        run: task_254::run,
+    },
+    TaskEntry {
+        id: task_255::ID,
+        name: task_255::NAME,
+        kind: task_255::KIND,
+        run: task_255::run,
+    },
+    TaskEntry {
+        id: task_256::ID,
+        name: task_256::NAME,
+        kind: task_256::KIND,
+        run: task_256::run,
+    },
+    TaskEntry {
+        id: task_257::ID,
+        name: task_257::NAME,
+        kind: task_257::KIND,
+        run: task_257::run,
+    },
+    TaskEntry {
+        id: task_258::ID,
+        name: task_258::NAME,
+        kind: task_258::KIND,
+        run: task_258::run,
+    },
+    TaskEntry {
+        id: task_259::ID,
+        name: task_259::NAME,
+        kind: task_259::KIND,
+        run: task_259::run,
+    },
+    TaskEntry {
+        id: task_260::ID,
+        name: task_260::NAME,
+        kind: task_260::KIND,
+        run: task_260::run,
+    },
+    TaskEntry {
+        id: task_261::ID,
+        name: task_261::NAME,
+        kind: task_261::KIND,
+        run: task_261::run,
+    },
+    TaskEntry {
+        id: task_262::ID,
+        name: task_262::NAME,
+        kind: task_262::KIND,
+        run: task_262::run,
+    },
+    TaskEntry {
+        id: task_263::ID,
+        name: task_263::NAME,
+        kind: task_263::KIND,
+        run: task_263::run,
+    },
+    TaskEntry {
+        id: task_264::ID,
+        name: task_264::NAME,
+        kind: task_264::KIND,
+        run: task_264::run,
+    },
+    TaskEntry {
+        id: task_265::ID,
+        name: task_265::NAME,
+        kind: task_265::KIND,
+        run: task_265::run,
+    },
+    TaskEntry {
+        id: task_266::ID,
+        name: task_266::NAME,
+        kind: task_266::KIND,
+        run: task_266::run,
+    },
+    TaskEntry {
+        id: task_267::ID,
+        name: task_267::NAME,
+        kind: task_267::KIND,
+        run: task_267::run,
+    },
+    TaskEntry {
+        id: task_268::ID,
+        name: task_268::NAME,
+        kind: task_268::KIND,
+        run: task_268::run,
+    },
+    TaskEntry {
+        id: task_269::ID,
+        name: task_269::NAME,
+        kind: task_269::KIND,
+        run: task_269::run,
+    },
+    TaskEntry {
+        id: task_270::ID,
+        name: task_270::NAME,
+        kind: task_270::KIND,
+        run: task_270::run,
+    },
+    TaskEntry {
+        id: task_271::ID,
+        name: task_271::NAME,
+        kind: task_271::KIND,
+        run: task_271::run,
+    },
+    TaskEntry {
+        id: task_272::ID,
+        name: task_272::NAME,
+        kind: task_272::KIND,
+        run: task_272::run,
+    },
+    TaskEntry {
+        id: task_273::ID,
+        name: task_273::NAME,
+        kind: task_273::KIND,
+        run: task_273::run,
+    },
+    TaskEntry {
+        id: task_274::ID,
+        name: task_274::NAME,
+        kind: task_274::KIND,
+        run: task_274::run,
+    },
+    TaskEntry {
+        id: task_275::ID,
+        name: task_275::NAME,
+        kind: task_275::KIND,
+        run: task_275::run,
+    },
+    TaskEntry {
+        id: task_276::ID,
+        name: task_276::NAME,
+        kind: task_276::KIND,
+        run: task_276::run,
+    },
+    TaskEntry {
+        id: task_277::ID,
+        name: task_277::NAME,
+        kind: task_277::KIND,
+        run: task_277::run,
+    },
+    TaskEntry {
+        id: task_278::ID,
+        name: task_278::NAME,
+        kind: task_278::KIND,
+        run: task_278::run,
+    },
+    TaskEntry {
+        id: task_279::ID,
+        name: task_279::NAME,
+        kind: task_279::KIND,
+        run: task_279::run,
+    },
+    TaskEntry {
+        id: task_280::ID,
+        name: task_280::NAME,
+        kind: task_280::KIND,
+        run: task_280::run,
+    },
+    TaskEntry {
+        id: task_281::ID,
+        name: task_281::NAME,
+        kind: task_281::KIND,
+        run: task_281::run,
+    },
+    TaskEntry {
+        id: task_282::ID,
+        name: task_282::NAME,
+        kind: task_282::KIND,
+        run: task_282::run,
+    },
+    TaskEntry {
+        id: task_283::ID,
+        name: task_283::NAME,
+        kind: task_283::KIND,
+        run: task_283::run,
+    },
+    TaskEntry {
+        id: task_284::ID,
+        name: task_284::NAME,
+        kind: task_284::KIND,
+        run: task_284::run,
+    },
+    TaskEntry {
+        id: task_285::ID,
+        name: task_285::NAME,
+        kind: task_285::KIND,
+        run: task_285::run,
+    },
+    TaskEntry {
+        id: task_286::ID,
+        name: task_286::NAME,
+        kind: task_286::KIND,
+        run: task_286::run,
+    },
+    TaskEntry {
+        id: task_287::ID,
+        name: task_287::NAME,
+        kind: task_287::KIND,
+        run: task_287::run,
+    },
+    TaskEntry {
+        id: task_288::ID,
+        name: task_288::NAME,
+        kind: task_288::KIND,
+        run: task_288::run,
+    },
+    TaskEntry {
+        id: task_289::ID,
+        name: task_289::NAME,
+        kind: task_289::KIND,
+        run: task_289::run,
+    },
+    TaskEntry {
+        id: task_290::ID,
+        name: task_290::NAME,
+        kind: task_290::KIND,
+        run: task_290::run,
+    },
+    TaskEntry {
+        id: task_291::ID,
+        name: task_291::NAME,
+        kind: task_291::KIND,
+        run: task_291::run,
+    },
+    TaskEntry {
+        id: task_292::ID,
+        name: task_292::NAME,
+        kind: task_292::KIND,
+        run: task_292::run,
+    },
+    TaskEntry {
+        id: task_293::ID,
+        name: task_293::NAME,
+        kind: task_293::KIND,
+        run: task_293::run,
+    },
+    TaskEntry {
+        id: task_294::ID,
+        name: task_294::NAME,
+        kind: task_294::KIND,
+        run: task_294::run,
+    },
+    TaskEntry {
+        id: task_295::ID,
+        name: task_295::NAME,
+        kind: task_295::KIND,
+        run: task_295::run,
+    },
+    TaskEntry {
+        id: task_296::ID,
+        name: task_296::NAME,
+        kind: task_296::KIND,
+        run: task_296::run,
+    },
+    TaskEntry {
+        id: task_297::ID,
+        name: task_297::NAME,
+        kind: task_297::KIND,
+        run: task_297::run,
+    },
+    TaskEntry {
+        id: task_298::ID,
+        name: task_298::NAME,
+        kind: task_298::KIND,
+        run: task_298::run,
+    },
+    TaskEntry {
+        id: task_299::ID,
+        name: task_299::NAME,
+        kind: task_299::KIND,
+        run: task_299::run,
+    },
+    TaskEntry {
+        id: task_300::ID,
+        name: task_300::NAME,
+        kind: task_300::KIND,
+        run: task_300::run,
+    },
+    TaskEntry {
+        id: task_301::ID,
+        name: task_301::NAME,
+        kind: task_301::KIND,
+        run: task_301::run,
+    },
+    TaskEntry {
+        id: task_302::ID,
+        name: task_302::NAME,
+        kind: task_302::KIND,
+        run: task_302::run,
+    },
+    TaskEntry {
+        id: task_303::ID,
+        name: task_303::NAME,
+        kind: task_303::KIND,
+        run: task_303::run,
+    },
+    TaskEntry {
+        id: task_304::ID,
+        name: task_304::NAME,
+        kind: task_304::KIND,
+        run: task_304::run,
+    },
+    TaskEntry {
+        id: task_305::ID,
+        name: task_305::NAME,
+        kind: task_305::KIND,
+        run: task_305::run,
+    },
+    TaskEntry {
+        id: task_306::ID,
+        name: task_306::NAME,
+        kind: task_306::KIND,
+        run: task_306::run,
+    },
+    TaskEntry {
+        id: task_307::ID,
+        name: task_307::NAME,
+        kind: task_307::KIND,
+        run: task_307::run,
+    },
+    TaskEntry {
+        id: task_308::ID,
+        name: task_308::NAME,
+        kind: task_308::KIND,
+        run: task_308::run,
+    },
+    TaskEntry {
+        id: task_309::ID,
+        name: task_309::NAME,
+        kind: task_309::KIND,
+        run: task_309::run,
+    },
+    TaskEntry {
+        id: task_310::ID,
+        name: task_310::NAME,
+        kind: task_310::KIND,
+        run: task_310::run,
+    },
+    TaskEntry {
+        id: task_311::ID,
+        name: task_311::NAME,
+        kind: task_311::KIND,
+        run: task_311::run,
+    },
+    TaskEntry {
+        id: task_312::ID,
+        name: task_312::NAME,
+        kind: task_312::KIND,
+        run: task_312::run,
+    },
+    TaskEntry {
+        id: task_313::ID,
+        name: task_313::NAME,
+        kind: task_313::KIND,
+        run: task_313::run,
+    },
+    TaskEntry {
+        id: task_314::ID,
+        name: task_314::NAME,
+        kind: task_314::KIND,
+        run: task_314::run,
+    },
+    TaskEntry {
+        id: task_315::ID,
+        name: task_315::NAME,
+        kind: task_315::KIND,
+        run: task_315::run,
+    },
+    TaskEntry {
+        id: task_316::ID,
+        name: task_316::NAME,
+        kind: task_316::KIND,
+        run: task_316::run,
+    },
+    TaskEntry {
+        id: task_317::ID,
+        name: task_317::NAME,
+        kind: task_317::KIND,
+        run: task_317::run,
+    },
+    TaskEntry {
+        id: task_318::ID,
+        name: task_318::NAME,
+        kind: task_318::KIND,
+        run: task_318::run,
     },
 ];
 
