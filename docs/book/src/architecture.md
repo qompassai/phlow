@@ -1,4 +1,4 @@
-# Architecture (ELI5)
+# Architecture
 
 Imagine a workshop with very strict house rules. A customer (you, or your
 editor) hands a work order through a little window. Inside, three

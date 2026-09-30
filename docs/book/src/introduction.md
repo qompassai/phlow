@@ -20,10 +20,10 @@ In practice phlow is one shared safe runtime with three faces:
   stdin/stdout, so editors (rose.nvim) and other agents can drive it.
 
 It was born as Python (`flow/`) and has been ported crate-by-crate to
-Rust on the `rust` branch. This book documents the Rust port the way
-you'd explain it to a smart five-year-old — with the exact contracts an
-operator or integrator needs, and an honest list of where the port
-deliberately differs from the Python.
+Rust on the `rust` branch. This book documents the Rust port from first
+principles — with the exact contracts an operator or integrator needs,
+and an honest list of where the port deliberately differs from the
+Python.
 
 ## Who this book is for
 
