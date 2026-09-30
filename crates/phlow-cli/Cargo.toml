@@ -25,9 +25,9 @@ signal-hook = "0.3"
 # serde_json: report values; serialization itself goes through
 # phlow_tools::python_json_dumps for byte-parity with Python's json.dumps.
 serde_json = "1"
-phlow-config = { path = "../phlow-config" }
-phlow-editor = { path = "../phlow-editor" }
-phlow-mcp = { path = "../phlow-mcp" }
-phlow-runtime = { path = "../phlow-runtime" }
-phlow-tools = { path = "../phlow-tools" }
-phlow-tui = { path = "../phlow-tui" }
+phlow-config = { version = "0.1.0", path = "../phlow-config" }
+phlow-editor = { version = "0.2.0", path = "../phlow-editor" }
+phlow-mcp = { version = "0.2.0", path = "../phlow-mcp" }
+phlow-runtime = { version = "0.2.0", path = "../phlow-runtime" }
+phlow-tools = { version = "0.1.0", path = "../phlow-tools" }
+phlow-tui = { version = "0.1.0", path = "../phlow-tui" }

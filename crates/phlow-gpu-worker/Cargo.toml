@@ -10,4 +10,4 @@ name = "phlow_gpu_worker"
 path = "src/lib.rs"
 
 [dependencies]
-phlow-compute-cuda = { path = "../phlow-compute-cuda" }
+phlow-compute-cuda = { version = "0.1.0", path = "../phlow-compute-cuda" }

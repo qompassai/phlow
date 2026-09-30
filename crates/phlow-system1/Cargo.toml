@@ -12,10 +12,10 @@ path = "src/lib.rs"
 [dependencies]
 # phlow-approval: the real policy Decision/Scope/Risk types the risk fast
 # path routes. Read-only use; the human-bound queue is never written here.
-phlow-approval = { path = "../phlow-approval" }
+phlow-approval = { version = "0.1.0", path = "../phlow-approval" }
 # phlow-llm: the shared credential redaction scanner (redact.rs) applied to
 # transport error text before it can reach a model-visible surface.
-phlow-llm = { path = "../phlow-llm" }
+phlow-llm = { version = "0.2.0", path = "../phlow-llm" }
 # reqwest: the workspace's existing HTTP stack, same pin and TLS posture as
 # phlow-gauntlet (no default features, rustls with webpki roots). The async
 # client is used because System1Decider is async; no second HTTP stack.

@@ -16,53 +16,53 @@ path = "src/bin/gauntlet.rs"
 [dependencies]
 # phlow-experiment: the real evaluator under test (evaluator.rs budget
 # discipline). Path dependency, same workspace.
-phlow-experiment = { path = "../phlow-experiment" }
+phlow-experiment = { version = "0.1.0", path = "../phlow-experiment" }
 # phlow-council: the real council arbitration under test (review.rs vote
 # tally). Path dependency, same workspace.
-phlow-council = { path = "../phlow-council" }
+phlow-council = { version = "0.1.0", path = "../phlow-council" }
 # phlow-runtime: the real msgpack transport under test for task-25
 # (transport/msgpack.rs bounded mpsc worker channel). Path dependency,
 # same workspace.
-phlow-runtime = { path = "../phlow-runtime" }
+phlow-runtime = { version = "0.2.0", path = "../phlow-runtime" }
 # phlow-editor: the EditorTransport trait + contract constants the
 # task-25 driver speaks through. Path dependency, same workspace.
-phlow-editor = { path = "../phlow-editor" }
+phlow-editor = { version = "0.2.0", path = "../phlow-editor" }
 # phlow-llm: the real downstream-call wrapper under test for task-26/27
 # (OllamaBackend::chat -> LlmTransport::post_chat). Path dependency,
 # same workspace.
-phlow-llm = { path = "../phlow-llm" }
+phlow-llm = { version = "0.2.0", path = "../phlow-llm" }
 # phlow-config: OllamaConfig for the task-26/27 backend fixtures. Direct
 # dependency (used by name); also pulled transitively via phlow-llm.
-phlow-config = { path = "../phlow-config" }
+phlow-config = { version = "0.1.0", path = "../phlow-config" }
 # phlow-json: the real checked JSON boundary under test for task-39
 # (parse_limited: input cap + depth bound + typed errors). Path
 # dependency, same workspace.
-phlow-json = { path = "../phlow-json" }
+phlow-json = { version = "0.1.0", path = "../phlow-json" }
 # phlow-agent: the real Online Context Compact under test for task-46
 # (solpi::context_compact::evaluate_compaction). Path dependency, same
 # workspace.
-phlow-agent = { path = "../phlow-agent" }
+phlow-agent = { version = "0.1.0", path = "../phlow-agent" }
 # phlow-tuios: the real hook subprocess fan-out under test for task-47
 # (hooks::HookManager + counting semaphores) and the real mailbox ring
 # under test for task-50 (mailbox::Mailbox). Path dependency, same
 # workspace.
-phlow-tuios = { path = "../phlow-tuios" }
+phlow-tuios = { version = "0.1.0", path = "../phlow-tuios" }
 # phlow-inference: the real kv_policy precision ladder under test for
 # task-77 (policy selection is KV-cache policy, not model-loading
 # precision). Path dependency, same workspace.
-phlow-inference = { path = "../phlow-inference" }
+phlow-inference = { version = "0.1.0", path = "../phlow-inference" }
 # phlow-mcp: the real MCP argument validator under test for task-77
 # (validate_arguments on the tool schema). Path dependency, same
 # workspace.
-phlow-mcp = { path = "../phlow-mcp" }
+phlow-mcp = { version = "0.2.0", path = "../phlow-mcp" }
 # phlow-approval: the real policy/approval/delta/event subsystem under test
 # for the task-209..232 and task-239..249 rescope (formerly Diver Lua
 # probes). Path dependency, same workspace.
-phlow-approval = { path = "../phlow-approval" }
+phlow-approval = { version = "0.1.0", path = "../phlow-approval" }
 # phlow-system1: the real System 1 risk-scoring subsystem under test
 # for tasks 251-318 (RiskScorer::route over MockBackend answers).
 # Path dependency, same workspace.
-phlow-system1 = { path = "../phlow-system1" }
+phlow-system1 = { version = "0.1.0", path = "../phlow-system1" }
 # rmpv: the scripted msgpack-RPC socket peer in the task-25 driver —
 # the same codec the transport uses. No derive-based validation.
 # reqwest: the real SkillOpt optimizer backend speaks Ollama's
@@ -100,4 +100,4 @@ sha2 = "=0.10.9"
 # makes Cargo build the binary for integration tests and exposes
 # `CARGO_BIN_EXE_phlow` to the wave-32 harness. Path dependency, same
 # workspace.
-phlow-cli = { path = "../phlow-cli" }
+phlow-cli = { version = "0.1.0", path = "../phlow-cli" }

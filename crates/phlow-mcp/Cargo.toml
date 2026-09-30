@@ -10,7 +10,7 @@ edition = "2024"
 # phlow-json: the narrowing layer for params/arguments objects. Wire frames
 # are parsed with plain serde_json (the serve loop already caps frames at
 # 1 MiB); nesting past serde_json's own recursion limit is a parse error.
-phlow-json = { path = "../phlow-json" }
+phlow-json = { version = "0.1.0", path = "../phlow-json" }
 # serde_json: the JSON value model. preserve_order keeps insertion order so
 # wire frames serialize byte-identical to Python's dict-ordered frames.
 # arbitrary_precision keeps the source text of integers beyond u64 so

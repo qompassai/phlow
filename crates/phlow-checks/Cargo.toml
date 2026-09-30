@@ -10,8 +10,8 @@ edition = "2024"
 # phlow-workspace: checks run with the workspace as their cwd and consult
 # its trust/freshness gates. phlow-config: the CheckConfig type and its
 # bounds are the validated operator contract this crate executes.
-phlow-workspace = { path = "../phlow-workspace" }
-phlow-config = { path = "../phlow-config" }
+phlow-workspace = { version = "0.2.0", path = "../phlow-workspace" }
+phlow-config = { version = "0.1.0", path = "../phlow-config" }
 # rustix: process-group kill (kill_process_group) on timeout, so a timed-out
 # check's whole process tree dies. Safe wrappers only; the crate is
 # forbid(unsafe_code). Spawning uses std's safe CommandExt::process_group.
@@ -24,4 +24,4 @@ sha2 = { version = "0.10" }
 # (socket(AF_INET/AF_INET6) and io_uring_setup -> EPERM). Its one unsafe
 # pre_exec registration lives there, so this crate stays forbid(unsafe_code).
 [target.'cfg(target_os = "linux")'.dependencies]
-phlow-seccomp = { path = "../phlow-seccomp" }
+phlow-seccomp = { version = "0.1.0", path = "../phlow-seccomp" }
