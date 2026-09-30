@@ -3,6 +3,9 @@ name = "phlow-mojo-worker"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
+# Not published to crates.io: Mojo kernels need the Mojo toolchain
+# (kernels) / this is a simulated test double (worker).
+publish = false
 
 [dependencies]
 
