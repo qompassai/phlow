@@ -106,6 +106,10 @@ pub struct CheckReport {
     /// Process exit code. Negative on POSIX signal death, matching
     /// Python's `Popen.returncode`; `None` when no process ran.
     pub returncode: Option<i32>,
+    /// OS process ID of the spawned check process; `None` when no process
+    /// ran. Lets callers verify the child was reaped without depending on
+    /// the child's own output reaching the report.
+    pub pid: Option<u32>,
     /// Captured stdout tail, UTF-8 with invalid sequences replaced.
     pub stdout: String,
     /// True when stdout exceeded [`OUTPUT_BYTES_MAX`].
@@ -339,6 +343,7 @@ impl CheckReport {
             workspace: workspace.root().to_string_lossy().into_owned(),
             revision: workspace.revision(),
             returncode: None,
+            pid: None,
             stdout: String::new(),
             stdout_truncated: false,
             stderr: String::new(),
@@ -365,6 +370,7 @@ impl CheckReport {
             workspace: String::new(),
             revision: 0,
             returncode: None,
+            pid: None,
             stdout: String::new(),
             stdout_truncated: false,
             stderr: String::new(),
@@ -394,6 +400,7 @@ impl CheckReport {
     fn apply_outcome(&mut self, outcome: ExecutionOutcome) {
         self.status = outcome.status;
         self.returncode = outcome.returncode;
+        self.pid = outcome.pid;
         self.error = outcome.error;
         self.stdout = outcome.stdout.text();
         self.stdout_truncated = outcome.stdout.truncated();
@@ -429,6 +436,8 @@ impl Tail {
 struct ExecutionOutcome {
     status: CheckStatus,
     returncode: Option<i32>,
+    /// OS pid of the spawned child; `None` when no process ran.
+    pid: Option<u32>,
     error: Option<String>,
     stdout: Tail,
     stderr: Tail,
@@ -439,6 +448,7 @@ impl ExecutionOutcome {
         ExecutionOutcome {
             status,
             returncode: None,
+            pid: None,
             error: Some(error.into()),
             stdout: Tail::empty(),
             stderr: Tail::empty(),
@@ -504,7 +514,10 @@ fn execute(root: &Path, executable: &Path, argv: &[String], timeout_ms: u64) -> 
             // Stop what we started and report it instead of hanging.
             kill_process_group(&mut child);
             let _ = child.wait();
-            return ExecutionOutcome::failed(CheckStatus::Error, "failed to capture check output");
+            let mut outcome =
+                ExecutionOutcome::failed(CheckStatus::Error, "failed to capture check output");
+            outcome.pid = Some(child.id());
+            return outcome;
         }
     };
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
@@ -522,6 +535,7 @@ fn execute(root: &Path, executable: &Path, argv: &[String], timeout_ms: u64) -> 
     ExecutionOutcome {
         status,
         returncode,
+        pid: Some(child.id()),
         error,
         stdout: tail_out,
         stderr: tail_err,
@@ -1054,6 +1068,50 @@ mod tests {
         assert_eq!(report.kind, phlow_config::CheckKind::Lint);
         assert_eq!(report.workspace, dir.to_string_lossy());
         assert_eq!(report.revision, workspace.revision());
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn report_records_spawned_pid() {
+        let (dir, workspace, checks) = fixture("[checks.ok]\ncmd = [\"/bin/true\"]\n", true);
+        let runner = CheckRunner::new(&workspace, checks);
+        let report = runner.run("ok");
+        assert_eq!(report.status, CheckStatus::Ok);
+        let pid = report.pid.expect("spawned check records its pid");
+        assert!(
+            !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+            "reaped child leaves no /proc entry"
+        );
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn timed_out_check_records_pid_of_killed_child() {
+        let (dir, workspace, checks) = fixture(
+            "[checks.slow]\ncmd = [\"/bin/sleep\", \"30\"]\ntimeout = 200\n",
+            true,
+        );
+        let runner = CheckRunner::new(&workspace, checks);
+        let report = runner.run("slow");
+        assert_eq!(report.status, CheckStatus::Timeout);
+        let pid = report.pid.expect("killed check records its pid");
+        assert!(
+            !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+            "killed child is reaped"
+        );
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn unspawned_check_records_no_pid() {
+        let (dir, workspace, checks) = fixture(
+            "[checks.missing]\ncmd = [\"/nonexistent-binary-xyz\"]\n",
+            true,
+        );
+        let runner = CheckRunner::new(&workspace, checks);
+        let report = runner.run("missing");
+        assert_eq!(report.status, CheckStatus::Unavailable);
+        assert_eq!(report.pid, None);
         cleanup(&dir);
     }
 

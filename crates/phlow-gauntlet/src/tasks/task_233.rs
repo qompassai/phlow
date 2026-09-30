@@ -342,7 +342,13 @@ else:
  sys.exit(42)
 "#
     );
-    let mut runtime = fixture.runtime(&["/usr/bin/python3", "-c", &script], 1000, true)?;
+    let mut runtime = fixture.runtime(
+        &["/usr/bin/python3", "-c", &script],
+        // 10 s liveness bound: the old 1000 ms deadline raced Python
+        // startup under parallel load (same root cause as task_244/245).
+        10_000,
+        true,
+    )?;
     let report = runtime.check(Some("probe"));
     if report["checks"][0]["returncode"] == 73 {
         return Err("socket family unavailable".to_owned());
@@ -444,15 +450,23 @@ fn reap_one(mode: &str) -> Result<bool, String> {
         }
         _ => return Err("unknown reap mode".to_owned()),
     };
-    let mut runtime = fixture.runtime(&["/usr/bin/python3", "-c", script], 400, true)?;
+    // Timing contract: the deadline only needs to exceed Python startup for
+    // the exit-path modes. Startup under parallel load measures p99 146 ms /
+    // max 398 ms with 40 checks in flight, so those modes get a 10 s liveness
+    // bound instead of the old 400 ms, which raced interpreter startup. The
+    // timeout mode keeps its tight 400 ms deadline against the 1 s sleep: the
+    // kill is the point, and the status is "timeout" whether or not the child
+    // managed to print first.
+    let timeout_ms = if mode == "timeout" { 400 } else { 10_000 };
+    let mut runtime = fixture.runtime(&["/usr/bin/python3", "-c", script], timeout_ms, true)?;
     let report = runtime.check(Some("probe"));
     let check = &report["checks"][0];
-    let pid: u32 = check["stdout"]
-        .as_str()
-        .ok_or("missing PID stdout")?
-        .trim()
-        .parse()
-        .map_err(err)?;
+    // The PID comes from the check report, not the child's stdout: a child
+    // killed before the interpreter flushes still yields a verifiable PID.
+    let pid = check["pid"]
+        .as_u64()
+        .and_then(|pid| u32::try_from(pid).ok())
+        .ok_or("check report has no pid")?;
     let expected = match mode {
         "normal" => "ok",
         "timeout" => "timeout",
@@ -461,6 +475,15 @@ fn reap_one(mode: &str) -> Result<bool, String> {
     Ok(check["status"] == expected && !PathBuf::from(format!("/proc/{pid}")).exists())
 }
 
+/// Timing contract: the kill must land after descendants start but before
+/// they finish. Python startup under parallel load measures p99 146 ms / max
+/// 398 ms with 40 checks in flight, so the timeout-case deadline is 2000 ms
+/// (~5x max) and the descendant sleep is 10 s (always past the deadline, so
+/// `late-*` can never precede the kill). The non-timeout case keeps the 0.7 s
+/// sleep under a generous 10 s liveness bound. Markers are checked
+/// immediately after the check returns: every write happens-before the
+/// process exit the runner already waited for, so no post-check sleep is
+/// needed.
 pub(super) fn group(timeout: bool, descendants: usize) -> Result<bool, String> {
     let fixture = Fixture::new()?;
     let script = r#"import os, pathlib, sys, time
@@ -468,20 +491,21 @@ for index in range(int(sys.argv[1])):
  pid = os.fork()
  if pid == 0:
   pathlib.Path(f'ready-{index}').write_text(str(os.getpid()))
-  time.sleep(0.7)
+  time.sleep(float(sys.argv[2]))
   pathlib.Path(f'late-{index}').write_text('alive')
   os._exit(0)
 for index in range(int(sys.argv[1])):
  os.wait()
 "#;
     let count = descendants.to_string();
+    let sleep_secs = if timeout { "10" } else { "0.7" };
+    let timeout_ms = if timeout { 2000 } else { 10_000 };
     let mut runtime = fixture.runtime(
-        &["/usr/bin/python3", "-c", script, &count],
-        if timeout { 400 } else { 2000 },
+        &["/usr/bin/python3", "-c", script, &count, sleep_secs],
+        timeout_ms,
         true,
     )?;
     let report = runtime.check(Some("probe"));
-    std::thread::sleep(Duration::from_millis(800));
     let expected = if timeout { "timeout" } else { "ok" };
     for index in 0..descendants {
         if !fixture.path.join(format!("ready-{index}")).exists() {

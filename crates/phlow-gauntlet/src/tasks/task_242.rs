@@ -34,14 +34,14 @@ fn case(index: usize) -> Result<bool, String> {
     match index {
         0 => {
             let f = Fixture::new()?;
-            let mut r = f.runtime(&["/usr/bin/python3", "-c", "pass"], 1000, true)?;
+            let mut r = f.runtime(&["/usr/bin/python3", "-c", "pass"], 10_000, true)?;
             Ok(ok(&r.check(Some("probe"))))
         }
         1 => {
             let f = Fixture::new()?;
             let mut r = f.runtime(
                 &["/usr/bin/python3", "-c", "assert sum(range(10)) == 45"],
-                1000,
+                10_000,
                 true,
             )?;
             Ok(ok(&r.check(Some("probe"))))

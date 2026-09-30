@@ -97,6 +97,12 @@ pub fn check_report_to_value(report: &CheckReport) -> Value {
     if let Some(returncode) = report.returncode {
         out.insert("returncode".to_owned(), Value::Number(returncode.into()));
     }
+    // The runner's pid for this check. Like `returncode` it appears only
+    // when a process ran; unlike stdout it never depends on the child
+    // producing output before the deadline.
+    if let Some(pid) = report.pid {
+        out.insert("pid".to_owned(), Value::Number(pid.into()));
+    }
     out.insert("stdout".to_owned(), Value::String(report.stdout.clone()));
     out.insert(
         "stdout_truncated".to_owned(),
@@ -202,6 +208,31 @@ mod tests {
     }
 
     #[test]
+    fn pid_renders_with_spawned_pid() {
+        let dir =
+            std::env::temp_dir().join(format!("phlow-report-test-{}-pid", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("test temp dir");
+        let config_path = dir.join("operator.toml");
+        std::fs::write(&config_path, "[checks.ok]\ncmd=[\"/bin/true\"]\n")
+            .expect("write test config");
+        let config = phlow_config::load_config(&phlow_config::LoadOptions {
+            config_path: Some(config_path),
+            workspace: Some(dir.clone()),
+            ..phlow_config::LoadOptions::default()
+        })
+        .expect("test setup: load config");
+        let workspace =
+            phlow_workspace::Workspace::open(&dir, true, &[]).expect("test setup: open workspace");
+        let runner = CheckRunner::new(&workspace, config.checks().clone());
+        let report = runner.run("ok");
+        let pid = report.pid.expect("spawned check records pid");
+        let value = check_report_to_value(&report);
+        assert_eq!(value["pid"], Value::from(pid));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn unknown_check_renders_compact_four_key_dict() {
         // Python's `run()` for an unknown name returns exactly
         // {"name": ..., "status": "unavailable",
@@ -258,6 +289,10 @@ mod tests {
         assert!(object.contains_key("timeout"), "full shape keeps timeout");
         assert!(object.contains_key("stdout"), "full shape keeps stdout");
         assert_eq!(value["source"], "flow.check");
+        assert!(
+            !object.contains_key("pid"),
+            "no pid key when no process ran"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
