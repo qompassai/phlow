@@ -8,3 +8,8 @@ src = "src"
 [build]
 build-dir = "book"
 create-missing = false
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "navy"
+additional-css = ["hyprland.css"]
