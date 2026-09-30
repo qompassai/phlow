@@ -4,12 +4,21 @@
 //!
 //! ```sh
 //! gauntlet list
-//! gauntlet run <task-id> [--nvim-bin PATH] [--diver-lua PATH] [--work-dir PATH]
-//! gauntlet run-all [--report-dir DIR] [--nvim-bin PATH] [--diver-lua PATH] [--work-dir PATH]
+//! gauntlet run <task-id> [--nvim-bin PATH] [--diver-lua PATH]
+//!     [--work-dir PATH] [--clean]
+//! gauntlet run-all [--report-dir DIR] [--nvim-bin PATH] [--diver-lua PATH]
+//!     [--work-dir PATH] [--clean]
 //! gauntlet verify-claims <ledger.json>
 //! ```
 //!
-//! Argument parsing is manual and bounded: four subcommands, four flags, no
+//! `--clean` (on `run`/`run-all` only): when every task passes, `work_dir`
+//! is removed; when anything fails — or the run itself errors — `work_dir`
+//! is kept and its absolute path is printed for forensics.
+//! Removal is fail-closed: the filesystem root, the current directory, and
+//! any ancestor of the current directory are refused, and a removal that
+//! fails turns a passed run into exit 2 with the retained path printed.
+//!
+//! Argument parsing is manual and bounded: four subcommands, five flags, no
 //! external CLI framework. Unknown flags are rejected, never ignored.
 
 use phlow_gauntlet::tasks::TaskEntry;
@@ -19,7 +28,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 /// Usage text printed on bad invocation.
-const USAGE: &str = "usage:\n  gauntlet list\n  gauntlet run <task-id> [--nvim-bin PATH] [--diver-lua PATH] [--work-dir PATH]\n  gauntlet run-all [--report-dir DIR] [--nvim-bin PATH] [--diver-lua PATH] [--work-dir PATH]\n  gauntlet verify-claims <ledger.json>";
+const USAGE: &str = "usage:\n  gauntlet list\n  gauntlet run <task-id> [--nvim-bin PATH] [--diver-lua PATH] [--work-dir PATH] [--clean]\n  gauntlet run-all [--report-dir DIR] [--nvim-bin PATH] [--diver-lua PATH] [--work-dir PATH] [--clean]\n  gauntlet verify-claims <ledger.json>";
 
 /// Parsed CLI options. All paths are required for `run`/`run-all`: the
 /// gauntlet never guesses where Matt's editor or config live.
@@ -28,6 +37,9 @@ struct Opts {
     diver_lua: Option<PathBuf>,
     work_dir: Option<PathBuf>,
     report_dir: Option<PathBuf>,
+    /// Remove `work_dir` when the run fully passes; keep it for forensics
+    /// otherwise. Only meaningful on `run`/`run-all`.
+    clean: bool,
 }
 
 fn parse_flags(args: &[String]) -> Result<Opts, String> {
@@ -36,6 +48,7 @@ fn parse_flags(args: &[String]) -> Result<Opts, String> {
         diver_lua: None,
         work_dir: None,
         report_dir: None,
+        clean: false,
     };
     let mut i = 0;
     while i < args.len() {
@@ -56,6 +69,9 @@ fn parse_flags(args: &[String]) -> Result<Opts, String> {
                 i += 1;
                 opts.report_dir = Some(flag_value(args, i, "--report-dir")?);
             }
+            "--clean" => {
+                opts.clean = true;
+            }
             other => return Err(format!("unknown flag '{other}'\n{USAGE}")),
         }
         i += 1;
@@ -69,6 +85,15 @@ fn flag_value(args: &[String], i: usize, flag: &str) -> Result<PathBuf, String> 
         .ok_or_else(|| format!("flag '{flag}' needs a value\n{USAGE}"))
 }
 
+/// The work directory the run will use: the `--work-dir` override or the
+/// `$TMPDIR/phlow-gauntlet` default. Shared so error paths can name the
+/// retained directory even when context construction fails.
+fn effective_work_dir(opts: &Opts) -> std::path::PathBuf {
+    opts.work_dir
+        .clone()
+        .unwrap_or_else(|| std::env::temp_dir().join("phlow-gauntlet"))
+}
+
 fn build_ctx(opts: &Opts) -> Result<Ctx, GauntletError> {
     let nvim_bin = opts
         .nvim_bin
@@ -77,11 +102,112 @@ fn build_ctx(opts: &Opts) -> Result<Ctx, GauntletError> {
     let diver_lua = opts.diver_lua.clone().ok_or(GauntletError::EmptyField {
         field: "diver_lua_dir",
     })?;
-    let work_dir = opts
-        .work_dir
-        .clone()
-        .unwrap_or_else(|| std::env::temp_dir().join("phlow-gauntlet"));
+    let work_dir = effective_work_dir(opts);
     Ctx::new(nvim_bin, diver_lua, work_dir)
+}
+
+/// Absolute form of `work_dir` for safety checks and forensics messages.
+/// Canonicalize when the path exists (resolves symlinks and `..`); when it
+/// does not, absolutize against the cwd and collapse `.`/`..` lexically so
+/// a `..`-smuggled ancestor is still caught by the guard below. Returns
+/// `None` only when even absolutization fails (a poisoned environment), in
+/// which case callers fall back to the raw path and the guard refuses.
+fn lexical_absolute(work_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    if let Ok(canonical) = work_dir.canonicalize() {
+        return Some(canonical);
+    }
+    let absolute = std::path::absolute(work_dir).ok()?;
+    let mut out = std::path::PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            // Popping at the root is a no-op, so this stays inside `/`.
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    Some(out)
+}
+
+/// Absolute path for `--clean` forensics messages. Canonicalization fails
+/// when the dir was never created; resolve against the cwd then so the
+/// printed path is still absolute.
+fn forensic_display_path(work_dir: &std::path::Path) -> std::path::PathBuf {
+    lexical_absolute(work_dir).unwrap_or_else(|| work_dir.to_path_buf())
+}
+
+/// Fail-closed guard for `--clean` deletion. Refuses the filesystem root,
+/// the current directory, and any ancestor of the current directory:
+/// removing any of those would recurse outside the work tree. Called only
+/// on the removal branch, so nothing is ever deleted unless this returns
+/// `Ok`. `..` components are resolved by [`lexical_absolute`], never by
+/// string inspection.
+fn check_clean_target(work_dir: &std::path::Path) -> Result<(), &'static str> {
+    let target =
+        lexical_absolute(work_dir).ok_or("cannot resolve the work_dir to an absolute path")?;
+    if target == std::path::Path::new("/") {
+        return Err("refusing to remove the filesystem root");
+    }
+    let cwd = std::env::current_dir()
+        .ok()
+        .and_then(|cwd| cwd.canonicalize().ok())
+        .ok_or("cannot determine the current directory")?;
+    if target == cwd || cwd.starts_with(&target) {
+        return Err("refusing to remove the current directory or one of its ancestors");
+    }
+    Ok(())
+}
+
+/// `--clean` handling for `run`/`run-all`: remove `work_dir` when the run
+/// fully passed; keep it and print its absolute path when anything failed
+/// or the run itself errored, for forensics.
+///
+/// Returns `Some(code)` when the caller's exit code must be replaced: a
+/// passed run whose cleanup was refused ([`check_clean_target`]) or whose
+/// removal failed exits 2 with the retained absolute path printed. Returns
+/// `None` otherwise, so the caller's own code stands — including the
+/// original failure code when the run did not pass.
+///
+/// The flag covers `work_dir` only; per-task scratch under
+/// `std::env::temp_dir()` follows `$TMPDIR` and is the caller's to place.
+fn clean_work_dir(opts: &Opts, work_dir: &std::path::Path, all_passed: bool) -> Option<ExitCode> {
+    if !opts.clean {
+        return None;
+    }
+    let display = forensic_display_path(work_dir);
+    if !all_passed {
+        eprintln!(
+            "gauntlet: --clean: keeping work_dir for forensics: {}",
+            display.display()
+        );
+        return None;
+    }
+    if let Err(reason) = check_clean_target(work_dir) {
+        eprintln!("gauntlet: --clean: {reason}; kept {}", display.display());
+        return Some(ExitCode::from(2));
+    }
+    match std::fs::remove_dir_all(work_dir) {
+        Ok(()) => {
+            eprintln!("gauntlet: --clean removed {}", display.display());
+            None
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!(
+                "gauntlet: --clean: nothing to remove at {}",
+                display.display()
+            );
+            None
+        }
+        Err(e) => {
+            eprintln!(
+                "gauntlet: --clean: cannot remove {}: {e}; kept for forensics",
+                display.display()
+            );
+            Some(ExitCode::from(2))
+        }
+    }
 }
 
 /// Render one report as a JSON object. Built from a `Map` so the shape is
@@ -143,24 +269,32 @@ fn cmd_run(id: &str, opts: &Opts) -> ExitCode {
         Ok(ctx) => ctx,
         Err(e) => {
             eprintln!("gauntlet: {e}");
-            return ExitCode::from(2);
+            // Context never built: still name the retained directory so a
+            // `--clean` run error leaves forensics findable. A failed run
+            // never asks cleanup to replace its exit code.
+            return clean_work_dir(opts, &effective_work_dir(opts), false)
+                .unwrap_or(ExitCode::from(2));
         }
     };
-    match tasks::run_task(id, &ctx) {
+    let (code, passed) = match tasks::run_task(id, &ctx) {
         Ok(report) => {
             let passed = report.passed();
             println!("{}", report_json(&report));
-            if passed {
-                ExitCode::SUCCESS
-            } else {
-                ExitCode::from(1)
-            }
+            (
+                if passed {
+                    ExitCode::SUCCESS
+                } else {
+                    ExitCode::from(1)
+                },
+                passed,
+            )
         }
         Err(e) => {
             eprintln!("gauntlet: {e}");
-            ExitCode::from(2)
+            (ExitCode::from(2), false)
         }
-    }
+    };
+    clean_work_dir(opts, &ctx.work_dir, passed).unwrap_or(code)
 }
 
 fn cmd_run_all(opts: &Opts) -> ExitCode {
@@ -168,6 +302,9 @@ fn cmd_run_all(opts: &Opts) -> ExitCode {
         Ok(ctx) => ctx,
         Err(e) => {
             eprintln!("gauntlet: {e}");
+            // Context never built: still name the retained directory so a
+            // `--clean` run error leaves forensics findable.
+            clean_work_dir(opts, &effective_work_dir(opts), false);
             return ExitCode::from(2);
         }
     };
@@ -198,16 +335,24 @@ fn cmd_run_all(opts: &Opts) -> ExitCode {
         let path = dir.join("gauntlet-report.json");
         if let Err(e) = std::fs::create_dir_all(dir).and_then(|_| std::fs::write(&path, &summary)) {
             eprintln!("gauntlet: cannot write report: {e}");
-            return ExitCode::from(2);
+            // Report write failed: the retained work_dir is named for
+            // forensics, and the exit code stays 2.
+            return clean_work_dir(opts, &ctx.work_dir, false).unwrap_or(ExitCode::from(2));
         }
         eprintln!("gauntlet: report written to {}", path.display());
     }
-    if failed.is_empty() {
+    let all_passed = failed.is_empty();
+    if !all_passed {
+        eprintln!("gauntlet: {} task(s) failed", failed.len());
+    }
+    let base = if all_passed {
         ExitCode::SUCCESS
     } else {
-        eprintln!("gauntlet: {} task(s) failed", failed.len());
         ExitCode::from(1)
-    }
+    };
+    // Cleanup may only demote a passed run (exit 2 on removal failure or
+    // refused target); it never promotes a failed run.
+    clean_work_dir(opts, &ctx.work_dir, all_passed).unwrap_or(base)
 }
 
 /// Maximum ledger file size: 1 MiB. Ledgers are small claim lists; anything
@@ -806,5 +951,227 @@ mod ledger_tests {
         std::fs::remove_file(&dir).ok();
         let err = result.expect_err("oversized ledger must be rejected");
         assert!(err.contains("over the"), "unexpected: {err}");
+    }
+}
+
+#[cfg(test)]
+mod clean_tests {
+    use super::*;
+
+    /// Build `Opts` with only the clean flag varied; the other fields are
+    /// irrelevant to `clean_work_dir`.
+    fn opts_with_clean(clean: bool) -> Opts {
+        Opts {
+            nvim_bin: None,
+            diver_lua: None,
+            work_dir: None,
+            report_dir: None,
+            clean,
+        }
+    }
+
+    /// Fresh scratch dir (with nested content) under the system temp dir.
+    /// Any leftover from a crashed earlier run is cleared first.
+    fn fresh_dir(tag: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("gauntlet-clean-test-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("nested")).expect("must create scratch dir");
+        std::fs::write(dir.join("nested").join("evidence.txt"), "x").expect("must write fixture");
+        dir
+    }
+
+    /// Validation: `--clean` parses as a valueless flag; absence is false.
+    #[test]
+    fn clean_flag_parses() {
+        let opts = parse_flags(&["--clean".to_string()]).expect("--clean must parse");
+        assert!(opts.clean, "--clean must set the flag");
+        let opts = parse_flags(&[]).expect("empty flags must parse");
+        assert!(!opts.clean, "clean must default to false");
+    }
+
+    /// Validation: without `--work-dir`, the effective dir is the
+    /// `$TMPDIR/phlow-gauntlet` default, so error paths can name it even
+    /// when context construction fails.
+    #[test]
+    fn effective_work_dir_defaults_to_tmpdir() {
+        let opts = opts_with_clean(true);
+        assert_eq!(
+            effective_work_dir(&opts),
+            std::env::temp_dir().join("phlow-gauntlet")
+        );
+        let mut with_dir = opts_with_clean(true);
+        with_dir.work_dir = Some(PathBuf::from("/tmp/gauntlet-explicit"));
+        assert_eq!(
+            effective_work_dir(&with_dir),
+            PathBuf::from("/tmp/gauntlet-explicit")
+        );
+    }
+
+    /// Adversarial: a relative work_dir that was never created still gets
+    /// an absolute forensic path, never a bare relative one.
+    #[test]
+    fn clean_forensic_path_is_absolute_for_relative_dir() {
+        let rel = PathBuf::from("gauntlet-clean-test-relative-should-not-exist");
+        let _ = std::fs::remove_dir_all(&rel);
+        let display = forensic_display_path(&rel);
+        assert!(
+            display.is_absolute(),
+            "forensic path must be absolute, got {}",
+            display.display()
+        );
+    }
+
+    /// Validation: a passed run removes the work_dir recursively and does
+    /// not replace the caller's exit code.
+    #[test]
+    fn clean_removes_work_dir_on_pass() {
+        let dir = fresh_dir("pass");
+        assert_eq!(
+            clean_work_dir(&opts_with_clean(true), &dir, true),
+            None,
+            "successful cleanup must not replace the exit code"
+        );
+        assert!(
+            !dir.exists(),
+            "work_dir must be gone after a passed --clean run"
+        );
+    }
+
+    /// Validation: a failed run keeps the work_dir (and its content) for
+    /// forensics and keeps the original failure code.
+    #[test]
+    fn clean_keeps_work_dir_on_failure() {
+        let dir = fresh_dir("fail");
+        assert_eq!(
+            clean_work_dir(&opts_with_clean(true), &dir, false),
+            None,
+            "failed-run cleanup must not replace the exit code"
+        );
+        assert!(
+            dir.join("nested").join("evidence.txt").exists(),
+            "work_dir must be kept after a failed --clean run"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Validation: without `--clean`, even a passed run keeps the dir —
+    /// the flag is strictly opt-in.
+    #[test]
+    fn no_flag_keeps_work_dir() {
+        let dir = fresh_dir("noflag");
+        assert_eq!(clean_work_dir(&opts_with_clean(false), &dir, true), None);
+        assert!(dir.exists(), "work_dir must be kept without --clean");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Adversarial: a passed run whose work_dir was never created is not
+    /// an error — there is simply nothing to remove.
+    #[test]
+    fn clean_pass_with_missing_dir_is_quiet() {
+        let dir = std::env::temp_dir().join(format!(
+            "gauntlet-clean-test-missing-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(clean_work_dir(&opts_with_clean(true), &dir, true), None);
+        assert!(!dir.exists());
+    }
+
+    /// Adversarial: the filesystem root is refused, never deleted. The
+    /// validation helper is tested directly — this test never attempts a
+    /// real deletion of `/`.
+    #[test]
+    fn clean_target_rejects_root() {
+        assert!(
+            check_clean_target(std::path::Path::new("/")).is_err(),
+            "filesystem root must be refused"
+        );
+    }
+
+    /// Adversarial: the current directory is refused, never deleted.
+    #[test]
+    fn clean_target_rejects_cwd() {
+        let cwd = std::env::current_dir().expect("tests have a cwd");
+        assert!(
+            check_clean_target(&cwd).is_err(),
+            "current directory must be refused"
+        );
+    }
+
+    /// Adversarial: an ancestor of the current directory is refused, never
+    /// deleted — deleting it would recurse into the caller's own tree.
+    #[test]
+    fn clean_target_rejects_cwd_ancestor() {
+        let cwd = std::env::current_dir().expect("tests have a cwd");
+        if let Some(parent) = cwd.parent() {
+            assert!(
+                check_clean_target(parent).is_err(),
+                "ancestor of cwd must be refused: {}",
+                parent.display()
+            );
+        }
+        // When the cwd is `/` itself, the root test above already covers it.
+    }
+
+    /// Adversarial: a `..` that escapes the cwd is caught by lexical
+    /// normalization, not by string inspection.
+    #[test]
+    fn clean_target_rejects_dotdot_escape() {
+        assert!(
+            check_clean_target(std::path::Path::new("..")).is_err(),
+            "`..` escaping the cwd must be refused"
+        );
+    }
+
+    /// Validation: an ordinary scratch dir under the temp dir is accepted.
+    #[test]
+    fn clean_target_accepts_scratch() {
+        let dir = fresh_dir("accept");
+        assert!(
+            check_clean_target(&dir).is_ok(),
+            "scratch dir must be accepted: {}",
+            dir.display()
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Adversarial: a passed run with a refused target exits 2 and the
+    /// target is untouched — validation runs before any deletion.
+    #[test]
+    fn clean_pass_with_refused_target_returns_exit_2() {
+        assert_eq!(
+            clean_work_dir(&opts_with_clean(true), std::path::Path::new("/"), true),
+            Some(ExitCode::from(2)),
+            "refused cleanup target must surface exit 2"
+        );
+    }
+
+    /// Adversarial: a removal that fails (read-only dir, so
+    /// `remove_dir_all` gets `PermissionDenied`) turns the passed run into
+    /// exit 2 and keeps the directory for forensics.
+    #[test]
+    fn clean_removal_failure_returns_exit_2() {
+        let dir = fresh_dir("permfail");
+        let mut perms = std::fs::metadata(&dir)
+            .expect("scratch dir exists")
+            .permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&dir, perms).expect("must set read-only");
+        let code = clean_work_dir(&opts_with_clean(true), &dir, true);
+        assert_eq!(
+            code,
+            Some(ExitCode::from(2)),
+            "cleanup failure must surface exit 2"
+        );
+        assert!(dir.exists(), "dir must be kept when cleanup fails");
+        // Restore write via the mode bits directly: `set_readonly(false)`
+        // trips clippy::permissions_set_readonly_false.
+        std::fs::set_permissions(
+            &dir,
+            <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
+        )
+        .expect("must restore write");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

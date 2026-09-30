@@ -60,13 +60,25 @@
 #   concatenation evaluates. Nothing is hardcoded to 130 except the
 #   named bound `taskCountMax`.
 #
-# INPUT PINS: `nixpkgs` tracks the `nixos-25.05` branch and `flake-utils`
-# tracks its default branch. No `flake.lock` exists yet (no Nix evaluator in
-# the authoring sandbox), so BEFORE this flake is done:
-#   1. run `nix flake lock` on primo,
-#   2. review the lock,
-#   3. commit it.
-# `nix flake check` and every `nix run` app below also execute on primo.
+# INPUT PINS: `nixpkgs` tracks `nixos-25.05`, `flake-utils` its default
+# branch, and `rust-overlay` its default branch; all are pinned by the
+# pinned by `flake.lock` (generated on primo via `nix flake lock`, 2026-09-29; not yet committed):
+#   nixpkgs      nixos-25.05 @ ac62194c3917d5f474c1a844b6fd6da2db95077d (2026-01-02)
+#   flake-utils              @ 11707dc2f618dd54ca8739b309ec4fc024de578b (2024-11-13)
+#   rust-overlay             @ 49b6548d31019e8bfe9d4415193ac1df3c48f53a (2026-09-29)
+# `nix flake check` and every `nix run` app below execute against these pins.
+#
+# DETERMINISTIC TEST ENV: `nix develop` (from this directory) drops into a
+# sterile shell with the pinned toolchain: the exact nightly from the repo's
+# rust-toolchain.toml (nightly-2026-09-25) via rust-overlay, plus neovim for
+# the task drivers, lua, git, jq, and the nix linters. Inside:
+#   cargo build -p phlow-gauntlet --bin gauntlet   # build the runner
+#   cargo test -p phlow-gauntlet --bin gauntlet    # unit tests, incl. --clean
+# Integration tests (tests/) spawn headless nvim and fail closed without
+# it: GAUNTLET_NVIM_BIN=$(which nvim) cargo test -p phlow-gauntlet --test task_01
+# The overlay toolchain is required: nixpkgs stable Rust (1.86) cannot
+# build the workspace — locked deps (ratatui, icu_provider, time, ...)
+# require rustc >= 1.88 (verified 2026-09-29).
 #
 # HONEST BOUNDARIES (deliberate, documented):
 # - Task apps are NOT sandboxed. Cargo needs network on first run for the
@@ -87,10 +99,19 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
     flake-utils.url = "github:numtide/flake-utils";
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
-    { nixpkgs, flake-utils, ... }:
+    {
+      nixpkgs,
+      flake-utils,
+      rust-overlay,
+      ...
+    }:
     let
       inherit (nixpkgs) lib;
 
@@ -1746,8 +1767,23 @@
     flake-utils.lib.eachDefaultSystem (
       system:
       let
-        pkgs = import nixpkgs { inherit system; };
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ rust-overlay.overlays.default ];
+        };
         inherit (pkgs) writeShellApplication;
+
+        # Pinned project toolchain: the exact nightly from the repo's
+        # rust-toolchain.toml (nightly-2026-09-25), with the repo's
+        # components (rustfmt, clippy). Required: nixpkgs stable Rust
+        # (1.86) cannot build the workspace — locked deps (ratatui,
+        # icu_provider, time, ...) need rustc >= 1.88 (verified 2026-09-29).
+        rustToolchain = pkgs.rust-bin.nightly."2026-09-25".default.override {
+          extensions = [
+            "rustfmt"
+            "clippy"
+          ];
+        };
 
         # Wrap a writeShellApplication derivation as a flake app.
         # Contract: drv exposes one bin/<name> entry point; rejected inputs:
@@ -1769,7 +1805,7 @@
           writeShellApplication {
             name = "gauntlet-${task.id}";
             runtimeInputs = [
-              pkgs.cargo
+              rustToolchain
               pkgs.git
               pkgs.coreutils
             ];
@@ -1928,8 +1964,7 @@
         # the toolchain is pinned, the registry is not vendored).
         devShells.default = pkgs.mkShell {
           packages = [
-            pkgs.cargo
-            pkgs.rustc
+            rustToolchain
             pkgs.neovim
             pkgs.lua5_4
             pkgs.stylua
@@ -1940,7 +1975,8 @@
             pkgs.nixfmt-rfc-style
           ];
           shellHook = ''
-            echo "phlow gauntlet dev shell (nixpkgs nixos-25.05; flake.lock committed on primo)"
+            echo "phlow gauntlet dev shell (nixpkgs nixos-25.05; rust nightly-2026-09-25)"
+            echo "flake.lock present (generated on primo, not yet committed)"
             cargo --version
             rustc --version
             nvim --version | head -n 1 || true
