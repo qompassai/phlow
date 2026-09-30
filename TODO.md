@@ -3,6 +3,11 @@
 Publish targets: crates.io (25 workspace crates) + GitHub release with the
 Linux tarball. Runbook: `scripts/publish/RUNBOOK.md`.
 
+The workspace has 27 members; the 2 Mojo crates (`kernels/mojo`,
+`workers/phlow-mojo-worker`) carry `publish = false` -- the kernels
+need the Mojo toolchain and the worker is a simulated test double.
+They build and test with the workspace but never ship to crates.io.
+
 ## Done (agent-side)
 
 - [x] crates.io metadata on all 25 crates (description/license/repository)
