@@ -1,6 +1,9 @@
 [package]
 name = "phlow-agent"
 version = "0.1.0"
+description = "Bounded agent layer for the phlow runtime: conversation context, orchestrator, and SQLite FTS5 memory store"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/qompassai/phlow"
 edition = "2024"
 
 [dependencies]

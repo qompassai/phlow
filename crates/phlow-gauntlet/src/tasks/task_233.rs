@@ -62,33 +62,6 @@ exit 0
     }
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn absolute_binary_runs() {
-        let result = super::case(0);
-        assert!(matches!(result, Ok(true)), "{result:?}");
-    }
-
-    #[test]
-    fn relative_alias_runs() {
-        let result = super::case(1);
-        assert!(matches!(result, Ok(true)), "{result:?}");
-    }
-
-    #[test]
-    fn canonical_path_recorded() {
-        let result = super::case(2);
-        assert!(matches!(result, Ok(true)), "{result:?}");
-    }
-
-    #[test]
-    fn digest_recorded() {
-        let result = super::case(3);
-        assert!(matches!(result, Ok(true)), "{result:?}");
-    }
-}
-
 use phlow_runtime::{MsgpackTransport, ReqwestTransport, Runtime};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -519,4 +492,31 @@ for index in range(int(sys.argv[1])):
         }
     }
     Ok(report["checks"][0]["status"] == expected)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn absolute_binary_runs() {
+        let result = super::case(0);
+        assert!(matches!(result, Ok(true)), "{result:?}");
+    }
+
+    #[test]
+    fn relative_alias_runs() {
+        let result = super::case(1);
+        assert!(matches!(result, Ok(true)), "{result:?}");
+    }
+
+    #[test]
+    fn canonical_path_recorded() {
+        let result = super::case(2);
+        assert!(matches!(result, Ok(true)), "{result:?}");
+    }
+
+    #[test]
+    fn digest_recorded() {
+        let result = super::case(3);
+        assert!(matches!(result, Ok(true)), "{result:?}");
+    }
 }

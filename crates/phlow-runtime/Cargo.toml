@@ -1,6 +1,9 @@
 [package]
 name = "phlow-runtime"
 version = "0.2.0"
+description = "The safe agent runtime: bounded planner, coder, host verification, and reviewer"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/qompassai/phlow"
 edition = "2024"
 
 [dependencies]

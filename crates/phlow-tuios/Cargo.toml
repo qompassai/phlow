@@ -1,6 +1,9 @@
 [package]
 name = "phlow-tuios"
 version = "0.1.0"
+description = "Session multiplexing for phlow (terminal multiplexer)"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/qompassai/phlow"
 edition = "2024"
 
 [dependencies]

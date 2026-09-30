@@ -1,6 +1,9 @@
 [package]
 name = "phlow-editor"
 version = "0.2.0"
+description = "Private Neovim socket bridge for the phlow agent runtime"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/qompassai/phlow"
 edition = "2024"
 
 [dependencies]

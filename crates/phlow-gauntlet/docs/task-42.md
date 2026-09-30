@@ -36,7 +36,7 @@ truncation, whole-log rewrite — have no target.
   `crates/*/src/**/*.rs` for integrity-mechanism tokens (assembled
   at runtime so the probe cannot self-match; the probe's own file is
   path-excluded because the task NAME contains the design
-  vocabulary), plus classification of the two grow-only structures
+  vocabulary), plus classification of the three grow-only structures
   the scan does find.
 - **Success criterion:** any post-hoc modification is *detectable*
   with the tampered entry identified; verification is a runnable
@@ -54,7 +54,7 @@ is no journal to tamper with:
   zero integrity-mechanism tokens across the workspace — no entry
   linking, no sealing keys, no tamper-evidence journaling in any
   phlow source.
-- `grow_only_stores_lack_verification` (V): the two grow-only
+- `grow_only_stores_lack_verification` (V): the three grow-only
   structures the scan does find are classified and rejected.
   `ConsumedApprovals` (`phlow-experiment/src/promotion.rs`)
   persists single-use approval ids as one-JSON-object-per-line
@@ -64,8 +64,13 @@ is no journal to tamper with:
   verifier. `FusionReceipt.log`
   (`phlow-tools/src/solpi/action_fusion.rs`) is an in-memory
   `Vec<String>` decision log — never persisted, no integrity at
-  all. Zero integrity-mechanism tokens appear near either
-  structure.
+  all. `ApprovalQueue.records`
+  (`phlow-approval/src/queue.rs`) is a bounded in-memory
+  `Vec<Record>` — "append-only" only as a doc note that a full
+  queue rejects new requests instead of evicting old decisions;
+  never persisted, no entry linking, no sealing key, no verifier.
+  Zero integrity-mechanism tokens appear near any of the three
+  structures.
 - `byte_flip_has_no_verifier` (A): flipping a byte in an old entry
   would need a writer and a verifier; neither exists. No tamper
   detection was measured because there is no journal to tamper —
@@ -98,10 +103,12 @@ was an honest probe:
   `crates/phlow-experiment/src/promotion.rs`
   (`ConsumedApprovals`, `evict_expired`),
   `crates/phlow-tools/src/solpi/action_fusion.rs`
-  (`FusionReceipt.log`).
+  (`FusionReceipt.log`),
+  `crates/phlow-approval/src/queue.rs`
+  (`ApprovalQueue.records`).
 - **Validation agents:** the 2 validation tests pin the
   `fail`-at-`seam` verdict and prove the scan ran over the real
-  tree (zero integrity tokens; the two grow-only structures found
+  tree (zero integrity tokens; the three grow-only structures found
   and classified).
 - **Adversarial agents:** the 2 adversarial tests pin the
   no-verifier / no-head-hash evidence and rule out a probe crash
@@ -123,11 +130,14 @@ The mechanism scan returns zero hits: no phlow source names entry
 linking between consecutive records, a sealing key, or
 tamper-evidence journaling. The grow-only scan returns exactly the
 known structures: `ConsumedApprovals` in promotion.rs (the JSONL
-replay store — one `{"id","expires_ms"}` object per line,
-`evict_expired` dropping dead entries past the TTL) and
+replay store — one `{\"id\",\"expires_ms\"}` object per line,
+`evict_expired` dropping dead entries past the TTL),
 `FusionReceipt.log` in action_fusion.rs (a bounded in-memory
-`Vec<String>`), plus this task's own NAME echoed in the task-36
-doc. Each is classified against the design's criteria and rejected:
+`Vec<String>`), and `ApprovalQueue.records` in queue.rs (a bounded
+in-memory `Vec<Record>` whose "append-only" doc note only describes
+full-queue rejection instead of eviction), plus this task's own NAME
+echoed in the task-36 doc. Each is classified against the design's
+criteria and rejected:
 the replay store's entries expire (anti-journal), neither links
 entries, neither seals, neither verifies.
 

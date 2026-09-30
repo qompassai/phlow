@@ -1,6 +1,9 @@
 [package]
 name = "phlow-cli"
 version = "0.1.0"
+description = "The `phlow` command-line interface: CLI, TUI, and MCP surfaces over one safe agent runtime"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/qompassai/phlow"
 edition = "2024"
 
 # One entrypoint: `phlow`. Autodiscovery maps src/bin/phlow.rs to the

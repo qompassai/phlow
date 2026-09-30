@@ -1,6 +1,9 @@
 [package]
 name = "phlow-self-improve"
 version = "0.1.0"
+description = "Self-improvement surfaces for phlow: feedback store and read-only skill store"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/qompassai/phlow"
 edition = "2024"
 
 [dependencies]

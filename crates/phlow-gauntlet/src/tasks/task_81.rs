@@ -251,13 +251,14 @@ fn chat_messages() -> Vec<Value> {
 }
 
 /// V1: there is no auth surface to classify. Exact-token scans for the
-/// auth vocabulary over `phlow-llm/src` find zero hits, and
+/// auth vocabulary over `phlow-llm/src` find only the credential
+/// scrubber's own test fixtures (`redact.rs`, classified), and
 /// `OllamaConfig` carries no key field.
 fn case_no_auth_surface() -> Result<CaseReport, DriverError> {
     const CASE: &str = "no_auth_surface";
     let mut evidence = Vec::new();
     let root = workspace_root()?;
-    let mut total_hits = 0usize;
+    let mut unexplained_hits = 0usize;
     for token in ["authorization", "api_key", "bearer", "401", "403"] {
         let hits = scan_sources(&root, "phlow-llm", token)?;
         evidence.push(format!(
@@ -265,9 +266,17 @@ fn case_no_auth_surface() -> Result<CaseReport, DriverError> {
             hits.len()
         ));
         for hit in &hits {
+            // redact.rs is the credential scrubber: its Authorization/Bearer
+            // hits are test fixtures for header shapes it must redact, not
+            // an auth surface — it never sends credentials, it removes them
+            // (prompts.rs scrubs file text before model calls).
+            if hit.contains("redact.rs") {
+                evidence.push(format!("  classified hit (credential scrubber): {hit}"));
+                continue;
+            }
             evidence.push(format!("  unexpected hit: {hit}"));
+            unexplained_hits += 1;
         }
-        total_hits += hits.len();
     }
     evidence.push(
         "OllamaConfig fields (crates/phlow-config/src/model.rs:180-187): base_url, model, \
@@ -281,10 +290,12 @@ fn case_no_auth_surface() -> Result<CaseReport, DriverError> {
          no Authorization header slot at all)"
             .to_string(),
     );
-    if total_hits != 0 {
+    if unexplained_hits != 0 {
         return Ok(CaseReport::fail(
             CASE,
-            format!("{total_hits} auth-vocabulary hit(s) — the absence finding is refuted"),
+            format!(
+                "{unexplained_hits} unexplained auth-vocabulary hit(s) — the absence finding is refuted"
+            ),
             evidence,
         ));
     }

@@ -123,7 +123,7 @@ third-party secret-type crate. The walk covers every `.rs` file
 under a `src/` directory in `crates/` — including the gauntlet
 crate itself — bounded by file size (1 MiB) and file count
 (50,000); the probe prose avoids the literal tokens so it cannot
-self-match. Result: zero hits.
+self-match. Result: one classified prose hit — task_211.rs documents that approval IDs are NOT protected by secrecy ("authority comes from the operator allowlist, not ID secrecy"), the opposite of a structural secret type; zero unexplained hits.
 
 The adjacent mechanism gets its own case rather than a
 hand-wave. `strip_source_echo` keeps the first line of a TOML

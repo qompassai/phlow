@@ -72,12 +72,12 @@ fn no_structural_secret_types_in_sources() {
     assert_eq!(
         report.metrics["wrapper_hits"],
         serde_json::json!(0),
-        "no structural-secret vocabulary may exist in sources"
+        "no unexplained structural-secret vocabulary may exist in sources"
     );
     let evidence = report.evidence.join("\n");
     assert!(
-        evidence.contains("hits: 0"),
-        "evidence must show the hit count:\n{evidence}"
+        evidence.contains("hits: 1") && evidence.contains("zero unexplained hits"),
+        "evidence must show the raw hit count and the classification:\n{evidence}"
     );
 }
 

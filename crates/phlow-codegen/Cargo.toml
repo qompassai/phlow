@@ -1,6 +1,9 @@
 [package]
 name = "phlow-codegen"
 version = "0.1.0"
+description = "Code generation surfaces for phlow: language profiles, fail-closed code validator, and bounded app generator"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/qompassai/phlow"
 edition = "2024"
 
 [dependencies]

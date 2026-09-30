@@ -3,11 +3,12 @@
 //! There is NO tamper-evident journal seam in the phlow workspace: a
 //! runtime vocabulary scan over every `crates/*/src/**/*.rs` finds
 //! zero integrity-mechanism tokens (no entry linking, no sealing keys,
-//! no tamper-evidence journaling). The two grow-only structures that
+//! no tamper-evidence journaling). The three grow-only structures that
 //! DO exist are classified and rejected as the seam —
 //! `ConsumedApprovals` (phlow-experiment) is replay protection with
 //! expiring entries, `FusionReceipt.log` (phlow-tools) is an
-//! in-memory `Vec<String>`. The design's adversarial weapons (byte
+//! in-memory `Vec<String>`, `ApprovalQueue.records` (phlow-approval)
+//! is a bounded in-memory `Vec<Record>`. The design's adversarial weapons (byte
 //! flip in an old entry, tail truncation, whole-log rewrite) have no
 //! target: no writer, no verifier, no head-hash tracking. The driver
 //! is an audit-only driver and reports the honest

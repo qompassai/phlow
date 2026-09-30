@@ -311,9 +311,10 @@ fn case_no_snapshot_revision_cache() -> Result<CaseReport, DriverError> {
     // Crates whose snapshot/revision vocabulary is verified unrelated:
     // workspace file snapshots, editor snapshots, run snapshots and
     // report revisions, context snapshots, experiment snapshots and
-    // manifests, council workflow revisions, check-runner revisions —
+    // manifests, council workflow revisions, check-runner revisions,
+    // approval-record snapshots (owned Record copies, not model data) —
     // plus the gauntlet harness's own probe vocabulary.
-    const CLASSIFIED_CRATES: [&str; 8] = [
+    const CLASSIFIED_CRATES: [&str; 9] = [
         "phlow-workspace",
         "phlow-editor",
         "phlow-runtime",
@@ -322,6 +323,7 @@ fn case_no_snapshot_revision_cache() -> Result<CaseReport, DriverError> {
         "phlow-council",
         "phlow-checks",
         "phlow-gauntlet",
+        "phlow-approval",
     ];
     let root = workspace_root()?;
     let hits = scan_sources(&root, &["snapshot", "blob", "revision"])?;
@@ -344,8 +346,9 @@ fn case_no_snapshot_revision_cache() -> Result<CaseReport, DriverError> {
     }
     evidence.push(format!(
         "all {} hits classified into unrelated senses (workspace/editor/run/context/\
-         experiment snapshots, report/manifest/workflow revisions, harness \
-         vocabulary): no blob cache, no resume logic, no model revision pinning",
+         experiment snapshots, approval-record snapshots, report/manifest/workflow \
+         revisions, harness vocabulary): no blob cache, no resume logic, no model \
+         revision pinning",
         hits.len()
     ));
     Ok(CaseReport::pass(
