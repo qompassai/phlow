@@ -66,11 +66,69 @@ pub enum FrameRead {
 }
 
 /// The MCP server: initialize/ready lifecycle plus tool dispatch.
+///
+/// The server is dual-era. The legacy era (`2025-11-25` and older,
+/// selected by the `initialize` handshake) keeps the exact byte-level
+/// behavior of the Python server. The modern era (`2026-07-28`,
+/// selected by per-request `_meta`) is stateless: no handshake, every
+/// request carries its version and client capabilities, every result
+/// carries `resultType` and `serverInfo`.
 pub struct McpServer<R: McpRuntime> {
     runtime: R,
     initialized: bool,
     ready: bool,
     frames_read: u64,
+}
+
+/// How a non-`initialize` request selects its era, from its `_meta`.
+///
+/// `initialize` always selects the legacy handshake and never reaches
+/// era classification.
+#[derive(Debug)]
+enum MetaEra {
+    /// No `_meta` object carrying a protocol version: legacy semantics.
+    Legacy,
+    /// Supported modern version declared: stateless modern semantics.
+    Modern,
+    /// `_meta` present but the version is missing, not a string, or not
+    /// implemented: reply `UnsupportedProtocolVersionError` (-32022)
+    /// naming the requested value.
+    BadVersion(String),
+    /// Modern version declared but required `_meta` fields are missing:
+    /// reply Invalid Params naming the problem.
+    BadMeta(&'static str),
+}
+
+/// Select the era for a non-`initialize` request: modern when params
+/// carry `_meta` with `io.modelcontextprotocol/protocolVersion`, legacy
+/// otherwise.
+fn classify_meta(request: &Map<String, Value>) -> MetaEra {
+    let meta = request
+        .get("params")
+        .and_then(|params| params.as_object())
+        .and_then(|params| params.get("_meta"))
+        .and_then(|meta| meta.as_object());
+    let Some(meta) = meta else {
+        return MetaEra::Legacy;
+    };
+    let version = meta
+        .get(protocol::META_PROTOCOL_VERSION)
+        .and_then(|version| version.as_str());
+    let Some(version) = version else {
+        return MetaEra::BadVersion(String::new());
+    };
+    if !protocol::MODERN_SUPPORTED_VERSIONS.contains(&version) {
+        return MetaEra::BadVersion(version.to_owned());
+    }
+    if !meta
+        .get(protocol::META_CLIENT_CAPABILITIES)
+        .is_some_and(|capabilities| capabilities.is_object())
+    {
+        return MetaEra::BadMeta(
+            "Modern requests require _meta.io.modelcontextprotocol/clientCapabilities",
+        );
+    }
+    MetaEra::Modern
 }
 
 impl<R: McpRuntime> McpServer<R> {
@@ -136,6 +194,28 @@ impl<R: McpRuntime> McpServer<R> {
                 "Params must be an object",
             ));
         }
+        // From here the envelope is valid. Era selection: `initialize`
+        // always means the legacy handshake; any other method whose params
+        // carry modern `_meta` is served statelessly per 2026-07-28.
+        // Requests without `_meta` keep legacy semantics.
+        if method != Some("initialize") {
+            match classify_meta(request) {
+                MetaEra::Legacy => {}
+                MetaEra::Modern => {
+                    let params = request.get("params");
+                    return self.handle_modern(&id, method, params, raw_id.is_some());
+                }
+                MetaEra::BadVersion(requested) => {
+                    // Notifications never get a reply, even invalid ones.
+                    raw_id?;
+                    return Some(protocol::unsupported_version_value(&id, &requested));
+                }
+                MetaEra::BadMeta(reason) => {
+                    raw_id?;
+                    return Some(protocol::error_value(&id, INVALID_PARAMS, reason));
+                }
+            }
+        }
         // From here the envelope is valid; notifications never execute tools.
         if raw_id.is_none() {
             if method == Some("notifications/initialized") && self.initialized {
@@ -157,10 +237,46 @@ impl<R: McpRuntime> McpServer<R> {
             Some("tools/list") => Some(protocol::result_value(&id, protocol::tools_list_value())),
             Some("tools/call") => {
                 let params = request.get("params");
-                Some(self.tools_call(&id, params))
+                Some(self.tools_call(&id, params, false))
             }
             Some(other) => Some(protocol::error_value(
                 &id,
+                METHOD_NOT_FOUND,
+                &format!("Method not found: {other}"),
+            )),
+            None => None,
+        }
+    }
+
+    /// Dispatch one modern (2026-07-28) request: stateless, no
+    /// handshake, no ready-gating. Returns `None` for notifications,
+    /// which never get a reply.
+    fn handle_modern(
+        &mut self,
+        id: &RequestId,
+        method: Option<&str>,
+        params: Option<&Value>,
+        has_id: bool,
+    ) -> Option<Value> {
+        if !has_id {
+            // Modern notifications (e.g. `notifications/cancelled`)
+            // carry no server-side state to update; silence answers them.
+            return None;
+        }
+        match method {
+            Some("server/discover") => Some(protocol::result_value(id, protocol::discover_value())),
+            Some("tools/list") => Some(protocol::result_value(
+                id,
+                protocol::modern_tools_list_value(),
+            )),
+            Some("tools/call") => {
+                let envelope = self.tools_call(id, params, true);
+                Some(protocol::modernize_envelope(envelope))
+            }
+            // `ping` was removed from the modern protocol; every unknown
+            // method is method-not-found, exactly like the legacy path.
+            Some(other) => Some(protocol::error_value(
+                id,
                 METHOD_NOT_FOUND,
                 &format!("Method not found: {other}"),
             )),
@@ -216,8 +332,15 @@ impl<R: McpRuntime> McpServer<R> {
     }
 
     /// Handle `tools/call`: strict params, schema-validated arguments, then dispatch.
-    fn tools_call(&mut self, id: &RequestId, params: Option<&Value>) -> Value {
-        debug_assert!(self.ready, "tools/call is only dispatched when ready");
+    ///
+    /// `modern` selects the 2026-07-28 parameter set and skips the legacy
+    /// ready-gate: modern requests are stateless, so `ready` is never set
+    /// for them.
+    fn tools_call(&mut self, id: &RequestId, params: Option<&Value>, modern: bool) -> Value {
+        debug_assert!(
+            self.ready || modern,
+            "tools/call is only dispatched when ready, or stateless in the modern era"
+        );
         let params_obj = match params.map(phlow_json::object_map) {
             Some(Ok(params_obj)) => params_obj,
             _ => {
@@ -225,11 +348,15 @@ impl<R: McpRuntime> McpServer<R> {
             }
         };
         // Strict: unknown tools/call parameters are rejected even though the
-        // schema would ignore them. `_meta` is the MCP extension point.
-        if params_obj
-            .keys()
-            .any(|key| !matches!(key.as_str(), "name" | "arguments" | "_meta"))
-        {
+        // schema would ignore them. `_meta` is the MCP extension point; the
+        // modern era additionally names the multi-round-trip retry fields,
+        // which this server accepts and ignores (it never returns
+        // `input_required`, so no retry can ever be meaningful).
+        let allowed = |key: &str| {
+            matches!(key, "name" | "arguments" | "_meta")
+                || (modern && matches!(key, "inputResponses" | "requestState"))
+        };
+        if params_obj.keys().any(|key| !allowed(key.as_str())) {
             return protocol::error_value(id, INVALID_PARAMS, "Unknown tools/call parameters");
         }
         let name = params_obj
@@ -682,6 +809,9 @@ mod tests {
             ("2025-03-26", "2025-03-26"),
             ("1999-01-01", "2025-11-25"),
             ("", "2025-11-25"),
+            // A modern version in `initialize` still selects the legacy
+            // handshake: `initialize` means legacy semantics, always.
+            ("2026-07-28", "2025-11-25"),
         ] {
             let mut server = McpServer::new(FakeRuntime::ok());
             let frame = format!(
@@ -942,5 +1072,209 @@ mod tests {
         assert!(reply.contains("\"isError\": true"), "{reply}");
         assert!(reply.contains("\"status\": \"error\""), "{reply}");
         assert!(reply.contains("boom"), "{reply}");
+    }
+
+    /// The `_meta` block a modern client puts on every request.
+    fn modern_meta() -> &'static str {
+        r#""_meta": {"io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {}, "io.modelcontextprotocol/clientInfo": {"name": "t", "version": "1"}}"#
+    }
+
+    /// Build a modern request frame with the standard `_meta`.
+    fn modern_frame(id: u64, method: &str, params: &str) -> Vec<u8> {
+        let params = if params.is_empty() {
+            modern_meta().to_owned()
+        } else {
+            format!("{params}, {}", modern_meta())
+        };
+        format!(
+            "{{\"jsonrpc\": \"2.0\", \"id\": {id}, \"method\": \"{method}\", \
+              \"params\": {{{params}}}}}"
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn discover_reports_modern_versions() {
+        let mut server = McpServer::new(FakeRuntime::ok());
+        let frame = modern_frame(1, "server/discover", "");
+        let reply = server.reply(&frame).expect("discover gets a reply");
+        let reply: Value = serde_json::from_slice(&reply).unwrap();
+        let result = &reply["result"];
+        assert_eq!(result["resultType"], "complete");
+        assert_eq!(
+            result["supportedVersions"],
+            serde_json::json!(["2026-07-28"])
+        );
+        assert!(result["capabilities"]["tools"].is_object());
+        assert_eq!(
+            result["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
+            "flow"
+        );
+        assert!(!result["instructions"].as_str().unwrap().is_empty());
+        assert_eq!(result["ttlMs"], 3_600_000);
+        assert_eq!(result["cacheScope"], "public");
+        // Stateless: no handshake happened, the server is still not ready.
+        assert!(!server.is_ready());
+    }
+
+    #[test]
+    fn modern_tools_list_is_stateless_and_complete() {
+        let mut server = McpServer::new(FakeRuntime::ok());
+        let frame = modern_frame(2, "tools/list", "");
+        let reply = server.reply(&frame).expect("tools/list gets a reply");
+        let reply: Value = serde_json::from_slice(&reply).unwrap();
+        let result = &reply["result"];
+        assert_eq!(result["resultType"], "complete");
+        let names: Vec<&str> = result["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["flow_run", "flow_status", "flow_check"]);
+        assert_eq!(result["ttlMs"], 3_600_000);
+        assert_eq!(result["cacheScope"], "public");
+        assert_eq!(
+            result["_meta"]["io.modelcontextprotocol/serverInfo"]["version"],
+            "0.2.0"
+        );
+        assert!(!server.is_ready());
+    }
+
+    #[test]
+    fn modern_tools_call_round_trip() {
+        let mut server = McpServer::new(FakeRuntime::ok());
+        let frame = modern_frame(3, "tools/call", r#""name": "flow_status", "arguments": {}"#);
+        let reply = server.reply(&frame).expect("tools/call gets a reply");
+        let reply: Value = serde_json::from_slice(&reply).unwrap();
+        let result = &reply["result"];
+        assert_eq!(result["resultType"], "complete");
+        assert_eq!(result["isError"], false);
+        assert!(result["structuredContent"]["status"].is_string());
+        assert!(!server.is_ready());
+    }
+
+    #[test]
+    fn unknown_modern_version_gets_unsupported_version_error() {
+        let mut server = McpServer::new(FakeRuntime::ok());
+        let frame = br#"{"jsonrpc": "2.0", "id": 4, "method": "tools/list", "params": {"_meta": {"io.modelcontextprotocol/protocolVersion": "1999-01-01", "io.modelcontextprotocol/clientCapabilities": {}}}}"#;
+        let reply = server.reply(frame).expect("a version error gets a reply");
+        let reply: Value = serde_json::from_slice(&reply).unwrap();
+        assert_eq!(reply["error"]["code"], -32022);
+        assert_eq!(reply["error"]["data"]["requested"], "1999-01-01");
+        assert_eq!(
+            reply["error"]["data"]["supported"],
+            serde_json::json!(["2026-07-28"])
+        );
+    }
+
+    #[test]
+    fn meta_without_a_version_is_an_unsupported_version_error() {
+        let mut server = McpServer::new(FakeRuntime::ok());
+        let frame = br#"{"jsonrpc": "2.0", "id": 5, "method": "tools/list", "params": {"_meta": {"io.modelcontextprotocol/clientCapabilities": {}}}}"#;
+        let reply = server.reply(frame).expect("a version error gets a reply");
+        let reply: Value = serde_json::from_slice(&reply).unwrap();
+        assert_eq!(reply["error"]["code"], -32022);
+        assert_eq!(reply["error"]["data"]["requested"], "");
+    }
+
+    #[test]
+    fn modern_request_without_client_capabilities_is_invalid_params() {
+        let mut server = McpServer::new(FakeRuntime::ok());
+        let frame = br#"{"jsonrpc": "2.0", "id": 6, "method": "tools/list", "params": {"_meta": {"io.modelcontextprotocol/protocolVersion": "2026-07-28"}}}"#;
+        let reply = server.reply(frame).expect("a meta error gets a reply");
+        let reply: Value = serde_json::from_slice(&reply).unwrap();
+        assert_eq!(reply["error"]["code"], -32602);
+    }
+
+    #[test]
+    fn modern_ping_is_method_not_found() {
+        // `ping` was removed from the modern protocol.
+        let mut server = McpServer::new(FakeRuntime::ok());
+        let frame = modern_frame(7, "ping", "");
+        let reply = server.reply(&frame).expect("ping gets a reply");
+        let reply: Value = serde_json::from_slice(&reply).unwrap();
+        assert_eq!(reply["error"]["code"], -32601);
+    }
+
+    #[test]
+    fn modern_notifications_get_no_reply() {
+        let mut server = McpServer::new(FakeRuntime::ok());
+        let frame = format!(
+            "{{\"jsonrpc\": \"2.0\", \"method\": \"notifications/cancelled\", \
+              \"params\": {{{}}}}}",
+            modern_meta()
+        );
+        assert!(server.reply(frame.as_bytes()).is_none());
+        // An invalid modern notification is dropped silently too.
+        let bad = br#"{"jsonrpc": "2.0", "method": "tools/list", "params": {"_meta": {"io.modelcontextprotocol/protocolVersion": "1999-01-01", "io.modelcontextprotocol/clientCapabilities": {}}}}"#;
+        assert!(server.reply(bad).is_none());
+    }
+
+    #[test]
+    fn discover_without_meta_uses_legacy_semantics() {
+        // A `server/discover` without modern `_meta` is a legacy request:
+        // unknown method on an uninitialized server. That non-modern error
+        // is exactly what a dual-era client probes for before falling back
+        // to the `initialize` handshake.
+        let mut server = McpServer::new(FakeRuntime::ok());
+        let frame = br#"{"jsonrpc": "2.0", "id": 1, "method": "server/discover"}"#;
+        let reply: Value = serde_json::from_slice(&server.reply(frame).unwrap()).unwrap();
+        assert_eq!(reply["error"]["code"], -32002);
+    }
+
+    #[test]
+    fn legacy_and_modern_share_one_server() {
+        let mut server = McpServer::new(FakeRuntime::ok());
+        // Modern traffic first: stateless, no handshake.
+        let discover = modern_frame(1, "server/discover", "");
+        assert!(server.reply(&discover).is_some());
+        assert!(!server.is_ready());
+        // Then the legacy handshake on the same server, unchanged.
+        let init = br#"{"jsonrpc": "2.0", "id": 2, "method": "initialize", "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}}"#;
+        let reply = String::from_utf8(server.reply(init).unwrap()).unwrap();
+        assert!(
+            reply.contains("\"protocolVersion\": \"2025-11-25\""),
+            "{reply}"
+        );
+        assert!(
+            server
+                .reply(br#"{"jsonrpc": "2.0", "method": "notifications/initialized"}"#)
+                .is_none()
+        );
+        assert!(server.is_ready());
+        // Legacy tools/list keeps the earlier-protocol shape (no resultType).
+        let list = br#"{"jsonrpc": "2.0", "id": 3, "method": "tools/list"}"#;
+        let reply: Value = serde_json::from_slice(&server.reply(list).unwrap()).unwrap();
+        assert!(reply["result"].get("resultType").is_none());
+        // And modern tools/list still works after the handshake.
+        let modern_list = modern_frame(4, "tools/list", "");
+        let reply: Value = serde_json::from_slice(&server.reply(&modern_list).unwrap()).unwrap();
+        assert_eq!(reply["result"]["resultType"], "complete");
+    }
+
+    #[test]
+    fn modern_tools_call_accepts_mrtr_retry_fields() {
+        // This server never returns `input_required`, so a client's
+        // multi-round-trip retry fields are accepted and ignored.
+        let mut server = McpServer::new(FakeRuntime::ok());
+        let frame = modern_frame(
+            8,
+            "tools/call",
+            r#""name": "flow_status", "arguments": {}, "inputResponses": {}, "requestState": "abc""#,
+        );
+        let reply: Value = serde_json::from_slice(&server.reply(&frame).unwrap()).unwrap();
+        assert_eq!(reply["result"]["resultType"], "complete");
+        assert_eq!(reply["result"]["isError"], false);
+    }
+
+    #[test]
+    fn legacy_tools_call_still_rejects_unknown_params() {
+        // The legacy strict-params rule is unchanged: the retry fields are
+        // a modern-era allowance only.
+        let mut server = initialized_server();
+        let frame = br#"{"jsonrpc": "2.0", "id": 9, "method": "tools/call", "params": {"name": "flow_status", "arguments": {}, "inputResponses": {}}}"#;
+        let reply: Value = serde_json::from_slice(&server.reply(frame).unwrap()).unwrap();
+        assert_eq!(reply["error"]["code"], -32602);
     }
 }

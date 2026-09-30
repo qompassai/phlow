@@ -9,11 +9,44 @@ use crate::json_ascii::is_integer_text;
 use serde_json::{Map, Number, Value, json};
 use std::sync::LazyLock;
 
-/// The protocol version this server speaks.
+/// The newest handshake-era protocol version this server negotiates.
 pub const PROTOCOL_VERSION: &str = "2025-11-25";
-/// Older protocol versions a client may request; unknown versions negotiate
-/// up to [`PROTOCOL_VERSION`].
+/// Older handshake-era protocol versions a client may request in
+/// `initialize`; unknown versions negotiate up to [`PROTOCOL_VERSION`].
+/// `2026-07-28` is not here on purpose: it is the modern era and is
+/// selected by per-request `_meta`, never by the handshake.
 pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26"];
+/// Modern protocol version: every request carries `_meta` naming the
+/// version, and there is no `initialize`/`notifications/initialized`
+/// handshake. A dual-era server selects behavior from how the client
+/// opens: modern `_meta` means stateless modern semantics, `initialize`
+/// means legacy handshake semantics.
+pub const MODERN_PROTOCOL_VERSION: &str = "2026-07-28";
+/// Modern protocol versions accepted in per-request `_meta`.
+pub const MODERN_SUPPORTED_VERSIONS: &[&str] = &[MODERN_PROTOCOL_VERSION];
+/// `UnsupportedProtocolVersionError` (-32022): the server does not
+/// implement the version a modern request declared in `_meta`. The
+/// error's `data` names the versions it does implement (`supported`)
+/// and the one the client asked for (`requested`).
+pub const UNSUPPORTED_PROTOCOL_VERSION: i32 = -32022;
+/// `_meta` key carrying the per-request protocol version. Required on
+/// every modern request; its presence is what selects the modern era.
+pub const META_PROTOCOL_VERSION: &str = "io.modelcontextprotocol/protocolVersion";
+/// `_meta` key carrying the client's capabilities. Required on every
+/// modern request.
+pub const META_CLIENT_CAPABILITIES: &str = "io.modelcontextprotocol/clientCapabilities";
+/// `_meta` key carrying the client's identity. Optional on modern
+/// requests; accepted and ignored when present.
+pub const META_CLIENT_INFO: &str = "io.modelcontextprotocol/clientInfo";
+/// `_meta` key carrying the server's identity. The server puts it in
+/// every modern result's `_meta`.
+pub const META_SERVER_INFO: &str = "io.modelcontextprotocol/serverInfo";
+/// Freshness hint, in milliseconds, for cacheable modern results: the
+/// tool catalog and server identity are compile-time constants.
+pub const CACHE_TTL_MS: u64 = 3_600_000;
+/// Cache scope for modern list/discover results: the catalog carries no
+/// user data, so shared intermediaries may cache it.
+pub const CACHE_SCOPE: &str = "public";
 /// Largest accepted frame: 1 MiB, matching the Python server.
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 /// `serverInfo.name` is `"flow"` for compatibility with existing clients,
@@ -172,14 +205,48 @@ impl RequestId {
 /// Build a JSON-RPC error envelope value with the exact field order the
 /// Python server emits: `jsonrpc`, `id`, `error`.
 pub fn error_value(id: &RequestId, code: i32, message: &str) -> Value {
+    error_value_with_data(id, code, message, None)
+}
+
+/// Build a JSON-RPC error envelope value with a `data` payload appended
+/// after `message` inside `error` (field order: `code`, `message`,
+/// `data`).
+fn error_value_with_data(id: &RequestId, code: i32, message: &str, data: Option<Value>) -> Value {
     let mut envelope = Map::new();
     envelope.insert("jsonrpc".to_owned(), Value::String("2.0".to_owned()));
     envelope.insert("id".to_owned(), id.to_json());
     let mut error = Map::new();
     error.insert("code".to_owned(), Value::from(code));
     error.insert("message".to_owned(), Value::String(message.to_owned()));
+    if let Some(data) = data {
+        error.insert("data".to_owned(), data);
+    }
     envelope.insert("error".to_owned(), Value::Object(error));
     Value::Object(envelope)
+}
+
+/// Build an `UnsupportedProtocolVersionError` (-32022) envelope for a
+/// modern request whose `_meta` names a version this server does not
+/// implement. `data` carries `supported` (the modern versions this
+/// server implements) and `requested` (what the client asked for).
+pub fn unsupported_version_value(id: &RequestId, requested: &str) -> Value {
+    let mut data = Map::new();
+    data.insert(
+        "supported".to_owned(),
+        Value::Array(
+            MODERN_SUPPORTED_VERSIONS
+                .iter()
+                .map(|version| Value::String((*version).to_owned()))
+                .collect(),
+        ),
+    );
+    data.insert("requested".to_owned(), Value::String(requested.to_owned()));
+    error_value_with_data(
+        id,
+        UNSUPPORTED_PROTOCOL_VERSION,
+        &format!("Unsupported protocol version: {requested}"),
+        Some(Value::Object(data)),
+    )
 }
 
 /// Build a JSON-RPC result envelope value: `jsonrpc`, `id`, `result`.
@@ -191,24 +258,123 @@ pub fn result_value(id: &RequestId, result: Value) -> Value {
     Value::Object(envelope)
 }
 
-/// Build the `tools/list` result value.
+/// Build one tool's `tools/list` entry value.
+fn tool_value(spec: &ToolSpec) -> Value {
+    let mut tool = Map::new();
+    tool.insert("name".to_owned(), Value::String(spec.name.to_owned()));
+    tool.insert(
+        "description".to_owned(),
+        Value::String(spec.description.to_owned()),
+    );
+    tool.insert("inputSchema".to_owned(), spec.input_schema.clone());
+    Value::Object(tool)
+}
+
+/// Build the `tools/list` result value. The order is deterministic: the
+/// catalog is a static compile-time list.
 pub fn tools_list_value() -> Value {
-    let tools: Vec<Value> = tool_specs()
-        .iter()
-        .map(|spec| {
-            let mut tool = Map::new();
-            tool.insert("name".to_owned(), Value::String(spec.name.to_owned()));
-            tool.insert(
-                "description".to_owned(),
-                Value::String(spec.description.to_owned()),
-            );
-            tool.insert("inputSchema".to_owned(), spec.input_schema.clone());
-            Value::Object(tool)
-        })
-        .collect();
+    let tools: Vec<Value> = tool_specs().iter().map(tool_value).collect();
     let mut result = Map::new();
     result.insert("tools".to_owned(), Value::Array(tools));
     Value::Object(result)
+}
+
+/// Build the `serverInfo` object reported in every modern result's
+/// `_meta`.
+fn server_info_value() -> Value {
+    let mut server_info = Map::new();
+    server_info.insert("name".to_owned(), Value::String(SERVER_NAME.to_owned()));
+    server_info.insert(
+        "version".to_owned(),
+        Value::String(SERVER_VERSION.to_owned()),
+    );
+    Value::Object(server_info)
+}
+
+/// Wrap a result object for the modern era: `resultType: "complete"`
+/// first, then the payload fields, then `_meta` carrying `serverInfo`.
+/// Non-object results pass through unchanged (defensive; callers pass
+/// objects).
+pub fn modern_result(result: Value) -> Value {
+    let Value::Object(fields) = result else {
+        return result;
+    };
+    let mut meta = Map::new();
+    meta.insert(META_SERVER_INFO.to_owned(), server_info_value());
+    let mut modern = Map::new();
+    modern.insert(
+        "resultType".to_owned(),
+        Value::String("complete".to_owned()),
+    );
+    modern.extend(fields);
+    modern.insert("_meta".to_owned(), Value::Object(meta));
+    Value::Object(modern)
+}
+
+/// Build the modern `tools/list` result value: the deterministic tool
+/// catalog plus `resultType`, caching hints, and `serverInfo`.
+pub fn modern_tools_list_value() -> Value {
+    let tools: Vec<Value> = tool_specs().iter().map(tool_value).collect();
+    let mut result = Map::new();
+    result.insert("tools".to_owned(), Value::Array(tools));
+    result.insert("ttlMs".to_owned(), Value::from(CACHE_TTL_MS));
+    result.insert(
+        "cacheScope".to_owned(),
+        Value::String(CACHE_SCOPE.to_owned()),
+    );
+    modern_result(Value::Object(result))
+}
+
+/// Build the `server/discover` result value: the modern versions this
+/// server implements, its capabilities, identity, instructions, and
+/// caching hints.
+pub fn discover_value() -> Value {
+    let mut capabilities = Map::new();
+    capabilities.insert("tools".to_owned(), Value::Object(Map::new()));
+    let mut result = Map::new();
+    result.insert(
+        "resultType".to_owned(),
+        Value::String("complete".to_owned()),
+    );
+    result.insert(
+        "supportedVersions".to_owned(),
+        Value::Array(
+            MODERN_SUPPORTED_VERSIONS
+                .iter()
+                .map(|version| Value::String((*version).to_owned()))
+                .collect(),
+        ),
+    );
+    result.insert("capabilities".to_owned(), Value::Object(capabilities));
+    let mut meta = Map::new();
+    meta.insert(META_SERVER_INFO.to_owned(), server_info_value());
+    result.insert("_meta".to_owned(), Value::Object(meta));
+    result.insert(
+        "instructions".to_owned(),
+        Value::String(INSTRUCTIONS.to_owned()),
+    );
+    result.insert("ttlMs".to_owned(), Value::from(CACHE_TTL_MS));
+    result.insert(
+        "cacheScope".to_owned(),
+        Value::String(CACHE_SCOPE.to_owned()),
+    );
+    Value::Object(result)
+}
+
+/// Modernize a full reply envelope: when it carries a `result` object,
+/// wrap it with `resultType` and `serverInfo`. Error envelopes pass
+/// through unchanged.
+pub fn modernize_envelope(envelope: Value) -> Value {
+    let Value::Object(mut fields) = envelope else {
+        return envelope;
+    };
+    match fields.remove("result") {
+        Some(result) => {
+            fields.insert("result".to_owned(), modern_result(result));
+            Value::Object(fields)
+        }
+        None => Value::Object(fields),
+    }
 }
 
 /// Build the `initialize` result value with the negotiated version.
@@ -334,5 +500,75 @@ mod tests {
         let map = request.as_object().unwrap();
         assert!(!RequestId::id_is_valid(map));
         assert_eq!(RequestId::extract(map), None);
+    }
+
+    #[test]
+    fn discover_result_shape() {
+        let result = discover_value();
+        assert_eq!(result["resultType"], "complete");
+        assert_eq!(result["supportedVersions"], json!(["2026-07-28"]));
+        assert!(result["capabilities"]["tools"].is_object());
+        assert_eq!(
+            result["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
+            "flow"
+        );
+        assert_eq!(
+            result["_meta"]["io.modelcontextprotocol/serverInfo"]["version"],
+            "0.2.0"
+        );
+        assert!(!result["instructions"].as_str().unwrap().is_empty());
+        assert_eq!(result["ttlMs"], 3_600_000);
+        assert_eq!(result["cacheScope"], "public");
+    }
+
+    #[test]
+    fn unsupported_version_error_shape() {
+        let frame = dumps(&unsupported_version_value(&RequestId::Int(1), "1999-01-01")).unwrap();
+        assert_eq!(
+            frame,
+            r#"{"jsonrpc": "2.0", "id": 1, "error": {"code": -32022, "message": "Unsupported protocol version: 1999-01-01", "data": {"supported": ["2026-07-28"], "requested": "1999-01-01"}}}"#
+        );
+    }
+
+    #[test]
+    fn modern_result_wraps_with_result_type_and_server_info() {
+        let mut payload = Map::new();
+        payload.insert("tools".to_owned(), Value::Array(vec![]));
+        let wrapped = modern_result(Value::Object(payload));
+        assert_eq!(wrapped["resultType"], "complete");
+        assert!(wrapped["tools"].is_array());
+        assert_eq!(
+            wrapped["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
+            "flow"
+        );
+        // Field order matches the spec examples: resultType first.
+        let frame = dumps(&wrapped).unwrap();
+        assert!(frame.starts_with(r#"{"resultType": "complete""#), "{frame}");
+    }
+
+    #[test]
+    fn modern_tools_list_carries_caching_hints() {
+        let result = modern_tools_list_value();
+        assert_eq!(result["resultType"], "complete");
+        let names: Vec<&str> = result["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["flow_run", "flow_status", "flow_check"]);
+        assert_eq!(result["ttlMs"], 3_600_000);
+        assert_eq!(result["cacheScope"], "public");
+    }
+
+    #[test]
+    fn modernize_envelope_leaves_errors_alone() {
+        let error = error_value(&RequestId::Int(2), -32601, "Method not found: ping");
+        let modernized = modernize_envelope(error.clone());
+        assert_eq!(modernized, error);
+        let envelope = result_value(&RequestId::Int(3), tools_list_value());
+        let modernized = modernize_envelope(envelope);
+        assert_eq!(modernized["result"]["resultType"], "complete");
+        assert!(modernized["result"]["tools"].is_array());
     }
 }
