@@ -23,7 +23,8 @@ cp packaging/phlow.socket 'packaging/phlow@.service' \
    packaging/phlow.desktop "$DIST/"
 mkdir -p "$DIST/icons"
 cp packaging/icons/phlow.svg "$DIST/icons/"
-cp README.md packaging/README.md "$DIST/"
+cp README.md "$DIST/"
+cp packaging/README.md "$DIST/PACKAGING.md"
 
 tar -C dist -czf "dist/phlow-$VERSION-$TARGET.tar.gz" "phlow-$VERSION-$TARGET"
 sha256sum "dist/phlow-$VERSION-$TARGET.tar.gz" | tee "dist/phlow-$VERSION-$TARGET.tar.gz.sha256"
