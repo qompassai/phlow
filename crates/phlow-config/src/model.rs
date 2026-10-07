@@ -73,6 +73,16 @@ pub const AGENT_MAX_CONTEXT_CHARS_MAX: u32 = 1_000_000;
 pub const AGENT_MAX_TASK_CHARS_MIN: u32 = 1;
 pub const AGENT_MAX_TASK_CHARS_MAX: u32 = 100_000;
 
+/// Maximum length, in characters, of a specialist's `source_dir` path.
+/// A local model directory path is short; the cap exists so a malformed
+/// config cannot smuggle an unbounded string into the validated model.
+pub const SPECIALIST_SOURCE_DIR_CHARS_MAX: usize = 1024;
+
+const _: () = assert!(
+    0 < SPECIALIST_SOURCE_DIR_CHARS_MAX && SPECIALIST_SOURCE_DIR_CHARS_MAX <= 4096,
+    "SPECIALIST_SOURCE_DIR_CHARS_MAX out of range"
+);
+
 /// A named check's kind. Closed enum: unknown kinds are rejected at load.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckKind {
@@ -318,6 +328,73 @@ impl ModelsConfig {
     }
 }
 
+/// One role's specialist declaration: the local model directory the
+/// operator provisioned for the model named in [`ModelsConfig`].
+///
+/// A specialist is *provisioned* state, unlike a plain role override: the
+/// model only exists if the operator converted and registered it with the
+/// Ollama daemon (see `docs/specialists.md`). The runtime therefore checks
+/// availability before a run and falls back to `ollama.model` when a
+/// declared specialist is not served; see
+/// [`FlowConfig::specialist_for`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpecialistConfig {
+    source_dir: PathBuf,
+}
+
+impl SpecialistConfig {
+    pub(crate) fn validated(source_dir: PathBuf) -> SpecialistConfig {
+        assert!(
+            !source_dir.as_os_str().is_empty(),
+            "specialist source_dir must be non-empty"
+        );
+        SpecialistConfig { source_dir }
+    }
+
+    /// Directory holding the local model files.
+    pub fn source_dir(&self) -> &PathBuf {
+        &self.source_dir
+    }
+}
+
+/// Per-role specialist declarations. A role with no entry behaves exactly
+/// as a plain [`ModelsConfig`] override: no availability check, no
+/// fallback.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SpecialistsConfig {
+    planner: Option<SpecialistConfig>,
+    coder: Option<SpecialistConfig>,
+    reviewer: Option<SpecialistConfig>,
+}
+
+impl SpecialistsConfig {
+    pub(crate) fn validated(
+        planner: Option<SpecialistConfig>,
+        coder: Option<SpecialistConfig>,
+        reviewer: Option<SpecialistConfig>,
+    ) -> SpecialistsConfig {
+        SpecialistsConfig {
+            planner,
+            coder,
+            reviewer,
+        }
+    }
+
+    /// The specialist declared for `role`, if any.
+    pub fn for_role(&self, role: ModelRole) -> Option<&SpecialistConfig> {
+        match role {
+            ModelRole::Planner => self.planner.as_ref(),
+            ModelRole::Coder => self.coder.as_ref(),
+            ModelRole::Reviewer => self.reviewer.as_ref(),
+        }
+    }
+
+    /// True when no role declares a specialist.
+    pub fn is_empty(&self) -> bool {
+        self.planner.is_none() && self.coder.is_none() && self.reviewer.is_none()
+    }
+}
+
 /// Agent loop budgets.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentConfig {
@@ -417,6 +494,7 @@ pub enum ModelRole {
 pub struct FlowConfig {
     ollama: OllamaConfig,
     models: ModelsConfig,
+    specialists: SpecialistsConfig,
     agent: AgentConfig,
     checks: BTreeMap<String, CheckConfig>,
     workspace_dir: PathBuf,
@@ -430,6 +508,7 @@ impl FlowConfig {
     pub(crate) fn validated(
         ollama: OllamaConfig,
         models: ModelsConfig,
+        specialists: SpecialistsConfig,
         agent: AgentConfig,
         checks: BTreeMap<String, CheckConfig>,
         workspace_dir: PathBuf,
@@ -445,6 +524,7 @@ impl FlowConfig {
         FlowConfig {
             ollama,
             models,
+            specialists,
             agent,
             checks,
             workspace_dir,
@@ -461,6 +541,18 @@ impl FlowConfig {
     /// Per-role model overrides.
     pub fn models(&self) -> &ModelsConfig {
         &self.models
+    }
+    /// Per-role specialist declarations.
+    pub fn specialists(&self) -> &SpecialistsConfig {
+        &self.specialists
+    }
+
+    /// The specialist declared for `role`, if any. A declared specialist
+    /// is availability-checked by the runtime: when the model named for
+    /// the role is not served by the backend, the role falls back to
+    /// `ollama.model` for that run and the report records the fallback.
+    pub fn specialist_for(&self, role: ModelRole) -> Option<&SpecialistConfig> {
+        self.specialists.for_role(role)
     }
     /// Agent loop budgets.
     pub fn agent(&self) -> &AgentConfig {
@@ -534,6 +626,7 @@ mod tests {
         let cfg = FlowConfig::validated(
             OllamaConfig::default(),
             ModelsConfig::validated("small".to_owned(), String::new(), String::new()),
+            SpecialistsConfig::default(),
             AgentConfig::default(),
             BTreeMap::new(),
             PathBuf::from("/tmp"),
@@ -544,6 +637,28 @@ mod tests {
         assert_eq!(cfg.model_for(ModelRole::Planner), "small");
         assert_eq!(cfg.model_for(ModelRole::Coder), "qwen2.5-coder:7b");
         assert_eq!(cfg.model_for(ModelRole::Reviewer), "qwen2.5-coder:7b");
+    }
+
+    #[test]
+    fn specialists_default_to_none_and_resolve_per_role() {
+        let empty = SpecialistsConfig::default();
+        assert!(empty.is_empty());
+        for role in [ModelRole::Planner, ModelRole::Coder, ModelRole::Reviewer] {
+            assert!(empty.for_role(role).is_none());
+        }
+        let coder_dir = PathBuf::from("/models/qwen3-coder-30b");
+        let specialists = SpecialistsConfig::validated(
+            None,
+            Some(SpecialistConfig::validated(coder_dir.clone())),
+            None,
+        );
+        assert!(!specialists.is_empty());
+        assert!(specialists.for_role(ModelRole::Planner).is_none());
+        assert!(specialists.for_role(ModelRole::Reviewer).is_none());
+        let coder = specialists
+            .for_role(ModelRole::Coder)
+            .expect("coder specialist declared");
+        assert_eq!(coder.source_dir(), &coder_dir);
     }
 
     #[test]

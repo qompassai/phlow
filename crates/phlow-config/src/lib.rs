@@ -43,4 +43,5 @@ pub use model::{
     CheckKind, FlowConfig, ModelRole, ModelsConfig, OLLAMA_CONTEXT_LENGTH_MAX,
     OLLAMA_CONTEXT_LENGTH_MIN, OLLAMA_TEMPERATURE_MAX, OLLAMA_TEMPERATURE_MIN,
     OLLAMA_TIMEOUT_SECS_MAX, OLLAMA_TIMEOUT_SECS_MIN, OllamaConfig,
+    SPECIALIST_SOURCE_DIR_CHARS_MAX, SpecialistConfig, SpecialistsConfig,
 };

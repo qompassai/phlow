@@ -31,7 +31,8 @@ use crate::model::{
     CHECK_TIMEOUT_MS_DEFAULT, CHECK_TIMEOUT_MS_MAX, CHECK_TIMEOUT_MS_MIN, CHECKS_MAX, CheckConfig,
     CheckKind, FlowConfig, ModelsConfig, OLLAMA_CONTEXT_LENGTH_MAX, OLLAMA_CONTEXT_LENGTH_MIN,
     OLLAMA_TEMPERATURE_MAX, OLLAMA_TEMPERATURE_MIN, OLLAMA_TIMEOUT_SECS_MAX,
-    OLLAMA_TIMEOUT_SECS_MIN, OllamaConfig,
+    OLLAMA_TIMEOUT_SECS_MIN, OllamaConfig, SPECIALIST_SOURCE_DIR_CHARS_MAX, SpecialistConfig,
+    SpecialistsConfig,
 };
 
 /// Largest config file accepted, in bytes.
@@ -42,7 +43,14 @@ pub const CONFIG_FILE_BYTES_MAX: u64 = 1_048_576;
 
 /// Root keys the schema defines. Anything else — including `trusted` and the
 /// legacy `shell`/`plugins`/`self_improve` keys — is rejected.
-const ROOT_KEYS: &[&str] = &["workspace_dir", "ollama", "models", "agent", "checks"];
+const ROOT_KEYS: &[&str] = &[
+    "workspace_dir",
+    "ollama",
+    "models",
+    "specialists",
+    "agent",
+    "checks",
+];
 
 /// `at` label for root-level unknown options, naming the legacy keys the
 /// Python error message calls out.
@@ -102,6 +110,7 @@ pub fn load_config(options: &LoadOptions) -> Result<FlowConfig, ConfigError> {
     // 4. Sections.
     let ollama = parse_ollama(table_section(&raw, "ollama")?)?;
     let models = parse_models(table_section(&raw, "models")?)?;
+    let specialists = parse_specialists(table_section(&raw, "specialists")?)?;
     let agent = parse_agent(table_section(&raw, "agent")?)?;
     let checks = parse_checks(table_section(&raw, "checks")?)?;
 
@@ -187,6 +196,7 @@ pub fn load_config(options: &LoadOptions) -> Result<FlowConfig, ConfigError> {
     Ok(FlowConfig::validated(
         ollama,
         models,
+        specialists,
         agent,
         checks,
         workspace_dir,
@@ -538,6 +548,55 @@ fn parse_models(
         None => String::new(),
     };
     Ok(ModelsConfig::validated(planner, coder, reviewer))
+}
+
+/// Parse the optional `[specialists]` section: one table per role, each
+/// naming the local model directory (`source_dir`) provisioned for the
+/// model that `[models]` assigns to the role. Absent roles declare no
+/// specialist. Unknown roles, unknown keys, and non-table values are
+/// rejected, mirroring the `[models]` schema discipline.
+fn parse_specialists(
+    table: Option<&toml::map::Map<String, toml::Value>>,
+) -> Result<SpecialistsConfig, ConfigError> {
+    const KNOWN: &[&str] = &["planner", "coder", "reviewer"];
+    let Some(table) = table else {
+        return Ok(SpecialistsConfig::default());
+    };
+    reject_unknown_keys(table, KNOWN, "specialists")?;
+    let planner = parse_specialist(table.get("planner"), "specialists.planner")?;
+    let coder = parse_specialist(table.get("coder"), "specialists.coder")?;
+    let reviewer = parse_specialist(table.get("reviewer"), "specialists.reviewer")?;
+    Ok(SpecialistsConfig::validated(planner, coder, reviewer))
+}
+
+/// Parse one role's specialist table: `{ source_dir = "/abs/path" }`.
+/// The path is operator input, so it is length-bounded here; whether the
+/// directory exists is a provisioning concern, not a schema concern.
+fn parse_specialist(
+    value: Option<&toml::Value>,
+    at: &str,
+) -> Result<Option<SpecialistConfig>, ConfigError> {
+    const KNOWN: &[&str] = &["source_dir"];
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let table = match value {
+        toml::Value::Table(table) => table,
+        _ => return Err(invalid_value(at, "must be a table")),
+    };
+    reject_unknown_keys(table, KNOWN, at)?;
+    let field = format!("{at}.source_dir");
+    let raw = match table.get("source_dir") {
+        Some(value) => parse_nonempty_string(value, &field)?,
+        None => return Err(invalid_value(&field, "is required")),
+    };
+    if raw.chars().count() > SPECIALIST_SOURCE_DIR_CHARS_MAX {
+        return Err(invalid_value(
+            &field,
+            "exceeds the maximum source_dir length",
+        ));
+    }
+    Ok(Some(SpecialistConfig::validated(PathBuf::from(raw))))
 }
 
 fn parse_agent(
@@ -1240,6 +1299,71 @@ mod tests {
         })
         .unwrap();
         assert!(trusted.trusted());
+    }
+
+    #[test]
+    fn specialists_parse_per_role() {
+        let dir = test_dir("specialists-ok");
+        let text = "\
+[models]\ncoder=\"qwen3-coder-30b-local\"\n\
+[specialists.coder]\nsource_dir=\"/home/op/.local/share/models/qwen3-coder-30b\"\n\
+[specialists.planner]\nsource_dir=\"/home/op/.local/share/models/gpt-oss-20b\"\n";
+        let cfg = load_text(&dir, text).unwrap();
+        let coder = cfg
+            .specialist_for(crate::model::ModelRole::Coder)
+            .expect("coder specialist declared");
+        assert_eq!(
+            coder.source_dir(),
+            &PathBuf::from("/home/op/.local/share/models/qwen3-coder-30b")
+        );
+        assert!(
+            cfg.specialist_for(crate::model::ModelRole::Planner)
+                .is_some()
+        );
+        assert!(
+            cfg.specialist_for(crate::model::ModelRole::Reviewer)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn specialists_absent_means_no_specialists() {
+        let dir = test_dir("specialists-absent");
+        let cfg = load_text(&dir, "").unwrap();
+        assert!(cfg.specialists().is_empty());
+    }
+
+    #[test]
+    fn specialists_reject_unknown_role() {
+        let dir = test_dir("specialists-bad-role");
+        let text = "[specialists.triage]\nsource_dir=\"/models/x\"\n";
+        assert!(load_text(&dir, text).is_err());
+    }
+
+    #[test]
+    fn specialists_reject_unknown_inner_key() {
+        let dir = test_dir("specialists-bad-key");
+        let text = "[specialists.coder]\nsource_dir=\"/models/x\"\nquant=\"Q4\"\n";
+        assert!(load_text(&dir, text).is_err());
+    }
+
+    #[test]
+    fn specialists_reject_non_table_and_missing_source_dir() {
+        let dir = test_dir("specialists-bad-shape");
+        assert!(load_text(&dir, "[specialists]\ncoder=\"/models/x\"\n").is_err());
+        assert!(load_text(&dir, "[specialists.coder]\n").is_err());
+    }
+
+    #[test]
+    fn specialists_reject_empty_and_oversized_source_dir() {
+        let dir = test_dir("specialists-bad-path");
+        let empty = "[specialists.coder]\nsource_dir=\"  \"\n";
+        assert!(load_text(&dir, empty).is_err());
+        let oversized = format!(
+            "[specialists.coder]\nsource_dir=\"/{}\"\n",
+            "x".repeat(SPECIALIST_SOURCE_DIR_CHARS_MAX + 1)
+        );
+        assert!(load_text(&dir, &oversized).is_err());
     }
 
     #[test]

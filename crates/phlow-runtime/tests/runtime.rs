@@ -1898,3 +1898,214 @@ fn http_transport_get_tags_hits_api_tags() {
     assert_eq!(result, json!({"models": []}));
     server.join().unwrap();
 }
+
+// ---------------------------------------------------------------------------
+// Specialist fallback: declared specialists are availability-checked once
+// per runtime; a specialist the backend is not serving falls back to the
+// default model, and the run report records the substitution.
+// ---------------------------------------------------------------------------
+
+/// Transport for specialist tests: serves a scripted `/api/tags` result,
+/// answers chats from the golden script, and records the model named in
+/// every chat payload plus the number of tags probes.
+#[derive(Clone)]
+struct TagsLlm {
+    shared: Arc<Mutex<TagsState>>,
+}
+
+struct TagsState {
+    tags_body: Value,
+    tags_fail: bool,
+    tags_calls: usize,
+    script: VecDeque<Value>,
+    chat_models: Vec<String>,
+}
+
+impl TagsLlm {
+    /// A backend serving exactly `names` via `/api/tags`.
+    fn serving(names: &[&str]) -> Self {
+        let models: Vec<Value> = names.iter().map(|name| json!({ "name": name })).collect();
+        TagsLlm::with_tags(json!({ "models": models }), false)
+    }
+
+    /// A backend whose `/api/tags` probe always fails.
+    fn failing_tags() -> Self {
+        TagsLlm::with_tags(json!({}), true)
+    }
+
+    fn with_tags(tags_body: Value, tags_fail: bool) -> Self {
+        TagsLlm {
+            shared: Arc::new(Mutex::new(TagsState {
+                tags_body,
+                tags_fail,
+                tags_calls: 0,
+                script: golden_script().into(),
+                chat_models: Vec::new(),
+            })),
+        }
+    }
+
+    fn tags_calls(&self) -> usize {
+        self.shared.lock().unwrap().tags_calls
+    }
+
+    fn chat_models(&self) -> Vec<String> {
+        self.shared.lock().unwrap().chat_models.clone()
+    }
+}
+
+impl LlmTransport for TagsLlm {
+    fn post_chat(
+        &mut self,
+        _base_url: &str,
+        payload: &Map<String, Value>,
+        _timeout: Duration,
+    ) -> Result<Value, LlmError> {
+        let mut state = self.shared.lock().unwrap();
+        state.chat_models.push(
+            payload
+                .get("model")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+        );
+        Ok(state
+            .script
+            .pop_front()
+            .unwrap_or_else(|| chat_text("Fallback. Done.")))
+    }
+
+    fn get_tags(&mut self, _base_url: &str, _timeout: Duration) -> Result<Value, LlmError> {
+        let mut state = self.shared.lock().unwrap();
+        state.tags_calls += 1;
+        if state.tags_fail {
+            return Err(LlmError::Transport("connection refused".to_owned()));
+        }
+        Ok(state.tags_body.clone())
+    }
+
+    fn close(&mut self) {}
+}
+
+const SPECIALIST_TOML: &str = "\
+[ollama]\nmodel = \"default-model\"\n
+[models]\nplanner = \"hf-gpt-oss-20b\"\ncoder = \"hf-qwen3-coder-30b\"\nreviewer = \"hf-phi-4\"\n
+[specialists.planner]\nsource_dir = \"/models/gpt-oss-20b\"\n
+[specialists.coder]\nsource_dir = \"/models/qwen3-coder-30b\"\n
+[specialists.reviewer]\nsource_dir = \"/models/phi-4\"\n
+[checks.smoke]\ncmd = [\"true\"]\nkind = \"lint\"\nrequired = true\nfiletypes = [\"*\"]\n";
+
+fn specialist_runtime(dir: &Path, toml: &str, llm: TagsLlm) -> Runtime<TagsLlm, FakeEditor> {
+    let config = load_test_config(dir, toml, true);
+    Runtime::new(config, llm, FakeEditor::new(), None).expect("runtime builds")
+}
+
+#[test]
+fn specialist_served_models_are_used_without_fallback() {
+    let dir = testdir("specialist-served");
+    // Ollama reports served names with the default tag attached; a
+    // tagless configured name must still match its `:latest` entry.
+    let llm = TagsLlm::serving(&[
+        "default-model:latest",
+        "hf-gpt-oss-20b:latest",
+        "hf-qwen3-coder-30b:latest",
+        "hf-phi-4:latest",
+    ]);
+    let mut rt = specialist_runtime(&dir, SPECIALIST_TOML, llm.clone());
+    let report = rt.run("write a greeting file");
+    assert_eq!(report["status"], json!("ok"));
+    let roles = report["roles"].as_array().expect("roles");
+    assert_eq!(roles[0]["model"], json!("hf-gpt-oss-20b"));
+    assert_eq!(roles[1]["model"], json!("hf-qwen3-coder-30b"));
+    assert_eq!(roles[2]["model"], json!("hf-phi-4"));
+    for role in roles {
+        assert!(
+            role.get("model_fallback").is_none(),
+            "no fallback expected: {role}"
+        );
+    }
+    // The served list is probed once and cached for every later role.
+    assert_eq!(llm.tags_calls(), 1);
+    assert_eq!(llm.chat_models()[0], "hf-gpt-oss-20b");
+}
+
+#[test]
+fn specialist_unserved_models_fall_back_to_default() {
+    let dir = testdir("specialist-unserved");
+    let llm = TagsLlm::serving(&["default-model:latest"]);
+    let mut rt = specialist_runtime(&dir, SPECIALIST_TOML, llm.clone());
+    let report = rt.run("write a greeting file");
+    assert_eq!(report["status"], json!("ok"));
+    let expected = ["hf-gpt-oss-20b", "hf-qwen3-coder-30b", "hf-phi-4"];
+    let roles = report["roles"].as_array().expect("roles");
+    for (role, configured) in roles.iter().zip(expected) {
+        assert_eq!(role["model"], json!("default-model"), "role: {role}");
+        assert_eq!(role["model_configured"], json!(configured));
+        assert_eq!(role["model_fallback"], json!("specialist_unavailable"));
+    }
+    assert_eq!(llm.tags_calls(), 1);
+    assert!(
+        llm.chat_models()
+            .iter()
+            .all(|model| model == "default-model")
+    );
+}
+
+#[test]
+fn specialist_tag_mismatch_falls_back() {
+    let dir = testdir("specialist-tag-mismatch");
+    // The same models under non-default tags are different models as far
+    // as the backend is concerned: a tagless name matches only `:latest`.
+    let llm = TagsLlm::serving(&[
+        "default-model:latest",
+        "hf-gpt-oss-20b:q4",
+        "hf-qwen3-coder-30b:q4",
+        "hf-phi-4:q4",
+    ]);
+    let mut rt = specialist_runtime(&dir, SPECIALIST_TOML, llm.clone());
+    let report = rt.run("write a greeting file");
+    assert_eq!(report["status"], json!("ok"));
+    let roles = report["roles"].as_array().expect("roles");
+    for role in roles {
+        assert_eq!(role["model"], json!("default-model"), "role: {role}");
+        assert_eq!(role["model_fallback"], json!("specialist_unavailable"));
+    }
+}
+
+#[test]
+fn specialist_probe_failure_keeps_configured_models() {
+    let dir = testdir("specialist-probe-fails");
+    let llm = TagsLlm::failing_tags();
+    let mut rt = specialist_runtime(&dir, SPECIALIST_TOML, llm.clone());
+    let report = rt.run("write a greeting file");
+    assert_eq!(report["status"], json!("ok"));
+    let roles = report["roles"].as_array().expect("roles");
+    assert_eq!(roles[0]["model"], json!("hf-gpt-oss-20b"));
+    assert_eq!(roles[1]["model"], json!("hf-qwen3-coder-30b"));
+    assert_eq!(roles[2]["model"], json!("hf-phi-4"));
+    for role in roles {
+        assert!(
+            role.get("model_fallback").is_none(),
+            "unknown availability must not fall back: {role}"
+        );
+    }
+    // The failed probe is cached too: one attempt per runtime.
+    assert_eq!(llm.tags_calls(), 1);
+}
+
+#[test]
+fn no_specialists_means_no_availability_probe() {
+    let dir = testdir("specialist-absent");
+    let toml = "\
+[ollama]\nmodel = \"default-model\"\n
+[models]\nplanner = \"hf-gpt-oss-20b\"\ncoder = \"hf-qwen3-coder-30b\"\nreviewer = \"hf-phi-4\"\n
+[checks.smoke]\ncmd = [\"true\"]\nkind = \"lint\"\nrequired = true\nfiletypes = [\"*\"]\n";
+    let llm = TagsLlm::failing_tags();
+    let mut rt = specialist_runtime(&dir, toml, llm.clone());
+    let report = rt.run("write a greeting file");
+    assert_eq!(report["status"], json!("ok"));
+    let roles = report["roles"].as_array().expect("roles");
+    assert_eq!(roles[0]["model"], json!("hf-gpt-oss-20b"));
+    assert_eq!(roles[1]["model"], json!("hf-qwen3-coder-30b"));
+    assert_eq!(llm.tags_calls(), 0, "no declarations, no probe");
+}

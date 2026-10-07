@@ -310,6 +310,31 @@ fn insert_audit_fields(out: &mut Map<String, Value>, report: &CheckReport) {
     );
 }
 
+/// Whether `configured` names a model in the backend's served list.
+/// Ollama reports bare names with their tag attached (`name:latest`)
+/// while configs habitually omit the default tag, so a tagless
+/// configured name also matches its `:latest` entry. A configured name
+/// carrying an explicit tag matches only exactly.
+fn served_contains(served: &[String], configured: &str) -> bool {
+    served.iter().any(|name| {
+        name == configured
+            || (!configured.contains(':') && name.strip_suffix(":latest") == Some(configured))
+    })
+}
+
+/// Cache for the backend's served-model list, probed lazily by the first
+/// role that declares a specialist. The probe runs at most once per
+/// runtime; a failed probe is remembered so a down backend is not
+/// re-queried on every role call.
+enum ServedModels {
+    /// No specialist-bearing role has run yet.
+    Unprobed,
+    /// The probe failed; availability is unknown, so no role falls back.
+    Unavailable,
+    /// Model names the backend reported serving at probe time.
+    Known(Vec<String>),
+}
+
 /// The safe agent runtime. See the module docs for the safety contract.
 pub struct Runtime<L: LlmTransport, E: EditorTransport> {
     config: FlowConfig,
@@ -328,6 +353,8 @@ pub struct Runtime<L: LlmTransport, E: EditorTransport> {
     /// Check executables pinned at construction, the operator-config
     /// admission point; every later check run verifies against these.
     check_pins: CheckPins,
+    /// Lazily probed served-model list for specialist fallback decisions.
+    served_models: ServedModels,
 }
 
 impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
@@ -363,6 +390,7 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
             checked_editor_snapshot: None,
             run_changed: BTreeSet::new(),
             check_pins,
+            served_models: ServedModels::Unprobed,
         })
     }
 
@@ -674,6 +702,34 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
         Ok((content, calls))
     }
 
+    /// Resolve the model a role actually calls: the configured name, or
+    /// the default model when the role declares a specialist the backend
+    /// is not serving. Returns the effective name and whether a fallback
+    /// happened.
+    ///
+    /// Fallback is deliberately narrow. Roles without a specialist
+    /// declaration, roles already naming the default model, and probe
+    /// failures (availability unknown) keep the configured name, so
+    /// behavior without `[specialists]` is unchanged. The served list is
+    /// probed at most once per runtime and then cached.
+    fn effective_model(&mut self, role: ModelRole, configured: &str) -> (String, bool) {
+        let default = self.config.ollama().model().to_owned();
+        let declared = self.config.specialist_for(role).is_some();
+        if !declared || configured == default {
+            return (configured.to_owned(), false);
+        }
+        if matches!(self.served_models, ServedModels::Unprobed) {
+            self.served_models = match self.list_models() {
+                Ok(models) => ServedModels::Known(models),
+                Err(_) => ServedModels::Unavailable,
+            };
+        }
+        match &self.served_models {
+            ServedModels::Known(models) if !served_contains(models, configured) => (default, true),
+            _ => (configured.to_owned(), false),
+        }
+    }
+
     /// Run one role's model loop, mirroring `_role`.
     fn role(
         &mut self,
@@ -683,20 +739,26 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
         report: &mut Value,
     ) -> Result<Value, RuntimeError> {
         assert!(ROLES.contains(&role), "unknown role: {role}");
-        let model = self
-            .config
-            .model_for(match role {
-                "planner" => ModelRole::Planner,
-                "reviewer" => ModelRole::Reviewer,
-                _ => ModelRole::Coder,
-            })
-            .to_owned();
+        let model_role = match role {
+            "planner" => ModelRole::Planner,
+            "reviewer" => ModelRole::Reviewer,
+            _ => ModelRole::Coder,
+        };
+        let configured = self.config.model_for(model_role).to_owned();
+        let (model, fell_back) = self.effective_model(model_role, &configured);
         let user_content = must_dumps(&serde_json::json!({"task": task, "context": context}));
         let mut messages = vec![
             serde_json::json!({"role": "system", "content": system_prompt_for_role(role)}),
             serde_json::json!({"role": "user", "content": user_content}),
         ];
         let mut state = Self::role_state(role, &model);
+        if fell_back {
+            state.insert("model_configured".to_owned(), Value::String(configured));
+            state.insert(
+                "model_fallback".to_owned(),
+                Value::String("specialist_unavailable".to_owned()),
+            );
+        }
         let roles_len = roles_len(report);
         let tools = self.schemas(role);
         let budgets = RoleBudgets::from_config(self.config.agent());
