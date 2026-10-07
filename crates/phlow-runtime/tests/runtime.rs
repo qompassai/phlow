@@ -25,7 +25,8 @@ use phlow_editor::{CALL_LUA, EditorTransport, SCHEMAS_LUA, TransportError};
 use phlow_llm::{LlmError, LlmTransport, load_system_prompt};
 use phlow_runtime::transport::{MsgpackTransport, ReqwestTransport};
 use phlow_runtime::{
-    Runtime, has_error_diagnostics, normalize_tool_calls, reviewer_verdict, system_prompt_for_role,
+    Runtime, has_error_diagnostics, normalize_tool_calls, reviewer_verdict,
+    reviewer_verdict_normalized, system_prompt_for_role,
 };
 use serde_json::{Map, Value, json};
 
@@ -491,6 +492,96 @@ fn reviewer_verdict_missing_summary_is_empty_string() {
     assert_eq!(
         explicit_null.get("summary"),
         Some(&Value::String("None".to_owned()))
+    );
+}
+
+#[test]
+fn reviewer_verdict_normalized_accepts_json_fence() {
+    let bare = reviewer_verdict(r#"{"approved": true, "summary": "Good.", "issues": []}"#);
+    let fenced = reviewer_verdict_normalized(
+        "```json\n{\"approved\": true, \"summary\": \"Good.\", \"issues\": []}\n```",
+    );
+    assert_eq!(fenced, bare);
+    assert_eq!(fenced.get("approved"), Some(&Value::Bool(true)));
+    assert!(
+        fenced.get("status").is_none(),
+        "valid verdict sets no status"
+    );
+}
+
+#[test]
+fn reviewer_verdict_normalized_accepts_untagged_fence() {
+    let verdict =
+        reviewer_verdict_normalized("```\n{\"approved\": false, \"issues\": [\"x\"]}\n```");
+    assert_eq!(verdict.get("approved"), Some(&Value::Bool(false)));
+    assert_eq!(
+        verdict.get("issues"),
+        Some(&Value::Array(vec![Value::String("x".to_owned())]))
+    );
+}
+
+#[test]
+fn reviewer_verdict_normalized_bare_input_unchanged() {
+    let raw = r#"{"approved": true, "summary": "Good.", "issues": []}"#;
+    assert_eq!(reviewer_verdict_normalized(raw), reviewer_verdict(raw));
+}
+
+#[test]
+fn reviewer_verdict_normalized_rejects_double_fence() {
+    let verdict = reviewer_verdict_normalized(
+        "```json\n```json\n{\"approved\": true, \"issues\": []}\n```\n```",
+    );
+    assert_eq!(
+        verdict.get("status"),
+        Some(&Value::String("unverified".to_owned()))
+    );
+    assert_eq!(verdict.get("approved"), Some(&Value::Bool(false)));
+}
+
+#[test]
+fn reviewer_verdict_normalized_rejects_fence_with_trailing_prose() {
+    let verdict = reviewer_verdict_normalized(
+        "```json\n{\"approved\": true, \"issues\": []}\n```\nLooks good to me",
+    );
+    assert_eq!(
+        verdict.get("status"),
+        Some(&Value::String("unverified".to_owned()))
+    );
+}
+
+#[test]
+fn reviewer_verdict_normalized_rejects_unterminated_fence() {
+    let verdict = reviewer_verdict_normalized("```json\n{\"approved\": true, \"issues\": []}");
+    assert_eq!(
+        verdict.get("status"),
+        Some(&Value::String("unverified".to_owned()))
+    );
+}
+
+#[test]
+fn reviewer_verdict_normalized_rejects_empty_and_whitespace() {
+    for raw in ["", "  \n "] {
+        let verdict = reviewer_verdict_normalized(raw);
+        assert_eq!(
+            verdict.get("status"),
+            Some(&Value::String("unverified".to_owned())),
+            "input {raw:?} must stay unverified"
+        );
+    }
+}
+
+#[test]
+fn reviewer_verdict_normalized_rejects_fenced_invalid_json() {
+    let verdict = reviewer_verdict_normalized("```json\nnot json\n```");
+    assert_eq!(
+        verdict.get("status"),
+        Some(&Value::String("unverified".to_owned()))
+    );
+    assert_eq!(
+        verdict.get("error"),
+        Some(&Value::String(
+            "Reviewer must return a structured JSON verdict".to_owned()
+        ))
     );
 }
 

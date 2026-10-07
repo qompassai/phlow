@@ -141,6 +141,56 @@ pub fn reviewer_verdict(content: &str) -> Map<String, Value> {
     verdict
 }
 
+/// Strip exactly one surrounding Markdown code block from `content`.
+///
+/// The single tolerated block is an opening line of exactly three
+/// backticks, optionally followed by `json`, and a closing line of
+/// exactly three backticks, each standing on its own line. Anything
+/// else — prose around the block, a second block, an
+/// unterminated block, a closing line glued to the last content line —
+/// is returned unchanged, so the strict parser sees (and rejects) the
+/// original text. The result is a slice of the input; nothing is copied
+/// or repaired.
+pub fn strip_verdict_code_block(content: &str) -> &str {
+    let trimmed = content.trim();
+    let Some(first_newline) = trimmed.find('\n') else {
+        return content;
+    };
+    let opening = trimmed[..first_newline].trim_end();
+    if opening != "```" && opening != "```json" {
+        return content;
+    }
+    let body = trimmed[first_newline + 1..].trim_end();
+    let Some(inner) = body.strip_suffix("```") else {
+        return content;
+    };
+    // The closing line must stand on its own line: it is preceded by a
+    // newline, or by nothing at all (an empty block body).
+    if inner.is_empty() {
+        return inner;
+    }
+    match inner
+        .strip_suffix("\r\n")
+        .or_else(|| inner.strip_suffix('\n'))
+    {
+        Some(inner) => inner,
+        None => content,
+    }
+}
+
+/// Parse the reviewer's terminal verdict after [`strip_verdict_code_block`].
+///
+/// This is the pipeline entry point the runtime uses when the reviewer
+/// speaks. It deviates from the Python reference in exactly one place:
+/// `_reviewer_verdict` there receives the raw content, while reviewer
+/// models in practice wrap their JSON in a Markdown code block (see
+/// docs/specialists.md, trial T1). Keeping the normalization a separate
+/// step leaves [`reviewer_verdict`] itself at component parity with the
+/// reference — it still accepts only bare JSON.
+pub fn reviewer_verdict_normalized(content: &str) -> Map<String, Value> {
+    reviewer_verdict(strip_verdict_code_block(content))
+}
+
 /// The verdict object Python returns when the reviewer output is not a
 /// structured JSON verdict.
 fn unverified_verdict() -> Map<String, Value> {
@@ -288,6 +338,62 @@ mod tests {
         assert_eq!(bad["approved"], false);
         let wrong = reviewer_verdict(r#"{"approved": "yes", "issues": []}"#);
         assert_eq!(wrong["approved"], false);
+    }
+
+    #[test]
+    fn strip_verdict_code_block_accepts_one_block() {
+        let bare = r#"{"approved": true, "issues": [], "summary": "fine"}"#;
+        assert_eq!(
+            strip_verdict_code_block(&format!("```json\n{bare}\n```")),
+            bare
+        );
+        assert_eq!(strip_verdict_code_block(&format!("```\n{bare}\n```")), bare);
+        assert_eq!(
+            strip_verdict_code_block(&format!("\n```json\n{bare}\n```\n")),
+            bare
+        );
+        assert_eq!(strip_verdict_code_block(bare), bare);
+    }
+
+    #[test]
+    fn strip_verdict_code_block_leaves_non_blocks_untouched() {
+        // Prose after the closing line: not a single surrounding block.
+        let trailed = "```json\n{}\n```\nlooks fine";
+        assert_eq!(strip_verdict_code_block(trailed), trailed);
+        // Unterminated block.
+        let open = "```json\n{}";
+        assert_eq!(strip_verdict_code_block(open), open);
+        // Closing line glued to the last content line.
+        let glued = "```json\n{}```";
+        assert_eq!(strip_verdict_code_block(glued), glued);
+        // A block tag other than `json` is not stripped.
+        let tagged = "```rust\n{}\n```";
+        assert_eq!(strip_verdict_code_block(tagged), tagged);
+        // Prose only.
+        assert_eq!(strip_verdict_code_block("hello"), "hello");
+    }
+
+    #[test]
+    fn reviewer_verdict_normalized_matches_bare() {
+        let bare = r#"{"approved": true, "issues": [], "summary": "fine"}"#;
+        let expected = reviewer_verdict(bare);
+        assert_eq!(
+            reviewer_verdict_normalized(&format!("```json\n{bare}\n```")),
+            expected
+        );
+        assert_eq!(reviewer_verdict_normalized(bare), expected);
+        // A double block survives one strip and the strict parser
+        // rejects what remains.
+        let double = format!("```json\n```json\n{bare}\n```\n```");
+        let verdict = reviewer_verdict_normalized(&double);
+        assert_eq!(verdict["status"], "unverified");
+        assert_eq!(verdict["approved"], false);
+        // Invalid JSON inside a single block is still rejected.
+        let verdict = reviewer_verdict_normalized("```json\nnot json\n```");
+        assert_eq!(verdict["status"], "unverified");
+        // Empty and whitespace-only input stay unverified.
+        assert_eq!(reviewer_verdict_normalized("")["status"], "unverified");
+        assert_eq!(reviewer_verdict_normalized("  \n ")["status"], "unverified");
     }
 
     #[test]

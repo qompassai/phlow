@@ -36,7 +36,7 @@ pub mod transport;
 pub use error::RuntimeError;
 pub use prompt::{
     VENDORED_SYSTEM_PROMPT, has_error_diagnostics, normalize_tool_calls, reviewer_verdict,
-    system_prompt_for_role,
+    reviewer_verdict_normalized, strip_verdict_code_block, system_prompt_for_role,
 };
 pub use report::{
     check_report_to_value, list_result_to_value, new_report, read_result_to_value,

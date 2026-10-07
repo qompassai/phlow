@@ -32,7 +32,9 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
 use crate::error::RuntimeError;
-use crate::prompt::{ROLES, normalize_tool_calls, reviewer_verdict, system_prompt_for_role};
+use crate::prompt::{
+    ROLES, normalize_tool_calls, reviewer_verdict_normalized, system_prompt_for_role,
+};
 use crate::report::{new_report, run_all_report_to_value};
 use crate::tools::{schemas_for_role, tool_function};
 
@@ -1008,7 +1010,7 @@ fn finish_text_turn(role: &str, content: &str, state: &mut Map<String, Value>) {
     state.insert("status".to_owned(), Value::String("ok".to_owned()));
     state.insert("summary".to_owned(), Value::String(summary));
     if role == "reviewer" {
-        state.extend(reviewer_verdict(content));
+        state.extend(reviewer_verdict_normalized(content));
     }
 }
 

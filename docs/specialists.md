@@ -185,3 +185,44 @@ Findings, in order of leverage:
    single highest-leverage follow-up is a product decision on verdict
    parsing, deliberately not changed here because the Rust port mirrors
    the Python reference's strictness).
+
+## Follow-up (2026-10-07): push waiver and fenced-verdict normalization
+
+Two decisions by Matt on 2026-10-07 closed the open items above:
+
+1. **Push waiver.** The specialists commit `b20c160` was pushed to
+   `main` under a documented one-time waiver of the standing
+   build-green + tests-passing push rule. The single failing test,
+   gauntlet `task_08 default_real_server_round_trip`, was proven
+   baseline-identical on the parent tree `8e2a82d` and fails in its
+   real scenario mode (the real-server run completes a handshake the
+   scenario expects to fail); the waiver covers only that failure.
+2. **Verdict parsing ("fences ok").** The follow-up from finding 4 was
+   approved in the narrow form detailed below.
+
+<details>
+<summary>What changed: one-fence normalization in front of the strict parser</summary>
+
+- `reviewer_verdict` in `crates/phlow-runtime/src/prompt.rs` is
+  unchanged: it still accepts only bare JSON, keeping component-level
+  parity with the Python reference's `_reviewer_verdict`.
+- A separate step, `strip_verdict_code_block`, removes exactly one
+  surrounding Markdown code fence — an opening line of three backticks,
+  optionally followed by `json`, and a closing line of three backticks,
+  each standing on its own line — from the reviewer's raw output. The
+  runtime's reviewer path now calls `reviewer_verdict_normalized`,
+  which composes the two.
+- Nothing else is tolerated: no prose before or after the fence, no
+  nested or double fences, no unterminated fence, no JSON repair.
+  Reviewer models (gemma-4-12b in T1) emit fences in practice; this
+  accepts that single habit without loosening the verdict contract.
+- This is a deliberate, localized deviation from the Python reference,
+  confined to the normalization step; the strict parser itself does
+  not share it.
+- Tests: unit tests beside the parser in `prompt.rs`, plus integration
+  tests in `crates/phlow-runtime/tests/runtime.rs` — fenced verdict
+  equals the bare verdict, double fence rejected, trailing prose
+  rejected, unterminated fence rejected, empty input rejected, and
+  invalid JSON inside a fence still rejected by the strict parser.
+
+</details>
