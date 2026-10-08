@@ -84,6 +84,20 @@ pub struct Case {
     pub expected: Value,
 }
 
+// Layout pin (2026-10-08 struct-size audit; structural form 2026-10-10):
+// Case is exactly its two fields under rustc's default repr -- no padding,
+// no extra state. The assertion is written against the fields themselves
+// because serde_json::Value's size is feature-dependent (32 bytes solo;
+// 72 bytes when the workspace unifies phlow-mcp's preserve_order +
+// arbitrary_precision features), so an absolute byte count would pin
+// another crate's features instead of this struct's layout. Cases are
+// stored per task in the frozen splits (at most TASKS_PER_SPLIT_MAX
+// (512) tasks, each with its family's case list), so a growth here
+// multiplies across splits.
+const _: () = assert!(
+    std::mem::size_of::<Case>() == std::mem::size_of::<Vec<Value>>() + std::mem::size_of::<Value>()
+);
+
 /// A task family definition: the invariant part of a task.
 #[derive(Debug, Clone)]
 pub struct Family {
@@ -117,6 +131,12 @@ pub struct CodingTask {
     /// Hidden cases.
     pub cases: Vec<Case>,
 }
+
+// Layout pin (2026-10-08 struct-size audit): 168 bytes is the floor for
+// these fields under rustc's default repr. A frozen split holds at most
+// TASKS_PER_SPLIT_MAX (512) tasks and the run schedule clones at most
+// GROUPS_MAX (256) of them, so this record's size is load-bearing.
+const _: () = assert!(std::mem::size_of::<CodingTask>() == 168);
 
 impl CodingTask {
     /// The full reference source (prompt + reference completion).

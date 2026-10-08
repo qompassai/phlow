@@ -42,6 +42,13 @@ pub struct GroupRecord {
     pub seconds: f64,
 }
 
+// Layout pin (2026-10-08 struct-size audit): 136 bytes is the floor for
+// these fields under rustc's default repr, and a receipt holds at most
+// GROUPS_MAX (256) records. Field order is serde-visible (it is the
+// receipt format), so reordering is not an available lever; this pin
+// makes a future field addition that grows the record fail loudly.
+const _: () = assert!(std::mem::size_of::<GroupRecord>() == 136);
+
 /// A complete run receipt.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct RunReceipt {
