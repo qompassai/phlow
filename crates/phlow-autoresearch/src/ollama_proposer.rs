@@ -352,7 +352,7 @@ fn build_prompt(context: &ProposeContext) -> String {
          {{\"id\": \"<short slug, [A-Za-z0-9._-], at most {id_max} chars>\", \
          \"kind\": \"trainlab_config\" or \"file_patch\", \
          \"paths\": [<worktree-relative paths, file_patch only>], \
-         \"payload\": \"<config delta JSON or unified patch, at most {payload_max} bytes>\", \
+         \"payload\": \"<config delta JSON or unified patch, encoded as a string, at most {payload_max} bytes>\", \
          \"rationale\": \"<one line, at most {rationale_max} chars>\"}}\n\
          Gate rules, enforced exactly (a violation is discarded unmeasured):\n\
          - kind trainlab_config: paths MUST be [] — a config change-set carries \
@@ -373,9 +373,14 @@ fn build_prompt(context: &ProposeContext) -> String {
     )
 }
 
-/// Parse one planner response into a change-set: strip at most one
-/// surrounding code fence (the single bounded normalization), then
-/// require the exact shape and re-check every bound.
+/// Parse one planner response into a change-set. Two bounded
+/// normalizations, each applied at most once, both lossless:
+/// strip one surrounding code fence, and — for `trainlab_config`
+/// only — canonicalize a payload the planner emitted as a nested
+/// JSON object into its string form (the shape demands a string;
+/// an object payload for a config delta is unambiguous, while for
+/// `file_patch` anything but a string stays invalid). Then require
+/// the exact shape and re-check every bound.
 fn parse_change_set(response: &str) -> Result<ChangeSet, ProposeError> {
     if response.len() > PLANNER_RESPONSE_BYTES_MAX {
         return Err(ProposeError::Invalid(
@@ -435,11 +440,27 @@ fn parse_change_set(response: &str) -> Result<ChangeSet, ProposeError> {
             ));
         }
     };
+    let payload = match object.get("payload") {
+        Some(Value::String(text)) => text.clone(),
+        Some(value @ Value::Object(_)) if kind == ChangeKind::TrainlabConfig => {
+            // The second bounded normalization (see the fn docs):
+            // the planner emitted the config delta as a nested
+            // object instead of its string encoding.
+            serde_json::to_string(value).map_err(|err| {
+                ProposeError::Invalid(format!("planner payload does not canonicalize: {err}"))
+            })?
+        }
+        _ => {
+            return Err(ProposeError::Invalid(
+                "planner output lacks string field payload".to_string(),
+            ));
+        }
+    };
     let change_set = ChangeSet {
         id: field("id")?.to_string(),
         kind,
         paths,
-        payload: field("payload")?.to_string(),
+        payload,
         rationale: field("rationale")?.to_string(),
     };
     check_proposal_bounds(&change_set)?;
@@ -447,7 +468,7 @@ fn parse_change_set(response: &str) -> Result<ChangeSet, ProposeError> {
 }
 
 /// Strip one surrounding ```` ``` ```` fence (with an optional `json`
-/// tag), if present — the single repair normalization, applied once.
+/// tag), if present — one of the two repair normalizations, applied once.
 fn strip_one_fence(text: &str) -> &str {
     let Some(rest) = text.strip_prefix("```") else {
         return text;
@@ -679,6 +700,27 @@ mod tests {
         );
         let response = parse_generate_response(raw.as_bytes()).expect("parses");
         assert_eq!(response, "hello");
+    }
+
+    #[test]
+    fn object_payload_for_config_is_canonicalized() {
+        let nested = r#"{"id":"temp-up","kind":"trainlab_config","paths":[],
+            "payload":{"temperature":0.7},"rationale":"warmer"}"#;
+        let mut proposer = fake_proposer(vec![Ok(nested.to_string())]);
+        let change_set = proposer.propose(&context()).expect("canonicalizes");
+        assert_eq!(change_set.kind, ChangeKind::TrainlabConfig);
+        assert_eq!(change_set.payload, "{\"temperature\":0.7}");
+    }
+
+    #[test]
+    fn object_payload_for_file_patch_stays_invalid() {
+        let nested = r#"{"id":"p","kind":"file_patch","paths":["base-config.json"],
+            "payload":{"temperature":0.7},"rationale":"warmer"}"#;
+        let mut proposer = fake_proposer(vec![Ok(nested.to_string())]);
+        assert!(matches!(
+            proposer.propose(&context()),
+            Err(ProposeError::Invalid(_))
+        ));
     }
 
     #[test]
