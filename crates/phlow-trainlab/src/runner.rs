@@ -273,6 +273,11 @@ pub struct TaskPassk {
     pub pass_at_k: f64,
 }
 
+// Layout pin (2026-10-08 struct-size audit): 80 bytes is the floor for
+// these fields under rustc's default repr; a pass@k report holds one
+// row per task (at most TASKS_PER_SPLIT_MAX (512)).
+const _: () = assert!(std::mem::size_of::<TaskPassk>() == 80);
+
 /// A pass@k evaluation report over a set of tasks.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct PasskReport {

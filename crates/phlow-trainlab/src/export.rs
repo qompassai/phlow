@@ -61,6 +61,12 @@ pub struct GroupExportRecord {
     pub updated: bool,
 }
 
+// Layout pin (2026-10-08 struct-size audit): 168 bytes is the floor for
+// these fields under rustc's default repr, and an export holds at most
+// GROUPS_MAX (256) records. Field order is serde-visible (it is the
+// export format); this pin makes a growth in the record fail loudly.
+const _: () = assert!(std::mem::size_of::<GroupExportRecord>() == 168);
+
 /// A complete group export for one run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GroupsExport {
