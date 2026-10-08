@@ -1,3 +1,5 @@
+#![deny(unsafe_op_in_unsafe_fn)]
+
 //! Experimental Mojo kernel track for phlow-trainlab.
 //!
 //! This crate is the Rust host for a set of Mojo GPU kernels that implement
@@ -36,3 +38,14 @@ pub const VOCAB_SIZE_MAX: u32 = 262_144;
 pub const GROUP_COMPLETIONS_MAX: u32 = 1_024;
 /// Maximum groups scored in one advantage-kernel launch.
 pub const GROUPS_PER_LAUNCH_MAX: u32 = 4_096;
+/// Maximum logits elements (rows * vocab) accepted per launch: caps the
+/// device allocation at 1 GiB of f32 regardless of the individual shape
+/// bounds.
+pub const LOGITS_ELEMENTS_MAX: u32 = 268_435_456;
+/// Maximum completions summed across all groups in one advantage call.
+pub const COMPLETIONS_TOTAL_MAX: u32 = 1_048_576;
+/// Maximum kernel re-launches in one bench call.
+pub const REPEATS_MAX: u32 = 10_000;
+
+pub mod error;
+pub mod ffi;
