@@ -171,6 +171,13 @@ impl ChatTransport for HttpTransport {
             "prompt": prompt,
             "stream": false,
             "format": "json",
+            // The binding consumes the answer channel only; a
+            // thinking planner's trace is not part of the contract,
+            // and with stream:false the daemon sends nothing until
+            // generation ends — an unbounded trace is a read timeout
+            // (observed live against the 30B planner). Models that
+            // do not think ignore the flag.
+            "think": false,
         })
         .to_string();
         let request = format!(
@@ -347,6 +354,16 @@ fn build_prompt(context: &ProposeContext) -> String {
          \"paths\": [<worktree-relative paths, file_patch only>], \
          \"payload\": \"<config delta JSON or unified patch, at most {payload_max} bytes>\", \
          \"rationale\": \"<one line, at most {rationale_max} chars>\"}}\n\
+         Gate rules, enforced exactly (a violation is discarded unmeasured):\n\
+         - kind trainlab_config: paths MUST be [] — a config change-set carries \
+         no paths. payload is a JSON object holding any of these run-configuration \
+         fields (unknown fields are rejected): temperature (number, 0.0 to 2.0), \
+         groups, group_size, per_family, seed (integers), families (array of \
+         task-family names), invalid_penalty (number).\n\
+         - kind file_patch: paths lists the worktree files the patch touches and \
+         payload is a unified diff against them. The worktree holds exactly one \
+         file, base-config.json — a JSON object with the same run-configuration \
+         fields — which a patch may edit to move the base configuration.\n\
          One idea per proposal. A gain below 0.01 pass@1 is discarded as noise, \
          so propose changes with a plausible effect larger than that.",
         context.iteration,
@@ -662,6 +679,24 @@ mod tests {
         );
         let response = parse_generate_response(raw.as_bytes()).expect("parses");
         assert_eq!(response, "hello");
+    }
+
+    #[test]
+    fn prompt_states_the_gate_rules() {
+        // The planner is told the vocabulary and the shape rules it
+        // will be held to: the delta fields, paths [] for config
+        // change-sets, and the one worktree file a patch may touch.
+        // (Found live: without them the planner guessed llama.cpp
+        // knobs and put paths on a config change-set — every
+        // proposal gate-rejected unmeasured.)
+        let prompt = build_prompt(&context());
+        assert!(prompt.contains("paths MUST be []"), "{prompt}");
+        assert!(
+            prompt.contains("temperature (number, 0.0 to 2.0)"),
+            "{prompt}"
+        );
+        assert!(prompt.contains("invalid_penalty"), "{prompt}");
+        assert!(prompt.contains("base-config.json"), "{prompt}");
     }
 
     #[test]
