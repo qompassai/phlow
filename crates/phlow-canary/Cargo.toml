@@ -1,0 +1,25 @@
+[package]
+name = "phlow-canary"
+version = "0.1.0"
+edition = "2024"
+description = "Behavioral canary battery for phlow: pre-deployment screening of externally sourced models for injection susceptibility, backdoor trigger candidates, refusal inconsistency and calibration anomalies. Fail-closed verdicts cached against the exact model artifact hash; payloads live outside the repo in an access-controlled store."
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "phlow_canary"
+path = "src/lib.rs"
+
+[dependencies]
+# phlow-system1: the shared QuestionBatch/Question/Answer wire shapes and
+# the System1Error type every backend reports. Read-only use; the battery
+# defines its own RichAnswer because the committed system1 API exposes
+# only scalar confidence, not the distributions the statistics need.
+phlow-system1 = { version = "0.1.0", path = "../phlow-system1" }
+# serde: derive the closed payload-store, threshold-book, cache and
+# report shapes (deny_unknown_fields at every trust boundary).
+serde = { version = "1", features = ["derive"] }
+# serde_json: store/book/cache parsing and the JSONL report export.
+serde_json = "1"
+# sha2: the model artifact hash a verdict is cached against. Already in
+# the workspace lock tree (phlow-gauntlet); no new dependency family.
+sha2 = "0.10"
