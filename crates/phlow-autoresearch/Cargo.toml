@@ -1,0 +1,29 @@
+[package]
+name = "phlow-autoresearch"
+version = "0.1.0"
+edition = "2024"
+description = "Bounded autoresearch loop orchestration for phlow: typed change-sets proposed against an allowlisted surface, evaluated on trainlab's frozen dev split, kept or discarded by metric, and recorded in a hash-chained experiment ledger. EXPERIMENTAL — the loop proposes and measures only; promotion stays behind phlow-experiment's human-signed gate."
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "phlow_autoresearch"
+path = "src/lib.rs"
+
+[[bin]]
+name = "phlow-autoresearch"
+path = "src/main.rs"
+
+[dependencies]
+# serde/serde_json: ledger entries, change-sets, and the scenario wire
+# format. Validation never relies on derive; every boundary value is
+# checked by hand after parsing.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# sha2: SHA-256 for the ledger hash chain and change-set identity,
+# pinned exact to match phlow-trainlab / phlow-experiment.
+sha2 = "=0.10.9"
+
+[dev-dependencies]
+# The confirmation-gate test proves the loop never opens trainlab's
+# confirmation split, against the real gate type.
+phlow-trainlab = { path = "../phlow-trainlab" }
