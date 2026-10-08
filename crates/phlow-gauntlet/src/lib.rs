@@ -223,7 +223,11 @@ pub fn bound_evidence(lines: Vec<String>) -> Vec<String> {
 /// Run a headless-Neovim task driver and parse its JSON verdict.
 ///
 /// Spawns `ctx.nvim_bin --headless -l <gauntlet_lua_dir>/<script>` with
-/// `DIVER_LUA_DIR` and `GAUNTLET_WORK_DIR` in the environment. `DIVER_LUA_DIR`
+/// `DIVER_LUA_DIR` and `GAUNTLET_WORK_DIR` in the environment. The driver
+/// process is hermetic: `XDG_CONFIG_HOME` points at an empty scratch dir
+/// (see [`driver_config_home`]), so Neovim's runtimepath carries no user
+/// config and diver resolution is governed solely by `DIVER_LUA_DIR`.
+/// `DIVER_LUA_DIR`
 /// is a scratch rtp-root shim built from `ctx.diver_lua_dir` (see
 /// [`diver_rtp_shim`]): the drivers append it to the runtimepath and
 /// `require('ai.harness')`. The driver
@@ -271,6 +275,31 @@ fn diver_rtp_shim(ctx: &Ctx) -> Result<PathBuf, String> {
             .map_err(|e| format!("cannot symlink rtp ai dir: {e}"))?;
     }
     Ok(shim)
+}
+
+/// Build the hermetic `XDG_CONFIG_HOME` for one driver invocation.
+///
+/// Neovim's runtimepath always contains `$XDG_CONFIG_HOME/nvim` — with the
+/// ambient environment that is the user's live diver config — ahead of the
+/// `DIVER_LUA_DIR` shim the drivers append, so `require('ai.…')` loads
+/// live-tree modules instead of the tree under test, and live modules can
+/// behave differently from it (task-08: the live `ai.mcp.client` encodes
+/// empty capabilities as a JSON object, the mirror as an array, so the
+/// pinned handshake failure never happens). An empty scratch dir removes
+/// the user config from the runtimepath entirely. The dir is created
+/// empty, is only ever read by the child, and is released with the rtp
+/// shim on every exit path.
+static CONFIG_HOME_SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn driver_config_home() -> Result<PathBuf, String> {
+    let dir = std::env::temp_dir().join(format!(
+        "gauntlet-driver-config-{}-{}",
+        std::process::id(),
+        CONFIG_HOME_SEQ.fetch_add(1, Ordering::SeqCst)
+    ));
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("cannot create driver config home {}: {e}", dir.display()))?;
+    Ok(dir)
 }
 
 /// [`run_nvim_lua_driver`] with extra environment variables for the driver
@@ -368,6 +397,20 @@ pub fn run_nvim_lua_driver_with_env(
             };
         }
     };
+    // Hermetic config home: keep the user's live config off the driver's
+    // runtimepath; see `driver_config_home`. Fail closed on I/O errors.
+    // Set before `extra_env` so a caller can still override it explicitly.
+    let config_home = match driver_config_home() {
+        Ok(dir) => dir,
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&diver_rtp);
+            return TaskOutcome::Fail {
+                where_: "spawn".to_string(),
+                how: e,
+                evidence: vec![],
+            };
+        }
+    };
 
     let mut cmd = Command::new(&ctx.nvim_bin);
     cmd.arg("--headless")
@@ -375,6 +418,7 @@ pub fn run_nvim_lua_driver_with_env(
         .arg(&script_path)
         .env("DIVER_LUA_DIR", &diver_rtp)
         .env("GAUNTLET_WORK_DIR", &work_dir)
+        .env("XDG_CONFIG_HOME", &config_home)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     for (k, v) in extra_env {
@@ -383,6 +427,8 @@ pub fn run_nvim_lua_driver_with_env(
     let child = match cmd.spawn() {
         Ok(child) => child,
         Err(e) => {
+            let _ = std::fs::remove_dir_all(&diver_rtp);
+            let _ = std::fs::remove_dir_all(&config_home);
             return TaskOutcome::Fail {
                 where_: "spawn".to_string(),
                 how: format!("cannot spawn nvim: {e}"),
@@ -420,8 +466,10 @@ pub fn run_nvim_lua_driver_with_env(
             output: Ok(out),
         }) => parse_driver_verdict(&out, expected_id, status.code()),
     };
-    // The shim is scratch, never evidence: release it on every path.
+    // The shim and config home are scratch, never evidence: release both
+    // on every path.
     let _ = std::fs::remove_dir_all(&diver_rtp);
+    let _ = std::fs::remove_dir_all(&config_home);
     outcome
 }
 
