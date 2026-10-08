@@ -106,8 +106,14 @@ fn read_blocks(path: &str) -> Result<Vec<Block>, ScoringError> {
                 detail: "truncated block data".to_string(),
             })?;
         let mut logits = Vec::with_capacity(count);
-        for chunk in data.chunks_exact(4) {
-            logits.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+        for index in 0..count {
+            let at = index * 4;
+            logits.push(f32::from_le_bytes([
+                data[at],
+                data[at + 1],
+                data[at + 2],
+                data[at + 3],
+            ]));
         }
         pos += byte_len;
         blocks.push(Block {
@@ -286,8 +292,14 @@ fn mode_bench(batch_path: &str, repeats: usize) -> Result<bool, ScoringError> {
             detail: "truncated bench logits".to_string(),
         })?;
     let mut logits = Vec::with_capacity(count);
-    for chunk in data.chunks_exact(4) {
-        logits.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+    for index in 0..count {
+        let at = index * 4;
+        logits.push(f32::from_le_bytes([
+            data[at],
+            data[at + 1],
+            data[at + 2],
+            data[at + 3],
+        ]));
     }
     let block = Block {
         rows,
