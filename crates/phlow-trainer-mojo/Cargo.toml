@@ -1,0 +1,17 @@
+[package]
+name = "phlow-trainer-mojo"
+version = "0.1.0"
+edition = "2024"
+description = "Experimental Mojo kernel track for phlow-trainlab: GPU logprob-reduction and RLOO advantage kernels behind the shared trainer contract, callable from Rust over a C ABI. EXPERIMENTAL — kernels only, not a trainer; walls are documented, never hidden."
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+name = "phlow_trainer_mojo"
+path = "src/lib.rs"
+
+[[bin]]
+name = "phlow-trainer-mojo"
+path = "src/main.rs"
+
+[dependencies]
