@@ -9,17 +9,35 @@
 //!   live proposer/evaluator bindings attach behind the same traits.
 //! - `verify --ledger-dir <dir>` — open a ledger, verify its full
 //!   hash chain, and print the entry count and head hash.
+//! - `run-live --worktree <dir> --ledger-dir <dir>
+//!   --evidence-dir <dir> [--iterations <n>] [--model <name>]
+//!   [--base-url <url>]` — the fully live run: the planner specialist
+//!   (Ollama proposer binding) proposes, the applier applies, and
+//!   trainlab measures each change-set on the frozen dev split
+//!   against the incumbent served model. The worktree must hold
+//!   `base-config.json`. Launching this mode is the operator's
+//!   code-execution acknowledgment (trainlab rewards execute
+//!   model-generated code). Budgets are the loop's hard constants;
+//!   dropping a `STOP` file into the ledger dir halts the run.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use phlow_autoresearch::applying_evaluator::ApplyingEvaluator;
 use phlow_autoresearch::changeset::ChangeSet;
 use phlow_autoresearch::clock::SystemClock;
 use phlow_autoresearch::error::FailureClass;
 use phlow_autoresearch::evaluator::{Evaluation, ScriptedEvaluator, ScriptedOutcome};
 use phlow_autoresearch::ledger::Ledger;
+use phlow_autoresearch::live_evaluator::{DEFAULT_SAMPLER_BASE_URL, LiveEvaluator};
+use phlow_autoresearch::ollama_proposer::{OllamaProposer, ProposerConfig};
 use phlow_autoresearch::proposer::{ScriptedProposal, ScriptedProposer};
 use phlow_autoresearch::research_loop::{LoopConfig, run_loop};
+
+/// The incumbent served model the live evaluator measures against:
+/// the trainer program's RLOO-trained qwen2.5-coder, merged and
+/// served by the local Ollama.
+const DEFAULT_LIVE_MODEL: &str = "qwen2.5-coder-7b-rloo-pytorch";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -35,8 +53,9 @@ fn main() -> ExitCode {
 fn run(args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
         Some("run") => cmd_run(&args[1..]),
+        Some("run-live") => cmd_run_live(&args[1..]),
         Some("verify") => cmd_verify(&args[1..]),
-        _ => Err("usage: phlow-autoresearch <run|verify> [flags]".to_string()),
+        _ => Err("usage: phlow-autoresearch <run|run-live|verify> [flags]".to_string()),
     }
 }
 
@@ -83,6 +102,41 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
 
     let mut proposer = ScriptedProposer::new(proposals);
     let mut evaluator = ScriptedEvaluator::new(outcomes);
+    let mut ledger = Ledger::open(&ledger_dir).map_err(|err| err.to_string())?;
+    let clock = SystemClock::new();
+    let report = run_loop(&config, &mut proposer, &mut evaluator, &mut ledger, &clock)
+        .map_err(|err| err.to_string())?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&report).map_err(|err| err.to_string())?
+    );
+    Ok(())
+}
+
+fn cmd_run_live(args: &[String]) -> Result<(), String> {
+    let worktree = PathBuf::from(flag_value(args, "--worktree")?);
+    let ledger_dir = PathBuf::from(flag_value(args, "--ledger-dir")?);
+    let evidence_dir = PathBuf::from(flag_value(args, "--evidence-dir")?);
+    let model = flag_value(args, "--model").unwrap_or_else(|_| DEFAULT_LIVE_MODEL.to_string());
+    let base_url =
+        flag_value(args, "--base-url").unwrap_or_else(|_| DEFAULT_SAMPLER_BASE_URL.to_string());
+
+    let mut config = LoopConfig::new(worktree.clone(), ledger_dir.clone());
+    if let Ok(raw) = flag_value(args, "--iterations") {
+        config.iterations_max = raw
+            .parse()
+            .map_err(|_| format!("--iterations value {raw:?} is not a number"))?;
+    }
+
+    let proposer_config = ProposerConfig::from_env();
+    eprintln!(
+        "run-live: planner {} at {}; measuring against {} at {}",
+        proposer_config.model, proposer_config.base_url, model, base_url
+    );
+    let mut proposer =
+        OllamaProposer::from_config(&proposer_config).map_err(|err| format!("{err:?}"))?;
+    let live = LiveEvaluator::new(worktree.clone(), evidence_dir, base_url, model);
+    let mut evaluator = ApplyingEvaluator::new(worktree, ledger_dir.clone(), Box::new(live));
     let mut ledger = Ledger::open(&ledger_dir).map_err(|err| err.to_string())?;
     let clock = SystemClock::new();
     let report = run_loop(&config, &mut proposer, &mut evaluator, &mut ledger, &clock)

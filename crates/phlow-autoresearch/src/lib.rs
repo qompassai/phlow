@@ -45,17 +45,27 @@
 //!   dev-split metric from real trainlab receipts and verifies
 //!   trainer receipts (hash chain, adapter movement, parity guard)
 //!   instead of running anything itself.
+//! - [`applier`]: the `FilePatch` applier — the loop's apply step,
+//!   restricted unified-diff subset, compute-before-write.
+//! - [`applying_evaluator`]: composition of the applier with an
+//!   inner evaluator (apply first, then measure).
+//! - [`live_evaluator`]: the fully live evaluator — runs trainlab on
+//!   the frozen dev split for real and scores the receipt through
+//!   [`receipt_evaluator`].
 //! - [`ledger`]: the hash-chained, append-only experiment ledger.
 //! - [`research_loop`]: the state machine, budgets, and halt logic.
 //! - [`clock`]: monotonic clocks (system for production, manual for
 //!   deterministic tests).
 //! - [`error`]: the typed error and the failure taxonomy.
 
+pub mod applier;
+pub mod applying_evaluator;
 pub mod changeset;
 pub mod clock;
 pub mod error;
 pub mod evaluator;
 pub mod ledger;
+pub mod live_evaluator;
 pub mod ollama_proposer;
 pub mod proposer;
 pub mod receipt_evaluator;
@@ -64,11 +74,14 @@ pub mod research_loop;
 #[cfg(test)]
 pub(crate) mod testsupport;
 
+pub use applier::apply_change_set;
+pub use applying_evaluator::ApplyingEvaluator;
 pub use changeset::{ChangeKind, ChangeSet, validate_change_set};
 pub use clock::{Clock, ManualClock, SystemClock};
 pub use error::{AutoresearchError, FailureClass};
 pub use evaluator::{EvalError, Evaluation, Evaluator, ScriptedEvaluator, ScriptedOutcome};
 pub use ledger::{Decision, EntryDraft, EntryKind, Ledger, LedgerEntry};
+pub use live_evaluator::{BaseConfig, LiveEvaluator};
 pub use ollama_proposer::{ChatTransport, HttpTransport, OllamaProposer, ProposerConfig};
 pub use proposer::{ProposeContext, ProposeError, Proposer, ScriptedProposal, ScriptedProposer};
 pub use receipt_evaluator::{EvaluationBundle, ReceiptEvaluator, TrainerEvidence};
