@@ -15,7 +15,12 @@
 //! What DOES exist under the "planner" name is the planner *role*: an
 //! LLM role name in `phlow-config` (`ModelsConfig.planner`,
 //! `ModelRole::Planner`) and prose ("planner -> coder -> verification ->
-//! reviewer loop") in `phlow-agent/src/orchestrator.rs`. `Orchestrator::run`
+//! reviewer loop") in `phlow-agent/src/orchestrator.rs`, plus one
+//! consumer of the role: the autoresearch proposer binding
+//! (`phlow-autoresearch/src/ollama_proposer.rs`), which binds the
+//! planner specialist to emit change-sets for the bounded experiment
+//! loop — classified in V2 as a role consumer, not a routine.
+//! `Orchestrator::run`
 //! is a single pass into `Runtime::run` — one call, no goal-splitting
 //! loop. There is no decomposition routine, so there is no depth to
 //! bound and no cap to name; the adversarial self-similar goal has no
@@ -379,12 +384,14 @@ fn case_decompose_vocabulary_absent() -> Result<CaseReport, DriverError> {
 
 /// V2: the "planner" in phlow is a ROLE, not a routine. The token scan
 /// finds `planner` across the workspace — every hit file is verified
-/// (not asserted) to be role-related: the file also contains the
-/// role-loop siblings `coder`/`reviewer` (the planner role never
-/// appears without them in this codebase), and no planner-hit file
-/// contains any real decomposition-token hit (no planner-decomposer
-/// coupling). A file failing either check is an unclassified routine
-/// hit.
+/// (not asserted) to be role-related: either the file also contains
+/// the role-loop siblings `coder`/`reviewer` (the planner role never
+/// appears without them in the runtime codebase), or it is the
+/// autoresearch proposer binding — the experimental crate's consumer
+/// of the planner specialist, classified by its `Proposer` binding.
+/// And no planner-hit file contains any real decomposition-token hit
+/// (no planner-decomposer coupling). A file failing every check is an
+/// unclassified routine hit.
 fn case_planner_is_role_not_routine() -> Result<CaseReport, DriverError> {
     const CASE: &str = "planner_is_role_not_routine";
     let root = workspace_root()?;
@@ -416,7 +423,22 @@ fn case_planner_is_role_not_routine() -> Result<CaseReport, DriverError> {
         let low = text.to_lowercase();
         let has_siblings = low.contains("coder") || low.contains("reviewer");
         let has_decompose = real_decompose.iter().any(|h| h.starts_with(file.as_str()));
-        if has_siblings && !has_decompose {
+        // The autoresearch proposer binding is a CONSUMER of the
+        // planner role inside the experimental crate: it binds the
+        // [specialists] planner model to emit one change-set per loop
+        // iteration. Not a planner/decomposer routine in the runtime.
+        // The classification requires the `Proposer` binding in the
+        // file and holds only while no real decomposition vocabulary
+        // appears there (fail-closed: decomposition vocabulary
+        // revokes it).
+        let is_proposer_binding =
+            file.contains("phlow-autoresearch/src/ollama_proposer.rs") && text.contains("Proposer");
+        if is_proposer_binding && !has_decompose {
+            evidence.push(format!(
+                "classified role consumer (autoresearch proposer binding of the planner \
+                 specialist; Proposer binding present, no decomposition vocabulary): {file}"
+            ));
+        } else if has_siblings && !has_decompose {
             evidence.push(format!(
                 "classified role site (coder/reviewer siblings present, no real decomposition \
                  vocabulary): {file}"
@@ -437,8 +459,10 @@ fn case_planner_is_role_not_routine() -> Result<CaseReport, DriverError> {
     }
     evidence.push(
         "every 'planner' hit is the planner ROLE (LLM role in the planner->coder->reviewer \
-         loop: role prompts, model config, pipeline prose) — verified per file by the \
-         coder/reviewer sibling check; no routine splits goals into subgoals"
+         loop: role prompts, model config, pipeline prose, and the autoresearch \
+         proposer's binding of the planner specialist) — verified per file by the \
+         coder/reviewer sibling check or the Proposer-binding check; no routine \
+         splits goals into subgoals"
             .to_string(),
     );
     Ok(CaseReport::pass(
@@ -601,7 +625,7 @@ struct TaskFailure {
 fn run_inner(_ctx: &Ctx) -> Result<Vec<String>, TaskFailure> {
     let mut evidence = vec![
         "recon: the decomposition vocabulary scan (decompose, decomposition, decomposer, subgoal, subgoals, sub_goal) returns zero across every phlow crate — no goal-decomposition routine exists".to_string(),
-        "recon: 'planner' in phlow is the planner ROLE (LLM role name in phlow-config, prose in phlow-agent/src/orchestrator.rs), never a routine that splits goals into subgoals".to_string(),
+        "recon: 'planner' in phlow is the planner ROLE (LLM role name in phlow-config, prose in phlow-agent/src/orchestrator.rs, and the autoresearch proposer's binding of the planner specialist), never a routine that splits goals into subgoals".to_string(),
     ];
     for case in CASES {
         let report = run_case(case).map_err(|e| TaskFailure {
@@ -627,7 +651,7 @@ fn run_inner(_ctx: &Ctx) -> Result<Vec<String>, TaskFailure> {
     );
     Err(TaskFailure {
         where_: "seam".to_string(),
-        how: "seam absent: no goal-decomposition routine exists in any phlow crate — the decomposition vocabulary scan (decompose, decomposition, decomposer, subgoal, subgoals, sub_goal) returns zero workspace-wide, and phlow-agent's public module list (read from the live lib.rs) contains no planner/decomposer/goal module. The 'planner' in phlow is an LLM role name (phlow-config ModelsConfig.planner / ModelRole::Planner) and prose ('planner -> coder -> verification -> reviewer loop' in orchestrator.rs); Orchestrator::run is a single pass into Runtime::run per user message with no goal-splitting loop. The design's pass criteria (always terminates, proven by the cap; the cap is a named constant; partial results at the cap are usable) need a decomposition routine with a depth bound, and there is none. Whether phlow wants goal decomposition at all is banked for Matt — a product decision, not a bug.".to_string(),
+        how: "seam absent: no goal-decomposition routine exists in any phlow crate — the decomposition vocabulary scan (decompose, decomposition, decomposer, subgoal, subgoals, sub_goal) returns zero workspace-wide, and phlow-agent's public module list (read from the live lib.rs) contains no planner/decomposer/goal module. The 'planner' in phlow is an LLM role name (phlow-config ModelsConfig.planner / ModelRole::Planner), prose ('planner -> coder -> verification -> reviewer loop' in orchestrator.rs), and one role consumer (the autoresearch proposer binding of the planner specialist in the experimental crate); Orchestrator::run is a single pass into Runtime::run per user message with no goal-splitting loop. The design's pass criteria (always terminates, proven by the cap; the cap is a named constant; partial results at the cap are usable) need a decomposition routine with a depth bound, and there is none. Whether phlow wants goal decomposition at all is banked for Matt — a product decision, not a bug.".to_string(),
         evidence,
     })
 }

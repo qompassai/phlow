@@ -13,8 +13,10 @@
 //!   `download` → 0 hits; `downloads` → 1 hit, the safe-runtime policy
 //!   in `crates/phlow-runtime/src/prompt.rs` DENYING downloads ("No
 //!   arbitrary commands, cwd overrides, downloads, plugins or
-//!   outside-workspace access"); `huggingface` → 0 hits; `hf` → 0 hits
-//!   outside gauntlet harness vocabulary.
+//!   outside-workspace access"); `huggingface` → 0 hits; `hf` → 1 hit
+//!   outside gauntlet harness vocabulary: the autoresearch proposer's
+//!   planner specialist model name ("hf-nemotron-..."), a name Ollama
+//!   serves — classified, not a hub client.
 //! - `snapshot` / `blob` / `revision` hits exist but every one is in
 //!   unrelated senses: workspace file snapshots (phlow-workspace),
 //!   editor snapshots (phlow-editor), run snapshots and report
@@ -276,7 +278,19 @@ fn case_no_download_client() -> Result<CaseReport, DriverError> {
         evidence.push(format!("hit: token={token} at {hit}"));
         let is_denial = hit.contains("phlow-runtime/src/prompt.rs");
         let is_harness = hit_crate(hit).is_some_and(|c| c == "phlow-gauntlet");
-        if !is_denial && !is_harness {
+        // An `hf` hit in the autoresearch proposer is the planner
+        // specialist's model NAME string ("hf-nemotron-...") — a name
+        // Ollama serves over HTTP, not a hub client or pull path.
+        // Only the `hf` token classifies this way; a `download` or
+        // `huggingface` hit there would still fail the case.
+        let is_model_name =
+            token.as_str() == "hf" && hit.contains("phlow-autoresearch/src/ollama_proposer.rs");
+        if is_model_name {
+            evidence.push(format!(
+                "classified (specialist model name string, not a hub client): {hit}"
+            ));
+        }
+        if !is_denial && !is_harness && !is_model_name {
             return Ok(CaseReport::fail(
                 CASE,
                 format!(
@@ -288,9 +302,10 @@ fn case_no_download_client() -> Result<CaseReport, DriverError> {
         }
     }
     evidence.push(
-        "every hit classified: the sole product hit is prompt.rs's safe-runtime \
+        "every hit classified: the product hits are prompt.rs's safe-runtime \
          policy DENYING downloads (\"No arbitrary commands, cwd overrides, downloads, \
-         plugins or outside-workspace access\"); remaining hits are gauntlet harness \
+         plugins or outside-workspace access\") and the autoresearch proposer's \
+         HF-prefixed specialist model name; remaining hits are gauntlet harness \
          vocabulary — no download client, no HF hub client, no pull path exists"
             .to_string(),
     );
@@ -445,7 +460,7 @@ struct TaskFailure {
 
 fn run_inner(_ctx: &Ctx) -> Result<Vec<String>, TaskFailure> {
     let mut evidence = vec![
-        "recon: the model-manager seam is absent — exact-token scans find no download client (sole `downloads` hit is prompt.rs's safe-runtime policy denying downloads), no huggingface/hf client, and every snapshot/blob/revision hit is an unrelated sense (workspace/editor/run/context/experiment snapshots, report/manifest/workflow revisions)".to_string(),
+        "recon: the model-manager seam is absent — exact-token scans find no download client (sole `downloads` hit is prompt.rs's safe-runtime policy denying downloads), no huggingface client, the sole `hf` product hit is the autoresearch proposer's planner model name string (classified), and every snapshot/blob/revision hit is an unrelated sense (workspace/editor/run/context/experiment snapshots, report/manifest/workflow revisions)".to_string(),
         "recon: model bytes never enter phlow's address space — models are served by Ollama over HTTP (phlow-llm); the existing byte caps guard other seams (RESPONSE_BYTES_MAX = 2 MiB on Ollama response bodies; FILE_BYTES_MAX = 256 KiB on workspace file reads)".to_string(),
     ];
     for case in CASES {
@@ -472,7 +487,7 @@ fn run_inner(_ctx: &Ctx) -> Result<Vec<String>, TaskFailure> {
     );
     Err(TaskFailure {
         where_: "seam".to_string(),
-        how: "seam absent, documented with file evidence: no model download/cache manager exists in any phlow crate — exact-token scans over crates/*/src/**/*.rs find `download` 0 hits, `downloads` 1 hit (crates/phlow-runtime/src/prompt.rs: the safe-runtime policy denying downloads), `huggingface`/`hf` 0 product hits, and every `snapshot`/`blob`/`revision` hit classified into unrelated senses (workspace/editor/run/context/experiment snapshots; report/manifest/workflow revisions). Model bytes never enter phlow's address space: Ollama serves models over HTTP and owns the pull. The design's pass criteria (observed-byte cap independent of advertised sizes, hash-verified resume, incomplete-never-loadable, pinned-exempt eviction) need a downloader, and there is none. Whether phlow should gain an HF model manager (download with observed-byte caps, hash-verified resume, blob cache with explicit eviction, incomplete markers) is a product decision for Matt, not a gauntlet-authorized change.".to_string(),
+        how: "seam absent, documented with file evidence: no model download/cache manager exists in any phlow crate — exact-token scans over crates/*/src/**/*.rs find `download` 0 hits, `downloads` 1 hit (crates/phlow-runtime/src/prompt.rs: the safe-runtime policy denying downloads), `huggingface` 0 hits, `hf` 1 product hit (the autoresearch proposer's HF-prefixed planner model name, classified — a served name, not a client), and every `snapshot`/`blob`/`revision` hit classified into unrelated senses (workspace/editor/run/context/experiment snapshots; report/manifest/workflow revisions). Model bytes never enter phlow's address space: Ollama serves models over HTTP and owns the pull. The design's pass criteria (observed-byte cap independent of advertised sizes, hash-verified resume, incomplete-never-loadable, pinned-exempt eviction) need a downloader, and there is none. Whether phlow should gain an HF model manager (download with observed-byte caps, hash-verified resume, blob cache with explicit eviction, incomplete markers) is a product decision for Matt, not a gauntlet-authorized change.".to_string(),
         evidence,
     })
 }

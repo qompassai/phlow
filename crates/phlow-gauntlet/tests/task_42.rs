@@ -1,25 +1,27 @@
 //! Integration tests for task-42 (audit log append-only, Rust).
 //!
-//! There is NO tamper-evident journal seam in the phlow workspace: a
-//! runtime vocabulary scan over every `crates/*/src/**/*.rs` finds
-//! zero integrity-mechanism tokens (no entry linking, no sealing keys,
-//! no tamper-evidence journaling). The three grow-only structures that
-//! DO exist are classified and rejected as the seam —
+//! There is NO tamper-evident journal seam in phlow's
+//! runtime/approval path: a runtime vocabulary scan over every
+//! `crates/*/src/**/*.rs` finds zero integrity-mechanism tokens there
+//! (no entry linking, no sealing keys, no tamper-evidence
+//! journaling). The three grow-only structures that DO exist in the
+//! runtime are classified and rejected as the seam —
 //! `ConsumedApprovals` (phlow-experiment) is replay protection with
 //! expiring entries, `FusionReceipt.log` (phlow-tools) is an
 //! in-memory `Vec<String>`, `ApprovalQueue.records` (phlow-approval)
 //! is a bounded in-memory `Vec<Record>`. The design's adversarial weapons (byte
 //! flip in an old entry, tail truncation, whole-log rewrite) have no
-//! target: no writer, no verifier, no head-hash tracking. The driver
-//! is an audit-only driver and reports the honest
-//! `Fail { where: "seam" }`. These tests: 2 validation + 2 adversarial —
-//! three drive individual cases through `run_case` with the same metrics
-//! JSON a harness would collect, and the last one folds in the
-//! task-level verdict.
+//! target in the runtime path: no writer, no verifier, no head-hash
+//! tracking. The driver is an audit-only driver and reports the
+//! honest `Fail { where: "seam" }`. These tests: 2 validation +
+//! 2 adversarial — three drive individual cases through `run_case`
+//! with the same metrics JSON a harness would collect, and the last
+//! one folds in the task-level verdict.
 //!
-//! Product decision (banked for Matt): whether phlow should gain a
-//! sealed, entry-linked journal — the approval/promotion path would be
-//! the natural first consumer.
+//! Ruled by Matt (2026-10-08): no journal seam in the runtime/approval
+//! path; the autoresearch ledger is the sanctioned experimental
+//! exception. The probe counts the exception's hits separately and
+//! fails closed on any integrity vocabulary outside it.
 
 use phlow_gauntlet::tasks::task_42;
 use phlow_gauntlet::{Ctx, TaskKind, TaskOutcome};
@@ -55,9 +57,10 @@ fn test_ctx() -> Ctx {
 // --- validation ---
 
 /// V: metadata contract pins the task; the integrity-mechanism
-/// vocabulary scan over the real workspace finds zero hits — no entry
-/// linking, no sealing keys, no tamper-evidence journaling in any
-/// phlow source.
+/// vocabulary scan over the real workspace finds zero hits in the
+/// runtime/approval path — no entry linking, no sealing keys, no
+/// tamper-evidence journaling there; the sanctioned experimental
+/// exception's hits are counted separately.
 #[test]
 fn no_integrity_tokens_in_sources() {
     assert_eq!(task_42::ID, "task-42");
@@ -72,12 +75,16 @@ fn no_integrity_tokens_in_sources() {
     assert_eq!(
         report.metrics["integrity_hits"],
         serde_json::json!(0),
-        "no integrity-mechanism vocabulary may exist in sources"
+        "no integrity-mechanism vocabulary may exist in the runtime/approval path"
+    );
+    assert!(
+        report.metrics["sanctioned_exception_hits"].is_number(),
+        "the exception hits must be counted separately"
     );
     let evidence = report.evidence.join("\n");
     assert!(
-        evidence.contains("hits: 0"),
-        "evidence must show the hit count:\n{evidence}"
+        evidence.contains("runtime/approval-path hits: 0"),
+        "evidence must show the runtime/approval-path hit count:\n{evidence}"
     );
 }
 
@@ -107,9 +114,10 @@ fn grow_only_stores_lack_verification() {
 
 // --- adversarial ---
 
-/// A: the byte-flip weapon has no target — `verifiers_found` is 0. No
-/// tamper detection was measured because there is no journal to
-/// tamper; a claimed detection would be invented, not sourced.
+/// A: the byte-flip weapon has no target in the runtime/approval
+/// path — `verifiers_found` is 0 there. No tamper detection was
+/// measured against the runtime path because there is no journal to
+/// tamper there; a claimed detection would be invented, not sourced.
 #[test]
 fn byte_flip_has_no_verifier() {
     let report = run_case("byte_flip_has_no_verifier");
@@ -125,9 +133,10 @@ fn byte_flip_has_no_verifier() {
     );
 }
 
-/// A: tail truncation has no head-hash detector — and the task-level
-/// verdict is the honest `Fail { where: "seam" }`: no tamper-evident
-/// journal exists in any phlow crate.
+/// A: tail truncation has no head-hash detector in the
+/// runtime/approval path — and the task-level verdict is the honest
+/// `Fail { where: "seam" }`: no tamper-evident journal exists in the
+/// runtime/approval path of any phlow crate.
 #[test]
 fn truncation_has_no_head_hash_and_task_fails_at_seam() {
     let report = run_case("truncation_has_no_head_hash");

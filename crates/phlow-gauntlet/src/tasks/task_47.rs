@@ -23,7 +23,10 @@
 //! limiter, noted in evidence). The phlow-checks runner
 //! (`spawn_pinned`) is classified by inspection in the V2 audit: it runs
 //! one child synchronously per call (no queue, no fan-out — nothing to
-//! limit), with process-group kill and reap on timeout.
+//! limit), with process-group kill and reap on timeout. The trainlab
+//! reward executor's harness spawn is the same class (one child per
+//! evaluation, deadline, bounded pipes); its remaining spawns are
+//! test-module probes, classified mechanically in the same audit.
 //!
 //! Four cases against the real manager (no mock limiter): two
 //! validation, two adversarial. The task-level verdict is `pass`: the
@@ -311,13 +314,34 @@ fn case_normal_fanout_runs() -> Result<CaseReport, DriverError> {
     ))
 }
 
+/// Split a `path:lineno` scan hit into its parts.
+fn parse_site(site: &str) -> Result<(String, usize), DriverError> {
+    let (path, lineno) = site
+        .rsplit_once(':')
+        .ok_or_else(|| probe_error("hit parse", format!("bad hit '{site}'")))?;
+    let lineno: usize = lineno
+        .parse()
+        .map_err(|_| probe_error("hit parse", format!("bad lineno in '{site}'")))?;
+    Ok((path.to_string(), lineno))
+}
+
+/// The 0-based line index of a file's first `#[cfg(test)]` attribute —
+/// the boundary of its test module. `None` when the file has none.
+fn cfg_test_line(text: &str) -> Option<usize> {
+    text.lines().position(|l| l.trim() == "#[cfg(test)]")
+}
+
 /// V2: every process-spawn site in the non-gauntlet crates is enumerated
 /// by source walk (this driver's own file path-excluded), and each is
 /// classified: the hook fan-out spawn is behind the queue + run
 /// semaphores; the checks-runner spawn is synchronous single-child per
 /// call (no queue exists to bound); the CLI spawn is verified
-/// test-only. No other acquisition path may exist — a new spawn site
-/// fails this case.
+/// test-only; the trainlab reward executor's harness spawn is
+/// synchronous single-child per evaluation under a deadline with
+/// bounded output pipes (same class as the checks spawn), and the
+/// remaining trainlab spawns sit inside `#[cfg(test)]` modules
+/// (verified mechanically by line position). No other acquisition path
+/// may exist — a new spawn site fails this case.
 fn case_spawn_paths_go_through_limiter() -> Result<CaseReport, DriverError> {
     const CASE: &str = "spawn_paths_go_through_limiter";
     let root = workspace_root()?;
@@ -377,10 +401,16 @@ fn case_spawn_paths_go_through_limiter() -> Result<CaseReport, DriverError> {
     // Classify each site. The hook fan-out spawn must sit in the file
     // that owns the limiter; the checks spawn must be the synchronous
     // single-child runner (classified by inspection — quoted below);
-    // the CLI spawn must be test-only (verified mechanically).
+    // the CLI spawn must be test-only (verified mechanically); the
+    // trainlab spawns classify below. Counts are reported as measured;
+    // the pass condition is that every site classifies AND the three
+    // original classes are present and verified.
     let mut hook_gated = false;
     let mut checks_sync = false;
     let mut cli_test_only = false;
+    let mut gated_fanout = 0usize;
+    let mut synchronous_single = 0usize;
+    let mut test_only = 0usize;
     for site in &sites {
         if site.contains("phlow-tuios/src/hooks.rs") {
             let text = std::fs::read_to_string(
@@ -397,12 +427,65 @@ fn case_spawn_paths_go_through_limiter() -> Result<CaseReport, DriverError> {
                 "hooks.rs: queue bound present={has_queue}, run bound present={has_run}, load-shed present={has_shed}"
             ));
             hook_gated = has_queue && has_run && has_shed;
+            if hook_gated {
+                gated_fanout += 1;
+            }
         } else if site.contains("phlow-checks/src/runner.rs") {
             checks_sync = true;
+            synchronous_single += 1;
             evidence.push(
                 "runner.rs: spawn_pinned runs ONE child synchronously per call (wait_with_deadline, process-group kill, reap) — no queue, no fan-out, nothing to limit"
                     .to_string(),
             );
+        } else if site.contains("phlow-trainlab/src/executor.rs")
+            || site.contains("phlow-trainlab/src/runner.rs")
+        {
+            // Trainlab spawns: the reward executor's production harness
+            // spawn (synchronous single-child, below) plus test-module
+            // `python3_available` probes. Position relative to the
+            // file's `#[cfg(test)]` boundary decides which — verified
+            // mechanically, never assumed.
+            let (path, lineno) = parse_site(site)?;
+            let text = std::fs::read_to_string(&path)
+                .map_err(|e| fixture_error("trainlab source", format!("{path}: {e}")))?;
+            let boundary = cfg_test_line(&text);
+            let in_tests = boundary.is_some_and(|b| lineno - 1 > b);
+            if in_tests {
+                test_only += 1;
+                evidence.push(format!(
+                    "{site}: inside the file's #[cfg(test)] module (test-only python3 probe)"
+                ));
+            } else if site.contains("phlow-trainlab/src/executor.rs") {
+                // Production site: require the bounded-executor
+                // anchors in the same file — output pipes bounded by
+                // `output_bytes_max` and a deadline outcome
+                // (`TimedOut`) — before classifying it synchronous.
+                let bounded_pipes = text.contains("output_bytes_max");
+                let deadline = text.contains("TimedOut");
+                evidence.push(format!(
+                    "trainlab executor.rs:{lineno}: bounded pipes present={bounded_pipes}, deadline outcome present={deadline}"
+                ));
+                if !bounded_pipes || !deadline {
+                    return Ok(CaseReport::fail(
+                        CASE,
+                        format!(
+                            "trainlab executor spawn at {site} lost its bounds (bounded_pipes={bounded_pipes}, deadline={deadline})"
+                        ),
+                        evidence,
+                    ));
+                }
+                synchronous_single += 1;
+                evidence.push(
+                    "trainlab executor.rs: run_harness runs ONE harness child synchronously per evaluation under a deadline, stdout/stderr drained through output_bytes_max-bounded pipes, env cleared — no queue, no fan-out, nothing to limit"
+                        .to_string(),
+                );
+            } else {
+                return Ok(CaseReport::fail(
+                    CASE,
+                    format!("unclassified trainlab spawn site outside the limiter: {site}"),
+                    evidence,
+                ));
+            }
         } else if site.contains("phlow-cli/src/lib.rs") {
             // Verify test-only-ness mechanically: the enclosing fn must
             // carry #[test]. Walk up from the hit line to the nearest
@@ -439,6 +522,9 @@ fn case_spawn_paths_go_through_limiter() -> Result<CaseReport, DriverError> {
                 fn_idx + 1
             ));
             cli_test_only = is_test;
+            if is_test {
+                test_only += 1;
+            }
         } else {
             return Ok(CaseReport::fail(
                 CASE,
@@ -447,21 +533,21 @@ fn case_spawn_paths_go_through_limiter() -> Result<CaseReport, DriverError> {
             ));
         }
     }
-    if sites.len() != 3 || !hook_gated || !checks_sync || !cli_test_only {
+    if !hook_gated || !checks_sync || !cli_test_only {
         return Ok(CaseReport::fail(
             CASE,
             format!(
-                "audit failed: want exactly the gated hook spawn + the synchronous checks spawn + one test-only cli spawn; hook_gated={hook_gated}, checks_sync={checks_sync}, cli_test_only={cli_test_only}"
+                "audit failed: want the gated hook spawn + the synchronous checks spawn + the test-only cli spawn all present and verified, every other site classified; hook_gated={hook_gated}, checks_sync={checks_sync}, cli_test_only={cli_test_only}"
             ),
             evidence,
         ));
     }
     evidence.push(
-        "every acquisition path is accounted for: the fan-out path is semaphore-gated (queue slot + run permit precede spawn; excess recorded as dropped); the only other production spawner is sequential; the third site is test-only".to_string(),
+        "every acquisition path is accounted for: the fan-out path is semaphore-gated (queue slot + run permit precede spawn; excess recorded as dropped); the other production spawners are sequential single-child (checks runner, trainlab reward executor); the remaining sites are test-only".to_string(),
     );
     Ok(CaseReport::pass(
         CASE,
-        serde_json::json!({"spawn_sites": 3, "gated_fanout": 1, "synchronous_single": 1, "test_only": 1}),
+        serde_json::json!({"spawn_sites": sites.len(), "gated_fanout": gated_fanout, "synchronous_single": synchronous_single, "test_only": test_only}),
         evidence,
     ))
 }

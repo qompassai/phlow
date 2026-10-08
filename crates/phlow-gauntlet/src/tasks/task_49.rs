@@ -13,9 +13,11 @@
 //!
 //! 1. Vocabulary scan: a tokenized walk over every `crates/*/src/**/*.rs`
 //!    finds zero scheduling-discipline tokens — no `preempt`, no
-//!    `timeslice`/`time_slice`, no `fairness`. The one `quantum` hit is
-//!    "quantum-proof" (post-quantum cryptography in
-//!    phlow-experiment/src/registry.rs), classified and rejected.
+//!    `timeslice`/`time_slice`, no `fairness`. The `quantum` hits are
+//!    classified and rejected: "quantum-proof" (post-quantum
+//!    cryptography in phlow-experiment/src/registry.rs) and the
+//!    reward-magnitude "reward quantum" (the tolerance unit in
+//!    phlow-trainlab/src/export.rs) — neither is a scheduling quantum.
 //! 2. There is no worker pool to schedule: the pool-vocabulary scan
 //!    (`worker_pool`, `thread_pool`, `task_pool`) returns zero, and the
 //!    only tokio consumer in the workspace is the msgpack transport's
@@ -241,9 +243,11 @@ impl CaseReport {
 
 /// V1: no scheduling-discipline vocabulary anywhere in the workspace
 /// sources. `preempt`, `timeslice`/`time_slice`, and `fairness` return
-/// zero hits; the `quantum` hits are classified — every one is the
-/// "quantum-proof" cryptography term in
-/// `phlow-experiment/src/registry.rs`, not a scheduling quantum.
+/// zero hits; the `quantum` hits are classified — every one is
+/// either the "quantum-proof" cryptography term in
+/// `phlow-experiment/src/registry.rs` or the reward-magnitude
+/// "reward quantum" tolerance unit in `phlow-trainlab/src/export.rs`,
+/// never a scheduling quantum.
 fn case_no_scheduling_discipline_tokens() -> Result<CaseReport, DriverError> {
     const CASE: &str = "no_scheduling_discipline_tokens";
     let root = workspace_root()?;
@@ -276,6 +280,13 @@ fn case_no_scheduling_discipline_tokens() -> Result<CaseReport, DriverError> {
             || lowered.contains("ml-kem")
         {
             evidence.push(format!("classified (cryptography, not scheduling): {hit}"));
+        } else if lowered.contains("reward quantum") {
+            // "quantum" here is the smallest reward magnitude the
+            // trainlab export consistency check resolves (a tolerance
+            // unit on f64 rewards), not a scheduling time quantum.
+            evidence.push(format!(
+                "classified (reward-magnitude unit, not scheduling): {hit}"
+            ));
         } else {
             unexplained.push(hit.clone());
         }
@@ -458,7 +469,7 @@ struct TaskFailure {
 
 fn run_inner(_ctx: &Ctx) -> Result<Vec<String>, TaskFailure> {
     let mut evidence = vec![
-        "recon: tokenized vocabulary scan over every crates/*/src — zero scheduling-discipline tokens (no preempt, no timeslice/time_slice, no fairness; the only 'quantum' hits are the quantum-proof cryptography term, classified and rejected)".to_string(),
+        "recon: tokenized vocabulary scan over every crates/*/src — zero scheduling-discipline tokens (no preempt, no timeslice/time_slice, no fairness; the only 'quantum' hits are the quantum-proof cryptography term and the trainlab reward-magnitude unit, both classified and rejected)".to_string(),
         "recon: no worker pool exists — pool vocabulary zero; the only async task machinery is the msgpack transport's single current-thread worker (the task-25 channel); the experiment Scheduler is admission-only with no consumer".to_string(),
     ];
     for case in CASES {
@@ -485,7 +496,7 @@ fn run_inner(_ctx: &Ctx) -> Result<Vec<String>, TaskFailure> {
     );
     Err(TaskFailure {
         where_: "seam".to_string(),
-        how: "seam absent: no task executor or worker-pool scheduling discipline exists in any phlow crate — a tokenized workspace scan finds zero scheduling-discipline tokens (no preempt, no timeslice/time_slice, no fairness; the sole 'quantum' hits are the quantum-proof cryptography term), zero worker-pool vocabulary, and the only async task machinery is the msgpack transport's single current-thread worker; the experiment Scheduler is admission-only with no consumer. The design's pass criteria (no task's completion time exceeds Kx its solo time under a runaway; the mechanism named, not emergent) need a scheduler to attach to, and there is none.".to_string(),
+        how: "seam absent: no task executor or worker-pool scheduling discipline exists in any phlow crate — a tokenized workspace scan finds zero scheduling-discipline tokens (no preempt, no timeslice/time_slice, no fairness; the sole 'quantum' hits are the quantum-proof cryptography term and the trainlab reward-magnitude unit), zero worker-pool vocabulary, and the only async task machinery is the msgpack transport's single current-thread worker; the experiment Scheduler is admission-only with no consumer. The design's pass criteria (no task's completion time exceeds Kx its solo time under a runaway; the mechanism named, not emergent) need a scheduler to attach to, and there is none.".to_string(),
         evidence,
     })
 }

@@ -16,10 +16,13 @@
 //! exactly what the design allows ("the planner's cost model (locate;
 //! if none, the finding is the gap)"). The cost-estimation vocabulary
 //! scan (`estimate`, `estimator`, `estimated`, `over_budget`,
-//! `cost_model`, `pre_execution`) finds exactly one hit workspace-wide:
-//! `footprint_estimate` in `phlow-inference/src/kv_policy.rs` — KV-cache
-//! footprint sizing for one token, classified UNRELATED (a control
-//! sample: estimation vocabulary, but not plan-cost estimation).
+//! `cost_model`, `pre_execution`) finds only classified hits
+//! workspace-wide: `footprint_estimate` in
+//! `phlow-inference/src/kv_policy.rs` — KV-cache footprint sizing for
+//! one token (a control sample), and trainlab's pass@k statistical
+//! estimator (`phlow-trainlab` runner/lib/group) — unbiased pass-rate
+//! estimation over sampled runs. Both classified UNRELATED: estimation
+//! vocabulary, but not plan-cost estimation.
 //!
 //! What DOES exist is budget *enforcement*: the real
 //! [`phlow_experiment::BudgetTracker`] (tool-call count, output-byte
@@ -274,11 +277,12 @@ fn make_tracker(tool_calls_max: u64) -> Result<BudgetTracker, DriverError> {
 // ---------------------------------------------------------------------------
 
 /// V1: locate the plan-cost estimator — there is none. The estimation
-/// vocabulary scan returns exactly one hit workspace-wide:
-/// `footprint_estimate` in `phlow-inference/src/kv_policy.rs`, which
-/// estimates the KV-cache footprint for ONE TOKEN — estimation
-/// vocabulary, but not plan-cost estimation. Classified as the control
-/// sample (UNRELATED), never counted as the seam.
+/// vocabulary scan returns only classified hits workspace-wide:
+/// `footprint_estimate` in `phlow-inference/src/kv_policy.rs` (the
+/// KV-cache footprint for ONE TOKEN — the control sample) and
+/// trainlab's pass@k estimator (pass-rate statistics over finished
+/// runs) — estimation vocabulary, but not plan-cost estimation. Both
+/// classified UNRELATED, never counted as the seam.
 fn case_no_plan_cost_estimator() -> Result<CaseReport, DriverError> {
     const CASE: &str = "no_plan_cost_estimator";
     let root = workspace_root()?;
@@ -297,6 +301,15 @@ fn case_no_plan_cost_estimator() -> Result<CaseReport, DriverError> {
                 "classified control sample (UNRELATED): {hit} — KV-cache footprint \
                  sizing for one token, not plan-cost estimation"
             ));
+        } else if hit.contains("phlow-trainlab/src/runner.rs")
+            || hit.contains("phlow-trainlab/src/lib.rs")
+            || hit.contains("phlow-trainlab/src/group.rs")
+        {
+            evidence.push(format!(
+                "classified (UNRELATED): {hit} — trainlab's pass@k statistical \
+                 estimator (unbiased pass-rate estimation over sampled runs, \
+                 Chen et al. 2021), not plan-cost estimation"
+            ));
         } else {
             estimator_hits += 1;
             evidence.push(format!("UNCLASSIFIED estimation hit: {hit}"));
@@ -305,14 +318,15 @@ fn case_no_plan_cost_estimator() -> Result<CaseReport, DriverError> {
     if estimator_hits > 0 {
         return Ok(CaseReport::fail(
             CASE,
-            "a plan-cost estimation hit outside kv_policy.rs — probe outdated".to_string(),
+            "a plan-cost estimation hit outside the classified sites — probe outdated".to_string(),
             evidence,
         ));
     }
     evidence.push(
         "no plan-cost estimator exists: the only estimation vocabulary in the workspace \
-         is KV-cache footprint sizing (phlow-inference), which estimates memory for one \
-         token, not budget for a plan"
+         is KV-cache footprint sizing (phlow-inference, memory for one token) and \
+         trainlab's pass@k pass-rate estimator (statistics over finished runs) — \
+         neither estimates budget for a plan"
             .to_string(),
     );
     Ok(CaseReport::pass(
@@ -472,7 +486,7 @@ struct TaskFailure {
 
 fn run_inner(_ctx: &Ctx) -> Result<Vec<String>, TaskFailure> {
     let mut evidence = vec![
-        "recon: the estimation vocabulary scan (estimate, estimator, estimated, over_budget, cost_model, pre_execution) finds no plan-cost estimator — the sole hit is footprint_estimate in phlow-inference/src/kv_policy.rs (KV-cache sizing for one token), classified UNRELATED".to_string(),
+        "recon: the estimation vocabulary scan (estimate, estimator, estimated, over_budget, cost_model, pre_execution) finds no plan-cost estimator — the hits are footprint_estimate in phlow-inference/src/kv_policy.rs (KV-cache sizing for one token) and trainlab's pass@k pass-rate estimator, both classified UNRELATED".to_string(),
         "recon: budget ENFORCEMENT is real — BudgetTracker (tool-call count, output-byte cap, absolute deadline; checked arithmetic, fails closed) and the Evaluator stage machine (Validate -> Prepare -> Execute -> Verify -> Review -> Promote) with no Estimate stage and no estimate() method".to_string(),
     ];
     for case in CASES {
@@ -499,7 +513,7 @@ fn run_inner(_ctx: &Ctx) -> Result<Vec<String>, TaskFailure> {
     );
     Err(TaskFailure {
         where_: "seam".to_string(),
-        how: "seam absent (the finding IS the gap, as the design allows): phlow has no plan-cost estimator — the estimation vocabulary scan (estimate, estimator, estimated, over_budget, cost_model, pre_execution) returns no plan-cost hit workspace-wide (the sole hit, footprint_estimate in phlow-inference/src/kv_policy.rs, sizes KV-cache for one token and is classified UNRELATED). Budget enforcement is real (BudgetTracker: tool-call count, output-byte cap, absolute deadline, checked arithmetic, fails closed; Evaluator stage order Validate -> Prepare -> Execute -> Verify -> Review -> Promote with no Estimate stage and no estimate() method), but the design's pass criteria need estimation BEFORE enforcement: no plan starts execution without an estimate on record, and the estimate's units matching the enforced units. Demonstrated: a doomed plan (100 declared tool calls vs a 2-call budget) passes validate() — no estimate gate refuses it — and only fails closed at consume() inside execute(). Whether phlow wants pre-execution cost estimation, in what units, with what over-budget policy, and what estimate-vs-actual divergence policy governs mid-run replan-or-abort is banked for Matt — a product decision, not a bug.".to_string(),
+        how: "seam absent (the finding IS the gap, as the design allows): phlow has no plan-cost estimator — the estimation vocabulary scan (estimate, estimator, estimated, over_budget, cost_model, pre_execution) returns no plan-cost hit workspace-wide (the hits — footprint_estimate in phlow-inference/src/kv_policy.rs, sizing KV-cache for one token, and trainlab's pass@k pass-rate estimator — are classified UNRELATED). Budget enforcement is real (BudgetTracker: tool-call count, output-byte cap, absolute deadline, checked arithmetic, fails closed; Evaluator stage order Validate -> Prepare -> Execute -> Verify -> Review -> Promote with no Estimate stage and no estimate() method), but the design's pass criteria need estimation BEFORE enforcement: no plan starts execution without an estimate on record, and the estimate's units matching the enforced units. Demonstrated: a doomed plan (100 declared tool calls vs a 2-call budget) passes validate() — no estimate gate refuses it — and only fails closed at consume() inside execute(). Whether phlow wants pre-execution cost estimation, in what units, with what over-budget policy, and what estimate-vs-actual divergence policy governs mid-run replan-or-abort is banked for Matt — a product decision, not a bug.".to_string(),
         evidence,
     })
 }

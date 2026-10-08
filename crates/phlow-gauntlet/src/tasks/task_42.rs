@@ -8,17 +8,22 @@
 //! index), a truncated tail (length plus head-hash mismatch), and a
 //! whole-log rewrite (requires the sealing key — fails without it).
 //!
-//! Honest result: the seam is ABSENT. No phlow crate has an event
-//! writer with post-hoc verifiability. The runtime evidence is
-//! threefold, all gathered at probe time from the working tree:
+//! Honest result: the seam is ABSENT from the runtime/approval path.
+//! No runtime phlow crate has an event writer with post-hoc
+//! verifiability. The runtime evidence is threefold, all gathered at
+//! probe time from the working tree:
 //!
 //! 1. Mechanism-vocabulary scan: a walk over every
-//!    `crates/*/src/**/*.rs` finds zero integrity-mechanism tokens —
-//!    no entry-linking, no sealing keys, no tamper-evidence
-//!    journaling. (The probe's own task file is excluded from hits by
-//!    exact path: the task NAME itself contains the design vocabulary.
-//!    The probe prose is additionally written to avoid the literal
-//!    tokens, so the exclusion changes nothing for the other files.)
+//!    `crates/*/src/**/*.rs` finds zero integrity-mechanism tokens in
+//!    the runtime/approval path — no entry-linking, no sealing keys,
+//!    no tamper-evidence journaling. The scan DOES hit in exactly one
+//!    place: `phlow-autoresearch`, whose hash-chained experiment
+//!    ledger is the sanctioned experimental exception (Matt's ruling,
+//!    below) — classified, counted separately, never the runtime seam.
+//!    (The probe's own task file is excluded from hits by exact path:
+//!    the task NAME itself contains the design vocabulary. The probe
+//!    prose is additionally written to avoid the literal tokens, so
+//!    the exclusion changes nothing for the other files.)
 //! 2. Grow-only structures that DO exist are classified and rejected
 //!    as the seam: `ConsumedApprovals` in phlow-experiment persists
 //!    single-use approval ids as one-JSON-object-per-line JSONL for
@@ -32,20 +37,28 @@
 //!    that a full queue rejects new requests instead of evicting old
 //!    decisions; not persisted, no entry linking, no sealing key, no
 //!    verifier.
-//! 3. The design's adversarial weapons have no target: there is no log
-//!    file format to flip a byte in, no verifier to name an entry
-//!    index, no head-hash or length tracking to catch a truncation.
+//! 3. The design's adversarial weapons have no target in the
+//!    runtime/approval path: there is no log file format to flip a
+//!    byte in, no verifier to name an entry index, no head-hash or
+//!    length tracking to catch a truncation.
 //!
 //! Four cases, all against the real working tree (no mocks): two
 //! validation, two adversarial. The task-level verdict is `fail` at
 //! `"seam"` because the design's pass criteria (post-hoc modification
 //! *detectable* with the tampered entry identified; verification a
-//! runnable check) need a journal to attach to, and none exists.
+//! runnable check) need a journal to attach to in the runtime/approval
+//! path, and none exists there.
 //!
-//! Banked for Matt (product decision, NOT auto-implemented): whether
-//! phlow should gain a sealed, entry-linked journal — the approval /
-//! promotion path (which already persists consumed approval ids)
-//! would be the natural first consumer.
+//! Ruled by Matt (2026-10-08): no journal seam in the runtime/approval
+//! path; the autoresearch ledger is the sanctioned experimental
+//! exception. The question this probe originally banked — whether
+//! phlow should gain a sealed, entry-linked journal — is answered for
+//! the experiment surface (yes: the autoresearch ledger, hash-chained,
+//! experimental crate only) and remains open for the runtime: the
+//! approval/promotion path (which already persists consumed approval
+//! ids) would be the natural first consumer if it is ever adopted
+//! there. This probe fails closed if integrity vocabulary appears
+//! anywhere outside the sanctioned exception.
 
 use crate::{Ctx, TaskKind, TaskOutcome, bound_evidence};
 use std::fmt;
@@ -173,6 +186,17 @@ fn grow_tokens() -> Vec<String> {
     HALVES.iter().map(|(a, b)| format!("{a}{b}")).collect()
 }
 
+/// Partition scan hits into (sanctioned experimental exception,
+/// runtime/approval path). The exception is exactly one crate:
+/// `phlow-autoresearch`, whose hash-chained experiment ledger Matt
+/// sanctioned as the experimental exception (2026-10-08). Everything
+/// else is the runtime/approval path, where the seam stays absent.
+fn partition_hits(hits: &[String]) -> (Vec<String>, Vec<String>) {
+    hits.iter()
+        .cloned()
+        .partition(|h| h.contains("crates/phlow-autoresearch/"))
+}
+
 /// Walk `crates/` under the workspace root and return every
 /// `path: token` hit for `.rs` files inside a `src` tree, skipping the
 /// whole phlow-gauntlet probe harness (it is the scanner, not the
@@ -264,35 +288,49 @@ impl CaseReport {
     }
 }
 
-/// V1: no integrity-mechanism vocabulary in any crate's sources. The
-/// scan covers every `crates/*/src/**/*.rs` except this probe's own
-/// file (path-scoped exclusion, documented above) — the tokens are
-/// assembled at runtime so the probe cannot match its own prose.
+/// V1: no integrity-mechanism vocabulary in the runtime/approval
+/// path. The scan covers every `crates/*/src/**/*.rs` except this
+/// probe's own harness — the tokens are assembled at runtime so the
+/// probe cannot match its own prose. Hits inside the sanctioned
+/// experimental exception (`phlow-autoresearch`, the hash-chained
+/// experiment ledger) are classified and counted separately; a hit
+/// anywhere else fails the case.
 fn case_no_integrity_tokens_in_sources() -> Result<CaseReport, DriverError> {
     const CASE: &str = "no_integrity_tokens_in_sources";
     let mut evidence = Vec::new();
     let root = workspace_root()?;
     let tokens = mechanism_tokens();
     let hits = scan_sources(&root, &tokens)?;
+    let (exception_hits, runtime_hits) = partition_hits(&hits);
     evidence.push(format!(
-        "scanned {} integrity-mechanism tokens over crates/*/src (phlow-gauntlet harness excluded); hits: {}",
+        "scanned {} integrity-mechanism tokens over crates/*/src (phlow-gauntlet harness excluded); runtime/approval-path hits: {}",
         tokens.len(),
-        hits.len()
+        runtime_hits.len()
     ));
-    if !hits.is_empty() {
+    evidence.push(format!(
+        "sanctioned experimental exception (phlow-autoresearch ledger, Matt's 2026-10-08 ruling): {} hits",
+        exception_hits.len()
+    ));
+    for hit in &exception_hits {
+        evidence.push(format!("exception hit: {hit}"));
+    }
+    if !runtime_hits.is_empty() {
         return Ok(CaseReport::fail(
             CASE,
-            format!("integrity-mechanism vocabulary found: {}", hits.join("; ")),
+            format!(
+                "integrity-mechanism vocabulary found in the runtime/approval path: {}",
+                runtime_hits.join("; ")
+            ),
             evidence,
         ));
     }
     evidence.push(
-        "zero hits: no phlow source names entry linking, sealing keys, or tamper-evidence journaling"
+        "zero runtime/approval-path hits: outside the sanctioned experimental exception, no phlow source names entry linking, sealing keys, or tamper-evidence journaling"
             .to_string(),
     );
     Ok(CaseReport::pass(
         CASE,
-        serde_json::json!({"integrity_tokens": tokens.len(), "integrity_hits": 0}),
+        serde_json::json!({"integrity_tokens": tokens.len(), "integrity_hits": 0, "sanctioned_exception_hits": exception_hits.len()}),
         evidence,
     ))
 }
@@ -323,9 +361,12 @@ fn case_grow_only_stores_lack_verification() -> Result<CaseReport, DriverError> 
     for hit in &hits {
         evidence.push(format!("hit: {hit}"));
     }
-    // Every hit must be one of the three known non-seam structures (or
-    // this task's own NAME echoed in gauntlet docs); anything else is
-    // a finding to surface.
+    // Every hit must be one of the three known non-seam structures,
+    // this task's own NAME echoed in gauntlet docs, or the sanctioned
+    // experimental exception (the autoresearch ledger's own doc
+    // vocabulary — a real journal, classified as the exception, not
+    // one of the runtime grow-only stores); anything else is a
+    // finding to surface.
     let mut unexplained = Vec::new();
     for hit in &hits {
         if hit.contains("promotion.rs")
@@ -333,6 +374,12 @@ fn case_grow_only_stores_lack_verification() -> Result<CaseReport, DriverError> 
             || hit.contains("queue.rs")
             || hit.contains("task_36.rs")
         {
+            continue;
+        }
+        if hit.contains("crates/phlow-autoresearch/") {
+            evidence.push(format!(
+                "classified (sanctioned experimental exception — the autoresearch ledger, not a runtime grow-only store): {hit}"
+            ));
             continue;
         }
         unexplained.push(hit.clone());
@@ -397,33 +444,43 @@ fn case_grow_only_stores_lack_verification() -> Result<CaseReport, DriverError> 
 
 /// A1: the design's adversarial weapon — flip a byte in an old entry,
 /// expect verification to fail naming the entry index — has no
-/// target. With no event writer (V1) and no verifier (V2), there is no
-/// log file format to tamper and no verification entry point to run.
-/// The case passes as a probe: it documents the weapon and the missing
-/// target, rather than claiming a detection that was never measured.
+/// target in the runtime/approval path. With no event writer (V1)
+/// and no verifier (V2) there, there is no log file format to tamper
+/// and no verification entry point to run. (The sanctioned
+/// experimental ledger in phlow-autoresearch HAS a verifier — for its
+/// own experiment records; it guards no runtime/approval record and
+/// is never linked into the promotion path.) The case passes as a
+/// probe: it documents the weapon and the missing target, rather than
+/// claiming a detection that was never measured.
 fn case_byte_flip_has_no_verifier() -> Result<CaseReport, DriverError> {
     const CASE: &str = "byte_flip_has_no_verifier";
     let mut evidence = Vec::new();
     let root = workspace_root()?;
     let tokens = mechanism_tokens();
     let hits = scan_sources(&root, &tokens)?;
-    if !hits.is_empty() {
+    let (exception_hits, runtime_hits) = partition_hits(&hits);
+    evidence.push(format!(
+        "integrity hits: {} in the runtime/approval path, {} in the sanctioned experimental exception",
+        runtime_hits.len(),
+        exception_hits.len()
+    ));
+    if !runtime_hits.is_empty() {
         return Ok(CaseReport::fail(
             CASE,
             format!(
-                "integrity machinery exists ({}), so a byte-flip has a target after all: {}",
-                hits.len(),
-                hits.join("; ")
+                "integrity machinery exists in the runtime/approval path ({}), so a byte-flip has a target after all: {}",
+                runtime_hits.len(),
+                runtime_hits.join("; ")
             ),
             evidence,
         ));
     }
     evidence.push(
-        "adversarial input (flip a byte in an old entry) would need a writer and a verifier; the V1/V2 scans show neither exists in phlow code"
+        "adversarial input (flip a byte in an old entry) would need a writer and a verifier in the runtime/approval path; the V1/V2 scans show neither exists there"
             .to_string(),
     );
     evidence.push(
-        "no tamper detection was measured because there is no journal to tamper — a claimed detection would be invented, not sourced"
+        "no tamper detection was measured in the runtime/approval path because there is no journal to tamper there — the workspace's one journal is the sanctioned experimental ledger, which guards no runtime record; a claimed detection against the runtime path would be invented, not sourced"
             .to_string(),
     );
     Ok(CaseReport::pass(
@@ -460,7 +517,7 @@ fn case_truncation_has_no_head_hash() -> Result<CaseReport, DriverError> {
         ));
     }
     evidence.push(
-        "no head-hash or length tracking exists: the V1 scan found zero integrity-mechanism tokens across the workspace"
+        "no head-hash or length tracking exists in the runtime/approval path: the V1 scan found zero integrity-mechanism tokens there (the sanctioned exception's head hash lives in the experimental crate and tracks no runtime record)"
             .to_string(),
     );
     evidence.push(
@@ -500,8 +557,8 @@ struct TaskFailure {
 
 fn run_inner(_ctx: &Ctx) -> Result<Vec<String>, TaskFailure> {
     let mut evidence = vec![
-        "recon: integrity-mechanism vocabulary scan over every crates/*/src — zero hits (entry linking, sealing keys, tamper-evidence journaling all absent)".to_string(),
-        "recon: the three grow-only structures that exist are not the seam — ConsumedApprovals (phlow-experiment/src/promotion.rs) is replay protection with expiring entries; FusionReceipt.log (phlow-tools/src/solpi/action_fusion.rs) is an in-memory Vec<String>; ApprovalQueue.records (phlow-approval/src/queue.rs) is a bounded in-memory Vec<Record>".to_string(),
+        "recon: integrity-mechanism vocabulary scan over every crates/*/src — zero hits in the runtime/approval path (entry linking, sealing keys, tamper-evidence journaling all absent there); the only hits are the sanctioned experimental exception (the phlow-autoresearch ledger, Matt's 2026-10-08 ruling)".to_string(),
+        "recon: the three grow-only structures that exist in the runtime are not the seam — ConsumedApprovals (phlow-experiment/src/promotion.rs) is replay protection with expiring entries; FusionReceipt.log (phlow-tools/src/solpi/action_fusion.rs) is an in-memory Vec<String>; ApprovalQueue.records (phlow-approval/src/queue.rs) is a bounded in-memory Vec<Record>".to_string(),
     ];
     for case in CASES {
         let report = run_case(case).map_err(|e| TaskFailure {
@@ -523,11 +580,11 @@ fn run_inner(_ctx: &Ctx) -> Result<Vec<String>, TaskFailure> {
         }
     }
     evidence.push(
-        "finding: no tamper-evident journal exists in phlow — the design's adversarial weapons (byte flip, tail truncation, whole-log rewrite) have no target".to_string(),
+        "finding: no tamper-evident journal exists in phlow's runtime/approval path — the design's adversarial weapons (byte flip, tail truncation, whole-log rewrite) have no target there; the workspace's one journal is the sanctioned experimental exception".to_string(),
     );
     Err(TaskFailure {
         where_: "seam".to_string(),
-        how: "seam absent: no tamper-evident journal exists in any phlow crate — a runtime vocabulary scan finds zero integrity-mechanism tokens (no entry linking, no sealing keys, no tamper-evidence journaling), and the two grow-only structures that do exist are not the seam (the approval replay store persists single-use ids as JSONL with expiring entries and no verifier; the fusion decision log is an in-memory Vec<String>). The design's pass criteria (post-hoc modification detectable with the tampered entry identified; verification a runnable check) need a journal to attach to, and there is none.".to_string(),
+        how: "seam absent: no tamper-evident journal exists in the runtime/approval path of any phlow crate — a runtime vocabulary scan finds zero integrity-mechanism tokens there (no entry linking, no sealing keys, no tamper-evidence journaling), the grow-only structures that exist in the runtime are not the seam (the approval replay store persists single-use ids as JSONL with expiring entries and no verifier; the fusion decision log is an in-memory Vec<String>), and the workspace's one real journal — the hash-chained autoresearch experiment ledger — is the sanctioned experimental exception (Matt, 2026-10-08), never linked into the promotion path. The design's pass criteria (post-hoc modification detectable with the tampered entry identified; verification a runnable check) need a journal to attach to in the runtime/approval path, and there is none.".to_string(),
         evidence,
     })
 }
