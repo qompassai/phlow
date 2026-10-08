@@ -212,6 +212,19 @@ fn parse_generate_response(raw: &[u8]) -> Result<String, String> {
         return Err(format!("model server returned HTTP {status}"));
     }
     let body = &raw[head_end + 4..];
+    // Ollama's Go server answers with chunked transfer encoding
+    // whenever the envelope outgrows its write buffer (the generate
+    // envelope carries the full token `context`, so any realistic
+    // prompt qualifies). Decode before the byte bound and the JSON
+    // parse, or the chunk framing corrupts both. Found live: the
+    // first run-live attempt crashed every proposal on this.
+    let decoded;
+    let body: &[u8] = if head.to_lowercase().contains("transfer-encoding: chunked") {
+        decoded = decode_chunked(body)?;
+        &decoded
+    } else {
+        body
+    };
     if body.len() > PLANNER_RESPONSE_BYTES_MAX {
         return Err("response body exceeds the byte bound".to_string());
     }
@@ -222,6 +235,42 @@ fn parse_generate_response(raw: &[u8]) -> Result<String, String> {
         .and_then(Value::as_str)
         .map(str::to_string)
         .ok_or_else(|| "response envelope has no response string".to_string())
+}
+
+/// Decode an HTTP/1.1 chunked transfer-encoded body: hex size
+/// lines (extensions after `;` ignored), each followed by exactly
+/// that many bytes and a CRLF; a zero chunk ends the body and any
+/// trailers are ignored. The decoded length is bounded by
+/// [`PLANNER_RESPONSE_BYTES_MAX`] as it accumulates. Every framing
+/// defect fails closed.
+fn decode_chunked(body: &[u8]) -> Result<Vec<u8>, String> {
+    let mut decoded = Vec::new();
+    let mut rest = body;
+    loop {
+        let line_end = rest
+            .windows(2)
+            .position(|window| window == b"\r\n")
+            .ok_or_else(|| "chunked body has no chunk-size line".to_string())?;
+        let size_text = String::from_utf8_lossy(&rest[..line_end]).into_owned();
+        let size_text = size_text.split(';').next().unwrap_or_default().trim();
+        let size = usize::from_str_radix(size_text, 16)
+            .map_err(|_| format!("chunk size {size_text:?} is not hex"))?;
+        rest = &rest[line_end + 2..];
+        if size == 0 {
+            return Ok(decoded);
+        }
+        if rest.len() < size + 2 {
+            return Err("chunked body ends inside a chunk".to_string());
+        }
+        decoded.extend_from_slice(&rest[..size]);
+        if decoded.len() > PLANNER_RESPONSE_BYTES_MAX {
+            return Err("response body exceeds the byte bound".to_string());
+        }
+        if &rest[size..size + 2] != b"\r\n" {
+            return Err("chunk is not CRLF-terminated".to_string());
+        }
+        rest = &rest[size + 2..];
+    }
 }
 
 /// The planner specialist as a [`Proposer`].
@@ -580,5 +629,49 @@ mod tests {
             }
             other => panic!("expected Invalid, got {other:?}"),
         }
+    }
+
+    /// One generate envelope, as Ollama returns it.
+    const ENVELOPE: &str = "{\"model\":\"m\",\"response\":\"hello\",\"done\":true}";
+
+    #[test]
+    fn content_length_response_parses() {
+        let raw = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+            ENVELOPE.len(),
+            ENVELOPE
+        );
+        let response = parse_generate_response(raw.as_bytes()).expect("parses");
+        assert_eq!(response, "hello");
+    }
+
+    #[test]
+    fn chunked_response_parses() {
+        // The envelope split across two chunks, an extension on the
+        // second chunk size, and a trailer after the zero chunk —
+        // the shape the live daemon actually sends for planner-sized
+        // envelopes (the context array outgrows its write buffer).
+        let split = ENVELOPE.len() / 2;
+        let raw = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ntransfer-encoding: chunked\r\n\r\n\
+             {:x}\r\n{}\r\n{:x};ext=1\r\n{}\r\n0\r\nx-trailer: y\r\n\r\n",
+            split,
+            &ENVELOPE[..split],
+            ENVELOPE.len() - split,
+            &ENVELOPE[split..]
+        );
+        let response = parse_generate_response(raw.as_bytes()).expect("parses");
+        assert_eq!(response, "hello");
+    }
+
+    #[test]
+    fn chunked_framing_defects_fail_closed() {
+        let head = "HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n";
+        let bad_size = format!("{head}zz\r\n{{}}\r\n0\r\n\r\n");
+        assert!(parse_generate_response(bad_size.as_bytes()).is_err());
+        let truncated = format!("{head}10\r\n{{}}\r\n");
+        assert!(parse_generate_response(truncated.as_bytes()).is_err());
+        let no_crlf = format!("{head}2\r\n{{}}0\r\n\r\n");
+        assert!(parse_generate_response(no_crlf.as_bytes()).is_err());
     }
 }
