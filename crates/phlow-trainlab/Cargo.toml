@@ -1,0 +1,23 @@
+[package]
+name = "phlow-trainlab"
+version = "0.1.0"
+edition = "2024"
+description = "Executable-reward post-training experiment harness for phlow: frozen task splits, bounded reward execution, RLOO group statistics, pass@k, selection/confirmation discipline, and run receipts. EXPERIMENTAL — measures and records; it does not update model weights."
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "phlow_trainlab"
+path = "src/lib.rs"
+
+[[bin]]
+name = "phlow-trainlab"
+path = "src/main.rs"
+
+[dependencies]
+# serde/serde_json: receipt, ledger, harness, and Ollama wire formats.
+# Validation never relies on derive; every boundary value is checked.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# sha2: SHA-256 fingerprints for run configs and receipts, pinned exact to
+# match phlow-experiment's pin.
+sha2 = "=0.10.9"
