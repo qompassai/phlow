@@ -2,7 +2,7 @@
 //!
 //! Plain words: an encoder turns text into wide embeddings; a projection head
 //! maps those into a smaller space where cosine similarity means "this action
-//! fits this state". CLM trains two such heads — a state head and an action
+//! fits this state". CS1 trains two such heads — a state head and an action
 //! head — as small MLPs (`hidden -> width -> ... -> proj`, optional LayerNorm
 //! / residual blocks) and scores a (state, candidate) pair as
 //! `exp(logit_scale) * cosine(state_head(s), action_head(c))`, the InfoNCE
@@ -169,11 +169,11 @@ fn normalize_row(row: &mut [f32], index: usize) -> Result<(), ProjectionError> {
     Ok(())
 }
 
-/// A CLM projection-head pair: state head + action head sharing one config.
+/// A CS1 projection-head pair: state head + action head sharing one config.
 ///
 /// The trait is object-safe so heads can be boxed behind `dyn`.
 pub trait ProjectionHead {
-    /// Head name, e.g. `"clm-latest"`.
+    /// Head name, e.g. `"cs1-latest"`.
     fn name(&self) -> &str;
 
     /// Weight generation, bumped on every (re)load (`heads.py`, `HeadPair`

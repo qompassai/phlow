@@ -1,8 +1,13 @@
 //! Contrastive System-1 decisions: typed questions answered by scaled-cosine
 //! scoring over projected state/action vectors.
 //!
+//! Naming: CS1 = "contrastive System-1". The acronym CLM is intentionally
+//! retired in this codebase — it now means Meta's Context Language Models,
+//! which phlow is adopting separately. `/tmp/CLM/...` paths below are
+//! provenance for the external Python reference project and are historical.
+//!
 //! Plain words: instead of asking a language model to pick an action in
-//! prose, CLM scores each candidate directly — the scaled cosine between the
+//! prose, CS1 scores each candidate directly — the scaled cosine between the
 //! projected *state* and the projected *candidate*, exactly as in its InfoNCE
 //! training objective — and a softmax over a question's candidates is that
 //! question's answer distribution (`/tmp/CLM/src/clm/schema.py` module
@@ -23,7 +28,7 @@
 //! carries the head's generation, so a hot-reloaded head stops matching its
 //! previous rows.
 //!
-//! # Divergences from CLM
+//! # Divergences from the reference implementation
 //!
 //! - `schema.py`'s `to_text` renders JSON states as prose for the heads; the
 //!   Rust port takes pre-rendered state text (`&str`). Callers render their
@@ -306,8 +311,8 @@ impl std::error::Error for EmbedError {}
 pub struct Embedded {
     /// One embedding row per input text, in order.
     pub vectors: Vec<Vec<f32>>,
-    /// Encoder tokens spent (cache misses only, like CLM's usage
-    /// accounting).
+    /// Encoder tokens spent (cache misses only, like the reference
+    /// implementation's usage accounting).
     pub tokens: u64,
 }
 
@@ -765,7 +770,7 @@ pub struct SystemOneOutput {
     pub usage: Usage,
 }
 
-/// Which side of the contrastive pair is being projected. CLM uses
+/// Which side of the contrastive pair is being projected. CS1 uses
 /// independent heads for states and actions (`/tmp/CLM/src/clm/heads.py`),
 /// so the two namespaces must route to different `ProjectionHead` methods.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1262,7 +1267,7 @@ mod tests {
 
     #[test]
     fn candidates_route_through_project_actions() {
-        // CLM projects states and candidates with independent heads; the
+        // CS1 projects states and candidates with independent heads; the
         // action namespace must reach `project_actions`, not `project_states`.
         let head = SideRecordingHead {
             inner: HashProjection::new("test-head", 8, 16, 28.0).unwrap(),

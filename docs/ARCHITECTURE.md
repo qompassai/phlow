@@ -3,7 +3,7 @@
 A map of the Rust workspace as it actually is: every node and edge below is
 derived from the tree — the `Cargo.toml` workspace member list, each crate's
 `path` dependencies, and the real module layout under `crates/*/src`. Nothing
-here is aspirational: the CLM scoring and tuios session/inbox integrations have
+here is aspirational: the CS1 (contrastive System-1) scoring and tuios session/inbox integrations have
 landed and are reflected below. Remaining planned work (Mojo workers, SoL-Pi
 harness features, NVlabs GPU-compute adaptations) is tracked separately and
 this file will be updated as those integrations land, with a final accuracy
@@ -133,7 +133,7 @@ Notes:
   **not** renamed: they are the wire contract existing clients speak. Renaming
   them would silently break clients; any rename needs a versioned migration.
 - `phlow-inference` is a pre-existing crate (not part of the port) that now
-  also hosts the CLM-adapted embedding cache and projection-head trait;
+  also hosts the CS1-adapted embedding cache and projection-head trait;
   `phlow-agent` depends on it for System-1 scoring.
 
 ## Crate dependency layers
@@ -373,7 +373,7 @@ Derived from each crate's `src/` module list.
 | `phlow-checks` | `runner`, `disabled` | Operator-approved named checks, exact argv, run on the host |
 | `phlow-codegen` | `app_generator`, `profiles`, `validator`, `error` | Code generation profiles (8 effective), 256-file cap |
 | `phlow-self-improve` | `feedback`, `prompt_evolver`, `skill_store`, `error` | Feedback records and prompt evolution; disabled by default |
-| `phlow-inference` | `kv_policy`, `speculative`, `tiered_cache`, `two_stage`, `projection`, `vector_arena` | Inference-serving primitives (DeepSeek-V4.1-Flash ideas); projection-head trait + bounded vector-arena embedding cache (CLM-adapted); supporting crate |
+| `phlow-inference` | `kv_policy`, `speculative`, `tiered_cache`, `two_stage`, `projection`, `vector_arena` | Inference-serving primitives (DeepSeek-V4.1-Flash ideas); projection-head trait + bounded vector-arena embedding cache (CS1-adapted); supporting crate |
 | `phlow-tuios` | `state`, `mailbox`, `hooks`, `protocol`, `server`, `daemon`, `tape`, `error` | Session multiplexing for agents: agent-state machine, bounded per-session inbox ring with ask graph, daemon/client hook split, JSON-line Unix-socket control protocol, declarative tapes; supporting crate (tuios concepts adapted, no tuios code ported) |
 | `phlow-compute` | `tile`, `partition`, `program`, `error` | Host-side tile ownership: tile shapes, exact partitions, disjoint origins, exclusive-output/shared-input launch ownership, deterministic CPU tile executor; supporting crate (cutile-rs concepts adapted) |
 | `phlow-compute-cuda` | `arch`, `backend`, `descriptor_file`, `error` | CUDA kernel-target model: `ComputeArch` (sm_80/90/100), structural PTX validation, kernel descriptors, launch-config validation, specialization `KernelPolicy`, bounded `CudaBackend` trait + deterministic CPU simulator; no CUDA driver binding; supporting crate (cuda-oxide concepts adapted) |
@@ -402,7 +402,7 @@ Derived from each crate's `src/` module list.
 
 - Re-run the derivation commands at the top after any structural change and
   diff the result against the diagrams.
-- The CLM integration (contrastive System-1 scoring, bounded vector-arena
+- The CS1 integration (contrastive System-1 scoring, bounded vector-arena
   cache, best-of-N verifier) has landed in `phlow-agent` + `phlow-inference`;
   the diagrams above already reflect it.
 - The tuios integration has landed as `phlow-tuios` (agent states, bounded

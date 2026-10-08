@@ -17,11 +17,11 @@
 //! - [`kv_policy`]: quantization precision policy as data: 4-bit is fine for
 //!   global KV, local/SWA KV stays at higher precision, quantize after RoPE.
 //! - [`projection`]: the projection-head contract for contrastive System-1
-//!   scoring (CLM, Contrastive-LM/CLM): a `ProjectionHead` trait mapping
+//!   scoring (CS1): a `ProjectionHead` trait mapping
 //!   encoder embeddings to a space where cosine means "this action fits this
 //!   state", plus a deterministic test double. No torch is ported.
 //! - [`vector_arena`]: a fixed-size preallocated vector arena with per-width
-//!   LRU pools and generation-aware namespaces (CLM's `VectorArena`), for
+//!   LRU pools and generation-aware namespaces (the reference `VectorArena`), for
 //!   the state/action vectors an agent loop keeps asking about again.
 //!
 //! # Safety and bounds

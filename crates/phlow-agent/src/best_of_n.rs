@@ -3,7 +3,7 @@
 //!
 //! Plain words: when the agent rolls out several candidate trajectories, a
 //! cheap scalar per step (here: the head's state/action cosine) turns into
-//! one trajectory score, and best-of-N keeps the best. CLM's evaluator does
+//! one trajectory score, and best-of-N keeps the best. The reference evaluator does
 //! this in `/tmp/CLM/evaluation/bon_eval.py`:
 //!
 //! - `aggregate`: one benchmark-independent trajectory score — the mean over
