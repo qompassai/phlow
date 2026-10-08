@@ -14,6 +14,7 @@ use serde::Serialize;
 
 use crate::error::TrainlabError;
 use crate::executor::Executor;
+use crate::export::{GROUPS_SCHEMA, GroupExportRecord, GroupsExport};
 use crate::group::{leave_one_out_advantages, pass_at_k, reward_spread};
 use crate::receipt::{GroupRecord, RunReceipt, config_sha256};
 use crate::reward::{EvalStatus, RewardConfig};
@@ -125,18 +126,51 @@ pub fn schedule(tasks: &[CodingTask], groups: usize, seed: u64) -> Vec<CodingTas
 /// Run one experiment and return its receipt.
 ///
 /// Sampling seeds follow the Python: group `g` samples with
-/// `seed + g * 17`.
+/// `seed + g * 17`. Prompt and completion text is discarded; use
+/// [`run_experiment_exporting`] when a trainer backend will consume
+/// the groups.
 pub fn run_experiment(
     run_id: &str,
     config: &RunConfig,
     sampler: &dyn Sampler,
     executor: &Executor,
 ) -> Result<RunReceipt, TrainlabError> {
+    let (receipt, _export) = run_experiment_inner(run_id, config, sampler, executor, false)?;
+    Ok(receipt)
+}
+
+/// Run one experiment and return its receipt **and** its group
+/// export: per group, the exact sampling prompt and completions
+/// aligned with the rewards/advantages the receipt records. The
+/// export carries the same `config_sha256` as the receipt (computed
+/// by the same helper), so the pair verifiably belongs together via
+/// [`GroupsExport::validate_against_receipt`].
+pub fn run_experiment_exporting(
+    run_id: &str,
+    config: &RunConfig,
+    sampler: &dyn Sampler,
+    executor: &Executor,
+) -> Result<(RunReceipt, GroupsExport), TrainlabError> {
+    let (receipt, export) = run_experiment_inner(run_id, config, sampler, executor, true)?;
+    Ok((receipt, export.expect("exporting run retains an export")))
+}
+
+/// The shared run loop. When `retain_export` is set, each group's
+/// prompt/completions are moved into an export record alongside the
+/// receipt record; otherwise the text is dropped as before.
+fn run_experiment_inner(
+    run_id: &str,
+    config: &RunConfig,
+    sampler: &dyn Sampler,
+    executor: &Executor,
+    retain_export: bool,
+) -> Result<(RunReceipt, Option<GroupsExport>), TrainlabError> {
     config.validate()?;
     let tasks = select_tasks(config.split, config.per_family, &config.families)?;
     let schedule = schedule(&tasks, config.groups, config.seed);
     let started = Instant::now();
     let mut records = Vec::with_capacity(config.groups);
+    let mut export_records: Vec<GroupExportRecord> = Vec::new();
     let mut samples_total = 0_usize;
     for (index, task) in schedule.iter().enumerate() {
         let group_number = index + 1;
@@ -164,6 +198,21 @@ pub fn run_experiment(
         samples_total += completions.len();
         let advantages = leave_one_out_advantages(&rewards)?;
         let spread = reward_spread(&rewards);
+        if retain_export {
+            // The f64 vectors are cloned (bounded by group_size);
+            // the completion strings are moved, not copied.
+            export_records.push(GroupExportRecord {
+                group: group_number,
+                task_id: task.task_id.clone(),
+                family: task.family.clone(),
+                prompt: task.prompt.clone(),
+                completions,
+                rewards: rewards.clone(),
+                advantages: advantages.clone(),
+                reward_spread: spread,
+                updated: spread > 0.0,
+            });
+        }
         records.push(GroupRecord {
             group: group_number,
             task_id: task.task_id.clone(),
@@ -176,7 +225,7 @@ pub fn run_experiment(
             seconds: group_started.elapsed().as_secs_f64(),
         });
     }
-    Ok(RunReceipt {
+    let receipt = RunReceipt {
         schema: crate::receipt::RECEIPT_SCHEMA,
         run_id: run_id.to_string(),
         algorithm: "RLOO",
@@ -187,7 +236,24 @@ pub fn run_experiment(
         groups: records,
         samples_total,
         elapsed_seconds: started.elapsed().as_secs_f64(),
-    })
+    };
+    let export = if retain_export {
+        let exported = GroupsExport {
+            schema: GROUPS_SCHEMA.to_string(),
+            run_id: receipt.run_id.clone(),
+            config_sha256: receipt.config_sha256.clone(),
+            split: receipt.split.clone(),
+            sampler_id: receipt.sampler_id.clone(),
+            groups: export_records,
+        };
+        // Invariant: an export the runner produces must tie to the
+        // receipt of the same run, exactly and field by field.
+        exported.validate_against_receipt(&receipt)?;
+        Some(exported)
+    } else {
+        None
+    };
+    Ok((receipt, export))
 }
 
 /// Per-task pass@k row.
@@ -371,6 +437,52 @@ mod tests {
         }
         assert_eq!(receipt.algorithm, "RLOO");
         assert_eq!(receipt.config_sha256.len(), 64);
+    }
+
+    #[test]
+    fn exporting_run_matches_receipt_and_keeps_text() {
+        if !python3_available() {
+            eprintln!("SKIP: python3 not available for runner integration test");
+            return;
+        }
+        let sampler = ScriptedSampler::new(
+            "scripted",
+            vec![
+                "\n    return x + 1\n".to_string(),
+                "\n    return x\n".to_string(),
+            ],
+        )
+        .expect("sampler");
+        let (receipt, export) =
+            run_experiment_exporting("test-run", &base_config(), &sampler, &executor())
+                .expect("run");
+        export
+            .validate_against_receipt(&receipt)
+            .expect("export ties to receipt");
+        assert_eq!(export.schema, crate::export::GROUPS_SCHEMA);
+        assert_eq!(export.config_sha256, receipt.config_sha256);
+        assert_eq!(export.groups.len(), receipt.groups.len());
+        let tasks = select_tasks(Split::Rl, 1, &["increment".to_string()]).expect("tasks");
+        for (exported, recorded) in export.groups.iter().zip(receipt.groups.iter()) {
+            assert_eq!(exported.rewards, recorded.rewards);
+            assert_eq!(exported.advantages, recorded.advantages);
+            // The retained text is the task's exact sampling prompt
+            // and the sampler's completions, in sampling order.
+            let task = tasks
+                .iter()
+                .find(|task| task.task_id == exported.task_id)
+                .expect("task");
+            assert_eq!(exported.prompt, task.prompt);
+            assert_eq!(
+                exported.completions,
+                vec![
+                    "\n    return x + 1\n".to_string(),
+                    "\n    return x\n".to_string(),
+                    "\n    return x + 1\n".to_string(),
+                    "\n    return x\n".to_string(),
+                ]
+            );
+        }
     }
 
     #[test]

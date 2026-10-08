@@ -48,10 +48,14 @@
 //!   for tests, and a loopback Ollama sampler.
 //! - [`gate`]: the selection/confirmation ledger.
 //! - [`receipt`]: the immutable per-run JSON receipt.
+//! - [`export`]: the per-group export (prompt + completion text
+//!   aligned with rewards/advantages) a trainer backend consumes,
+//!   tied to the receipt by `config_sha256`.
 //! - [`runner`]: group scheduling, the run loop, and pass@k reports.
 
 pub mod error;
 pub mod executor;
+pub mod export;
 pub mod gate;
 pub mod group;
 pub mod receipt;
@@ -63,10 +67,13 @@ pub mod task;
 
 pub use error::TrainlabError;
 pub use executor::{Executor, ExecutorConfig};
+pub use export::{GROUPS_SCHEMA, GroupExportRecord, GroupsExport};
 pub use gate::ConfirmationGate;
 pub use group::{leave_one_out_advantages, pass_at_k};
 pub use receipt::RunReceipt;
 pub use reward::{EvalStatus, Evaluation, RewardConfig, RewardMode};
-pub use runner::{PasskReport, RunConfig, evaluate_passk, run_experiment};
+pub use runner::{
+    PasskReport, RunConfig, evaluate_passk, run_experiment, run_experiment_exporting,
+};
 pub use sampler::{OllamaSampler, Sampler, ScriptedSampler};
 pub use task::{CodingTask, Split, frozen_tasks};

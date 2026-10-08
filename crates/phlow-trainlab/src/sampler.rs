@@ -273,7 +273,11 @@ fn url_host(url: &str) -> Option<&str> {
 /// Hand-rolled over `TcpStream` so the crate needs no HTTP client
 /// dependency for one loopback endpoint. The body read is capped at
 /// [`RESPONSE_BYTES_MAX`]; exceeding it is an error, and only HTTP
-/// 200 is success.
+/// 200 is success. Bodies framed with `Transfer-Encoding: chunked`
+/// are de-chunked: Go's server (Ollama) frames any response over its
+/// ~2 KB write buffer that way, which is every real completion, so
+/// a reader that skips de-chunking hands the chunk-size line to the
+/// JSON parser and fails on exactly the responses that matter.
 fn http_post_json(
     base_url: &str,
     path: &str,
@@ -310,15 +314,69 @@ fn http_post_json(
             Err(err) => return Err(TrainlabError::Sampler(format!("read response: {err}"))),
         }
     }
-    let text = String::from_utf8_lossy(&raw).into_owned();
-    let (head, payload) = text
-        .split_once("\r\n\r\n")
+    let split = raw
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
         .ok_or_else(|| TrainlabError::Sampler("malformed HTTP response".to_string()))?;
+    let head = String::from_utf8_lossy(&raw[..split]).into_owned();
     if !head.starts_with("HTTP/1.1 200") && !head.starts_with("HTTP/1.0 200") {
         let status = head.lines().next().unwrap_or("unknown status");
         return Err(TrainlabError::Sampler(format!("Ollama returned {status}")));
     }
-    Ok(payload.to_string())
+    let payload = &raw[split + 4..];
+    let body_bytes = if head
+        .to_ascii_lowercase()
+        .contains("transfer-encoding: chunked")
+    {
+        decode_chunked(payload)?
+    } else {
+        if payload.len() > RESPONSE_BYTES_MAX {
+            return Err(TrainlabError::LimitExceeded(
+                "Ollama response exceeds size bound".to_string(),
+            ));
+        }
+        payload.to_vec()
+    };
+    Ok(String::from_utf8_lossy(&body_bytes).into_owned())
+}
+
+/// Decode an HTTP/1.1 chunked body. Each chunk is a hex size line
+/// (extensions after `;` are ignored), exactly that many bytes, and
+/// a CRLF; a zero-size chunk ends the body. Malformed sizes,
+/// truncated chunks, and missing CRLFs are errors — a partially
+/// decoded body is never returned.
+fn decode_chunked(mut rest: &[u8]) -> Result<Vec<u8>, TrainlabError> {
+    let malformed =
+        |detail: &str| TrainlabError::Sampler(format!("malformed chunked body: {detail}"));
+    let mut out: Vec<u8> = Vec::new();
+    loop {
+        let line_end = rest
+            .windows(2)
+            .position(|window| window == b"\r\n")
+            .ok_or_else(|| malformed("chunk size line has no CRLF"))?;
+        let size_text = String::from_utf8_lossy(&rest[..line_end]).into_owned();
+        let size_text = size_text.split(';').next().unwrap_or("").trim();
+        let size =
+            usize::from_str_radix(size_text, 16).map_err(|_| malformed("chunk size is not hex"))?;
+        rest = &rest[line_end + 2..];
+        if size == 0 {
+            return Ok(out);
+        }
+        let end = size
+            .checked_add(2)
+            .filter(|end| *end <= rest.len())
+            .ok_or_else(|| malformed("chunk is truncated"))?;
+        if &rest[size..end] != b"\r\n" {
+            return Err(malformed("chunk is not followed by CRLF"));
+        }
+        out.extend_from_slice(&rest[..size]);
+        if out.len() > RESPONSE_BYTES_MAX {
+            return Err(TrainlabError::LimitExceeded(
+                "Ollama response exceeds size bound".to_string(),
+            ));
+        }
+        rest = &rest[end..];
+    }
 }
 
 /// Port from a URL, defaulting to Ollama's 11434.
@@ -394,6 +452,98 @@ mod tests {
             extract_completion(multi),
             "\n    total = x + 1\n    return total\n"
         );
+    }
+
+    #[test]
+    fn chunked_body_decodes_across_chunk_boundaries() {
+        // Two chunks splitting the JSON mid-token, plus an extension
+        // on the second size line: the reassembled body must be the
+        // exact payload bytes.
+        let framed = b"7\r\n{\"respo\r\na;ext=1\r\nnse\": \"x\"}\r\n0\r\n\r\n";
+        let decoded = decode_chunked(framed).expect("decode");
+        assert_eq!(decoded, b"{\"response\": \"x\"}");
+        // An unframed (Content-Length) empty body is not chunked,
+        // but an immediate zero chunk is a valid empty body.
+        assert_eq!(
+            decode_chunked(b"0\r\n\r\n").expect("empty"),
+            Vec::<u8>::new()
+        );
+    }
+
+    #[test]
+    fn chunked_body_rejects_malformed_framing() {
+        // Adversarial: truncated, mis-sized, or unterminated framing
+        // must error, never yield a partial body to the JSON parser.
+        assert!(decode_chunked(b"5\r\nabc").is_err(), "truncated chunk");
+        assert!(
+            decode_chunked(b"zz\r\nabcde\r\n0\r\n\r\n").is_err(),
+            "non-hex size"
+        );
+        assert!(
+            decode_chunked(b"3\r\nabcXX0\r\n\r\n").is_err(),
+            "missing chunk CRLF"
+        );
+        assert!(
+            decode_chunked(b"3\r\nabc\r\n").is_err(),
+            "no terminating zero chunk"
+        );
+    }
+
+    #[test]
+    fn http_post_json_reads_a_chunked_response() {
+        // End-to-end against a local listener serving the framing
+        // Ollama's Go server uses for responses over ~2 KB: the
+        // helper must return the de-chunked JSON body.
+        use std::io::{Read as _, Write as _};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut request = Vec::new();
+            let mut byte = [0_u8; 1];
+            // Read the whole request (headers + Content-Length
+            // body): closing a socket with unread request bytes
+            // resets the connection and can eat the response.
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("timeout");
+            loop {
+                if stream.read(&mut byte).expect("read") == 0 {
+                    break;
+                }
+                request.push(byte[0]);
+                if let Some(split) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let head = String::from_utf8_lossy(&request[..split]).into_owned();
+                    let body_len: usize = head
+                        .lines()
+                        .find_map(|line| {
+                            line.to_ascii_lowercase()
+                                .strip_prefix("content-length:")
+                                .and_then(|value| value.trim().parse().ok())
+                        })
+                        .unwrap_or(0);
+                    if request.len() >= split + 4 + body_len {
+                        break;
+                    }
+                }
+            }
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n\
+                      7\r\n{\"respo\r\na\r\nnse\": \"x\"}\r\n0\r\n\r\n",
+                )
+                .expect("write response");
+        });
+        let body = http_post_json(
+            &format!("http://127.0.0.1:{port}"),
+            "/api/generate",
+            "{}",
+            Duration::from_secs(5),
+        )
+        .expect("chunked response");
+        assert_eq!(body, "{\"response\": \"x\"}");
+        server.join().expect("server thread");
     }
 
     #[test]
