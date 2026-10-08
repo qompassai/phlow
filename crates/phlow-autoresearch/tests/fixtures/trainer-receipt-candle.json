@@ -1,0 +1,109 @@
+{
+  "schema": "phlow.trainer.receipt/v1",
+  "backend": "candle",
+  "run_id": "dev-qwen25-coder-7b-phase0-20261008",
+  "trainlab_receipt_sha256": "39cf9d55988928cad6450246ea0b6cdf296f3ed38decfbff821b101d5d0efa79",
+  "groups_export_sha256": "33224e5303035434f7bb7498ec3d47b7f4f3e1122f5f3c3345190d48601a53e3",
+  "base_model": "Qwen/Qwen2.5-Coder-7B-Instruct",
+  "base_model_sha256": "13c3e0ba05f806c339f49f84a40e6a5d83d95871404889031cdde16b2465a14c",
+  "adapter_sha256": "72980c5f10338f02135aa5eac29b138d17bb60774282f68a86d7980b3eede8b4",
+  "seed": 42,
+  "framework": {
+    "candle-core": "0.11.0",
+    "candle-nn": "0.11.0",
+    "candle-transformers": "0.11.0",
+    "phlow-trainer-candle": "0.1.0",
+    "rustc": "rustc 1.100.0-nightly (f7575a9da 2026-09-24)"
+  },
+  "hyperparameters": {
+    "lora_rank": 8,
+    "lora_alpha": 16.0,
+    "lora_dropout": 0.0,
+    "target_modules": [
+      "q_proj",
+      "v_proj"
+    ],
+    "learning_rate": 0.001,
+    "weight_decay": 0.0,
+    "optimizer_steps": 0,
+    "dtype": "f32",
+    "device": "cpu"
+  },
+  "groups": [
+    {
+      "group": 1,
+      "task_id": "dev-absolute-000",
+      "trained": false,
+      "loss": null
+    },
+    {
+      "group": 2,
+      "task_id": "dev-double-000",
+      "trained": false,
+      "loss": null
+    },
+    {
+      "group": 3,
+      "task_id": "dev-reverse-000",
+      "trained": false,
+      "loss": null
+    },
+    {
+      "group": 4,
+      "task_id": "dev-square-000",
+      "trained": false,
+      "loss": null
+    }
+  ],
+  "parity": {
+    "base_model": "Qwen/Qwen2.5-Coder-7B-Instruct",
+    "dtype": "f32",
+    "tokenization": "ids = encode(prompt, add_special_tokens=false) ++ encode(completion, add_special_tokens=false); completion token t scored at position prompt_len-1+t; no BOS/EOS added",
+    "status": "PENDING-REFERENCE",
+    "tolerance_nats_per_token": 0.05,
+    "fork_vs_upstream_last_logit_max_abs_delta": 0.00001049041748046875,
+    "pairs": [
+      {
+        "task_id": "dev-increment-000",
+        "variant": "reference",
+        "completion": "\n    return x + 1\n",
+        "prompt_tokens": 20,
+        "completion_tokens": 8,
+        "sum_logprob": -7.745736339849255,
+        "mean_logprob": -0.9682170424811568
+      },
+      {
+        "task_id": "dev-increment-000",
+        "variant": "reference_half",
+        "completion": "\n    retu",
+        "prompt_tokens": 20,
+        "completion_tokens": 4,
+        "sum_logprob": -16.930525399837286,
+        "mean_logprob": -4.2326313499593216
+      },
+      {
+        "task_id": "dev-increment-001",
+        "variant": "reference",
+        "completion": "\n    return x + 1\n",
+        "prompt_tokens": 21,
+        "completion_tokens": 8,
+        "sum_logprob": -7.826996802381434,
+        "mean_logprob": -0.9783746002976792
+      },
+      {
+        "task_id": "dev-increment-001",
+        "variant": "reference_half",
+        "completion": "\n    retu",
+        "prompt_tokens": 21,
+        "completion_tokens": 4,
+        "sum_logprob": -17.50239867723211,
+        "mean_logprob": -4.375599669308028
+      }
+    ]
+  },
+  "wall_clock_seconds": 60.536687335,
+  "peak_vram_bytes": null,
+  "peak_host_rss_bytes": 31660408832,
+  "adapter_norm_sq_before": 0.0,
+  "adapter_norm_sq_after": 0.0
+}

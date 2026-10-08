@@ -1,0 +1,109 @@
+{
+  "schema": "phlow.trainlab.receipt/v1",
+  "run_id": "dev-qwen25-coder-7b-phase0-20261008",
+  "algorithm": "RLOO",
+  "sampler_id": "ollama:qwen2.5-coder:7b",
+  "split": "dev",
+  "config": {
+    "families": [],
+    "group_size": 4,
+    "groups": 4,
+    "per_family": 1,
+    "reward": {
+      "invalid_penalty": -0.1,
+      "mode": "binary"
+    },
+    "seed": 42,
+    "split": "dev",
+    "temperature": 0.35
+  },
+  "config_sha256": "6dce9ac6d87868056343584604245d17c493494ac1f78d0af7710413d1ae2c74",
+  "groups": [
+    {
+      "group": 1,
+      "task_id": "dev-absolute-000",
+      "family": "absolute",
+      "rewards": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "advantages": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "reward_spread": 0.0,
+      "updated": false,
+      "exact_rollouts": 0,
+      "seconds": 31.343930751
+    },
+    {
+      "group": 2,
+      "task_id": "dev-double-000",
+      "family": "double",
+      "rewards": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "advantages": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "reward_spread": 0.0,
+      "updated": false,
+      "exact_rollouts": 0,
+      "seconds": 18.412717884
+    },
+    {
+      "group": 3,
+      "task_id": "dev-reverse-000",
+      "family": "reverse",
+      "rewards": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "advantages": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "reward_spread": 0.0,
+      "updated": false,
+      "exact_rollouts": 4,
+      "seconds": 21.485361095000002
+    },
+    {
+      "group": 4,
+      "task_id": "dev-square-000",
+      "family": "square",
+      "rewards": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "advantages": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "reward_spread": 0.0,
+      "updated": false,
+      "exact_rollouts": 0,
+      "seconds": 8.780173662
+    }
+  ],
+  "samples_total": 16,
+  "elapsed_seconds": 80.022279383
+}

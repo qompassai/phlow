@@ -38,6 +38,13 @@
 //!   production; scripted in tests).
 //! - [`evaluator`]: the evaluator seam (trainlab on the frozen dev
 //!   split in production; scripted in tests).
+//! - [`ollama_proposer`]: the live proposer binding — the planner
+//!   specialist over the Ollama-shaped HTTP API, loopback only, with
+//!   a fakeable transport so tests never need a live daemon.
+//! - [`receipt_evaluator`]: the live evaluator adapter — derives the
+//!   dev-split metric from real trainlab receipts and verifies
+//!   trainer receipts (hash chain, adapter movement, parity guard)
+//!   instead of running anything itself.
 //! - [`ledger`]: the hash-chained, append-only experiment ledger.
 //! - [`research_loop`]: the state machine, budgets, and halt logic.
 //! - [`clock`]: monotonic clocks (system for production, manual for
@@ -49,7 +56,9 @@ pub mod clock;
 pub mod error;
 pub mod evaluator;
 pub mod ledger;
+pub mod ollama_proposer;
 pub mod proposer;
+pub mod receipt_evaluator;
 pub mod research_loop;
 
 #[cfg(test)]
@@ -60,5 +69,7 @@ pub use clock::{Clock, ManualClock, SystemClock};
 pub use error::{AutoresearchError, FailureClass};
 pub use evaluator::{EvalError, Evaluation, Evaluator, ScriptedEvaluator, ScriptedOutcome};
 pub use ledger::{Decision, EntryDraft, EntryKind, Ledger, LedgerEntry};
+pub use ollama_proposer::{ChatTransport, HttpTransport, OllamaProposer, ProposerConfig};
 pub use proposer::{ProposeContext, ProposeError, Proposer, ScriptedProposal, ScriptedProposer};
+pub use receipt_evaluator::{EvaluationBundle, ReceiptEvaluator, TrainerEvidence};
 pub use research_loop::{HaltReason, LoopConfig, LoopReport, run_loop};

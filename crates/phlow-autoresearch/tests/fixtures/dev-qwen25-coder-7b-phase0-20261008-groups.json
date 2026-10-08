@@ -1,0 +1,113 @@
+{
+  "schema": "phlow.trainlab.groups/v1",
+  "run_id": "dev-qwen25-coder-7b-phase0-20261008",
+  "config_sha256": "6dce9ac6d87868056343584604245d17c493494ac1f78d0af7710413d1ae2c74",
+  "split": "dev",
+  "sampler_id": "ollama:qwen2.5-coder:7b",
+  "groups": [
+    {
+      "group": 1,
+      "task_id": "dev-absolute-000",
+      "family": "absolute",
+      "prompt": "# Complete this Python function.\n# Make a negative x positive.\ndef absolute_vixyczx(x):",
+      "completions": [
+        "\n    return abs(x)\n",
+        "\n    return abs(x)\n",
+        "\n    return abs(x)\n",
+        "\n    return abs(x)\n"
+      ],
+      "rewards": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "advantages": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "reward_spread": 0.0,
+      "updated": false
+    },
+    {
+      "group": 2,
+      "task_id": "dev-double-000",
+      "family": "double",
+      "prompt": "# Complete this Python function.\n# Return two times x.\ndef double_pxrjrxv(x):",
+      "completions": [
+        "\n    return 2 * x\n",
+        "\n    return 2 * x\n",
+        "\n    return 2 * x\n",
+        "\n    return 2 * x\n"
+      ],
+      "rewards": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "advantages": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "reward_spread": 0.0,
+      "updated": false
+    },
+    {
+      "group": 3,
+      "task_id": "dev-reverse-000",
+      "family": "reverse",
+      "prompt": "# Complete this Python function.\n# Reverse the string.\ndef reverse_cogmyyc(text):",
+      "completions": [
+        "\n    return text[::-1]\n\n",
+        "\n    return text[::-1]\n\n",
+        "\n    return text[::-1]\n\n",
+        "\n    return text[::-1]\n\n"
+      ],
+      "rewards": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "advantages": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "reward_spread": 0.0,
+      "updated": false
+    },
+    {
+      "group": 4,
+      "task_id": "dev-square-000",
+      "family": "square",
+      "prompt": "# Complete this Python function.\n# Return x squared.\ndef square_mmashqn(x):",
+      "completions": [
+        "\n    return x ** 2\n",
+        "\n    return x ** 2\n",
+        "\n    return x ** 2\n",
+        "\n    return x ** 2\n"
+      ],
+      "rewards": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "advantages": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "reward_spread": 0.0,
+      "updated": false
+    }
+  ]
+}

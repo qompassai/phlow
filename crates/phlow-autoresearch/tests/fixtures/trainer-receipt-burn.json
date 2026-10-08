@@ -1,0 +1,68 @@
+{
+  "schema": "phlow.trainer.receipt/v1",
+  "backend": "burn",
+  "run_id": "rl-qwen25-coder-7b-t10-20261008",
+  "trainlab_receipt_sha256": "6b8a98d006c107f28b9f8d3526b558942c052f0118f9fc5de13e434c036edf9f",
+  "groups_export_sha256": "d35efc6818d5009bd52f234ac61479f02fe59f4b6b0350c4051705debdd1a9a2",
+  "config_sha256": "234380f358418c39bd2992c989b46dc71f6fbc3eff07e76533c1e53571db63f5",
+  "base_model": "Qwen/Qwen2.5-Coder-7B-Instruct",
+  "base_model_sha256": "04c1b60f5e5147fa32ed11196f56c3a84db7f982bf8e9979b8d3e45036c26992",
+  "base_model_is_proxy": false,
+  "adapter_sha256": "8ad60bbb9002722f983161ae76b4701e19c0aef205c0c85080afbebc2b2c3091",
+  "seed": 42,
+  "framework": {
+    "burn": "0.21.0",
+    "burn_store": "0.21.0",
+    "tokenizers": "0.22.2",
+    "rustc": "1.100.0-nightly (f7575a9da 2026-09-24)",
+    "backend": "flex-cpu"
+  },
+  "hyperparameters": {
+    "lora_rank": 8,
+    "lora_alpha": 16.0,
+    "target_modules": [
+      "q_proj",
+      "v_proj"
+    ],
+    "optimizer": "AdamW",
+    "learning_rate": 0.0005,
+    "seed": 42,
+    "groups_trained": 1,
+    "completions_trained": 8
+  },
+  "wall_clock_seconds": 965.135063195,
+  "peak_memory_bytes": 35851534336,
+  "parity": [
+    {
+      "task_id": "dev-increment-000",
+      "completion_kind": "reference",
+      "completion": "\n    return x + 1\n",
+      "completion_tokens": 8,
+      "mean_logprob": -0.9682120789002511
+    },
+    {
+      "task_id": "dev-increment-000",
+      "completion_kind": "reference_half_chars",
+      "completion": "\n    retu",
+      "completion_tokens": 4,
+      "mean_logprob": -4.2326233722269535
+    },
+    {
+      "task_id": "dev-increment-001",
+      "completion_kind": "reference",
+      "completion": "\n    return x + 1\n",
+      "completion_tokens": 8,
+      "mean_logprob": -0.9783689734322252
+    },
+    {
+      "task_id": "dev-increment-001",
+      "completion_kind": "reference_half_chars",
+      "completion": "\n    retu",
+      "completion_tokens": 4,
+      "mean_logprob": -4.375590909272432
+    }
+  ],
+  "parity_status": "MATCHED f32-vs-f32 |d|<=0.0001; vs NF4 4-bit reference |d| 0.062-0.089 attributed to reference quantization",
+  "adapter_sha256_before": "1d75e69046ef827068da1c1015b92d67b12ef4dfc9d8618f2256134a1b66b098",
+  "lora_b_norm_after": 0.2570993541839755
+}
