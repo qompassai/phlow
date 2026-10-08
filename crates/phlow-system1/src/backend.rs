@@ -11,6 +11,7 @@ use phlow_llm::REDACTED;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue};
 use reqwest::{Client, Url, redirect};
 
+use crate::clef::RichAnswerBatch;
 use crate::config::System1Config;
 use crate::error::System1Error;
 use crate::protocol::{Answer, AnswerBatch, QuestionBatch, RESPONSE_BYTES_MAX};
@@ -33,6 +34,29 @@ pub trait System1Decider: Send + Sync {
         &self,
         batch: &QuestionBatch,
     ) -> impl Future<Output = Result<AnswerBatch, System1Error>> + Send;
+
+    /// Answer `batch` with full probability distributions preserved
+    /// ([`RichAnswerBatch`]), alongside the scalar answers [`decide`]
+    /// returns.
+    ///
+    /// The default is the fail-closed contract of the rich path: a
+    /// backend that cannot produce a *real* distribution returns
+    /// [`System1Error::DistributionUnavailable`]. A backend must never
+    /// expand scalar confidence into a pseudo-distribution and pass it
+    /// off as measured. Backends with a genuine distribution source
+    /// (Clef wire probabilities, Ollama first-token logprobs) override
+    /// this; [`decide`]'s behavior is unchanged either way.
+    fn decide_rich(
+        &self,
+        batch: &QuestionBatch,
+    ) -> impl Future<Output = Result<RichAnswerBatch, System1Error>> + Send {
+        let _ = batch;
+        async {
+            Err(System1Error::DistributionUnavailable {
+                reason: "backend exposes scalar answers only",
+            })
+        }
+    }
 }
 
 /// Speaks the Jev system-one protocol over HTTP to `{endpoint}/v1/systemone`.
@@ -202,5 +226,78 @@ impl System1Decider for MockBackend {
         Ok(AnswerBatch {
             answers: self.script.clone(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::Question;
+    use std::collections::BTreeMap;
+    use std::future::Future;
+    use std::pin::pin;
+    use std::task::{Context, Poll, Waker};
+
+    fn ready<F: Future>(future: F) -> F::Output {
+        let mut future = pin!(future);
+        let mut context = Context::from_waker(Waker::noop());
+        match future.as_mut().poll(&mut context) {
+            Poll::Ready(output) => output,
+            Poll::Pending => panic!("future was expected to be ready"),
+        }
+    }
+
+    fn noul_batch() -> QuestionBatch {
+        let mut questions = BTreeMap::new();
+        questions.insert(
+            "urgent".to_owned(),
+            Question::Noul {
+                instructions: "Is it urgent?".to_owned(),
+            },
+        );
+        QuestionBatch {
+            state: "test".to_owned(),
+            questions,
+        }
+    }
+
+    // Validation: the scalar path is unchanged by the rich path.
+    #[test]
+    fn mock_scalar_decide_still_answers() {
+        let backend = MockBackend::new().with_answer(
+            "urgent",
+            Answer::Noul {
+                yes: true,
+                probability: 0.9,
+            },
+        );
+        let batch = noul_batch();
+        let answers = ready(backend.decide(&batch)).unwrap();
+        assert_eq!(
+            answers.answers["urgent"],
+            Answer::Noul {
+                yes: true,
+                probability: 0.9
+            }
+        );
+    }
+
+    // Adversarial: a scalar-only backend must not fabricate a
+    // distribution; the rich path fails closed with the typed error.
+    #[test]
+    fn mock_decide_rich_is_distribution_unavailable() {
+        let backend = MockBackend::new().with_answer(
+            "urgent",
+            Answer::Noul {
+                yes: true,
+                probability: 0.9,
+            },
+        );
+        let batch = noul_batch();
+        let result = ready(backend.decide_rich(&batch));
+        assert!(matches!(
+            result,
+            Err(System1Error::DistributionUnavailable { .. })
+        ));
     }
 }

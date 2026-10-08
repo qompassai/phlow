@@ -10,11 +10,12 @@ name = "phlow_canary"
 path = "src/lib.rs"
 
 [dependencies]
-# phlow-system1: the shared QuestionBatch/Question/Answer wire shapes and
-# the System1Error type every backend reports. Read-only use; the battery
-# defines its own RichAnswer because the committed system1 API exposes
-# only scalar confidence, not the distributions the statistics need.
+# phlow-system1: the shared QuestionBatch/Question/Answer wire shapes,
+# the System1Error type every backend reports, and the RichAnswer /
+# RichAnswerBatch distribution types the battery consumes end-to-end
+# (plus the Ollama logprobs backend the live binary drives).
 phlow-system1 = { version = "0.1.0", path = "../phlow-system1" }
+
 # serde: derive the closed payload-store, threshold-book, cache and
 # report shapes (deny_unknown_fields at every trust boundary).
 serde = { version = "1", features = ["derive"] }

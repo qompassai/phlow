@@ -19,7 +19,7 @@ phlow-llm = { version = "0.2.0", path = "../phlow-llm" }
 # reqwest: the workspace's existing HTTP stack, same pin and TLS posture as
 # phlow-gauntlet (no default features, rustls with webpki roots). The async
 # client is used because System1Decider is async; no second HTTP stack.
-reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls-webpki-roots"] }
+reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls-webpki-roots", "blocking"] }
 # serde: derive the closed wire shapes (deny_unknown_fields) of the protocol.
 serde = { version = "1", features = ["derive"] }
 # serde_json: wire encoding and bounded response decoding.

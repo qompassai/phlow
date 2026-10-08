@@ -25,6 +25,12 @@ pub enum System1Error {
     Timeout,
     /// The server's response was malformed, oversized or out of contract.
     Protocol { reason: String },
+    /// The backend answered (or could answer) scalar questions but
+    /// cannot produce a real probability distribution for this
+    /// request, so a rich answer does not exist. This is the typed
+    /// fail-closed answer of the distribution-bearing path: callers
+    /// must never synthesize a distribution from scalar confidence.
+    DistributionUnavailable { reason: &'static str },
 }
 
 impl System1Error {
@@ -60,6 +66,9 @@ impl fmt::Display for System1Error {
             System1Error::Transport { detail } => write!(f, "system1 transport: {detail}"),
             System1Error::Timeout => write!(f, "system1 request timed out"),
             System1Error::Protocol { reason } => write!(f, "system1 protocol: {reason}"),
+            System1Error::DistributionUnavailable { reason } => {
+                write!(f, "system1 distribution unavailable: {reason}")
+            }
         }
     }
 }

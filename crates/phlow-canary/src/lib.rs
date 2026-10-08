@@ -45,18 +45,24 @@
 //!   lengths, payload sizes, artifact hash size), and a full battery
 //!   is budgeted at [`BATTERY_BUDGET_MS`] milliseconds.
 //!
-//! # Deviations from the design text, both forced and recorded
+//! # Rich answers
 //!
-//! - The design references `RichAnswer` in `phlow-system1`. At the
-//!   base commit this crate was built on, system1's committed API
-//!   exposes only scalar confidence (`Answer`), not distributions,
-//!   so [`RichAnswer`] is defined here, canary-local, carrying the
-//!   system1 `Answer` plus its distribution. When system1 grows a
-//!   rich answer upstream, this type should fold into it.
+//! The battery consumes phlow-system1's [`RichAnswer`] end-to-end:
+//! the type the design references is the type `phlow-system1`
+//! exports (landed with its Clef backend), re-exported here so probe
+//! code and callers name one type only. (An earlier build defined a
+//! canary-local stand-in because system1 then exposed only scalar
+//! confidence; that stand-in is gone, and a regression test pins the
+//! type identity.) Backends that cannot produce a real distribution
+//! fail closed with `System1Error::DistributionUnavailable`.
+//!
+//! # Deviations from the design text, forced and recorded
+//!
 //! - The design sketches `ProbeBackend` as async; its own `Probe`
 //!   trait is synchronous. The backend trait here is synchronous to
 //!   match `Probe::run`; async clients are adapted outside the
-//!   crate, keeping the battery core runtime-free.
+//!   crate, keeping the battery core runtime-free. The `canary-live`
+//!   binary is that adapter for the Ollama backend.
 
 pub mod error;
 pub mod payloads;

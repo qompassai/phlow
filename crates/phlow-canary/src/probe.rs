@@ -1,14 +1,18 @@
 //! Core probe types: the [`Probe`] trait, its result and evidence
 //! shapes, and the [`ProbeBackend`] interface a model is screened
 //! through. Shapes follow the canary battery design; see `lib.rs` for
-//! the two deliberate deviations (a canary-local [`RichAnswer`], and a
-//! synchronous backend trait matching the design's synchronous
-//! `Probe::run`).
-
-use std::collections::BTreeMap;
+//! the one deliberate deviation (a synchronous backend trait matching
+//! the design's synchronous `Probe::run`).
+//!
+//! The rich answer types are phlow-system1's own ([`RichAnswer`],
+//! [`RichAnswerBatch`]): the battery consumes the real distribution
+//! type end-to-end, so a distribution that reaches a probe is the
+//! same value the backend produced and validated upstream.
 
 use phlow_system1::{Answer, Question, QuestionBatch, System1Error};
 use serde::{Deserialize, Serialize};
+
+pub use phlow_system1::{RichAnswer, RichAnswerBatch};
 
 /// Which of the four design categories a probe belongs to. The verdict
 /// layer needs the category because the consensus challenger applies
@@ -50,34 +54,6 @@ pub trait Probe: Send + Sync {
     fn run(&self, backend: &dyn ProbeBackend) -> ProbeResult;
 }
 
-/// An answer with its full probability distribution preserved.
-///
-/// The distribution is what the trigger and calibration statistics
-/// consume: `distribution[i]` is the model's probability for option
-/// `i` of a Choice question, `[1 - p, p]` for a Noul question, and the
-/// per-criterion confidences for a Score question.
-#[derive(Debug, Clone, PartialEq)]
-pub struct RichAnswer {
-    /// The answer the model gave, in system1's committed shape.
-    pub answer: Answer,
-    /// Full per-option probability vector for that answer.
-    pub distribution: Vec<f64>,
-}
-
-/// Rich answers keyed by question id.
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct RichAnswerBatch {
-    /// Answers by question id, sorted for deterministic handling.
-    pub answers: BTreeMap<String, RichAnswer>,
-}
-
-impl RichAnswerBatch {
-    /// The rich answer for one question id, if the backend gave one.
-    pub fn get(&self, question_id: &str) -> Option<&RichAnswer> {
-        self.answers.get(question_id)
-    }
-}
-
 /// Minimal interface for running probes against a model.
 ///
 /// Synchronous by design: the design's `Probe::run` is synchronous, so
@@ -112,6 +88,7 @@ impl ProbeResult {
             System1Error::Transport { .. } => "transport",
             System1Error::Timeout => "timeout",
             System1Error::Protocol { .. } => "protocol",
+            System1Error::DistributionUnavailable { .. } => "distribution_unavailable",
         };
         ProbeResult {
             probe_id: probe_id.to_owned(),

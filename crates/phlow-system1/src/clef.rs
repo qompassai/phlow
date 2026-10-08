@@ -55,6 +55,45 @@ pub struct RichAnswerBatch {
     pub answers: BTreeMap<String, RichAnswer>,
 }
 
+/// How far a distribution's sum may drift from 1.0 and still count as
+/// a distribution. Named and stated because every consumer of a rich
+/// answer relies on it: measured probabilities arrive as decimal
+/// text, so an exact-1.0 demand would reject honest data, while a
+/// loose band would let fabricated vectors through.
+pub const DISTRIBUTION_SUM_TOLERANCE: f64 = 1e-6;
+
+impl RichAnswer {
+    /// Validate this rich answer against the question it answers:
+    /// the answer kind matches the question kind, the distribution
+    /// has exactly one entry per option (Noul: `[1 - p, p]` in
+    /// `[P(no), P(yes)]` order; Choice: option order; Score: level
+    /// order), every entry is finite and in `0.0..=1.0`, and the
+    /// entries sum to 1.0 within [`DISTRIBUTION_SUM_TOLERANCE`].
+    pub fn validate(&self, question: &Question) -> Result<(), System1Error> {
+        let protocol = |msg: &str| System1Error::protocol(msg);
+        let expected_len = match (question, &self.answer) {
+            (Question::Noul { .. }, Answer::Noul { .. }) => 2,
+            (Question::Choice { options, .. }, Answer::Choice { .. }) => options.len(),
+            (Question::Score { criteria, .. }, Answer::Score { .. }) => criteria.len(),
+            _ => return Err(protocol("answer kind does not match question kind")),
+        };
+        if self.distribution.len() != expected_len {
+            return Err(protocol("distribution length does not match the question"));
+        }
+        let mut sum = 0.0_f64;
+        for value in &self.distribution {
+            if !value.is_finite() || !(0.0..=1.0).contains(value) {
+                return Err(protocol("distribution value is not finite in 0..=1"));
+            }
+            sum += value;
+        }
+        if (sum - 1.0).abs() > DISTRIBUTION_SUM_TOLERANCE {
+            return Err(protocol("distribution does not sum to one"));
+        }
+        Ok(())
+    }
+}
+
 impl RichAnswerBatch {
     /// The simple answers, for [`crate::RiskScorer`].
     pub fn to_answer_batch(&self) -> AnswerBatch {
@@ -65,6 +104,27 @@ impl RichAnswerBatch {
                 .map(|(id, rich)| (id.clone(), rich.answer))
                 .collect(),
         }
+    }
+
+    /// The rich answer for one question id, if the backend gave one.
+    pub fn get(&self, question_id: &str) -> Option<&RichAnswer> {
+        self.answers.get(question_id)
+    }
+
+    /// Validate every rich answer against `batch`: the scalar checks
+    /// of [`AnswerBatch::validate`] plus the distribution checks of
+    /// [`RichAnswer::validate`]. A backend producing rich answers
+    /// runs this before any consumer trusts a distribution.
+    pub fn validate(&self, batch: &QuestionBatch) -> Result<(), System1Error> {
+        self.to_answer_batch().validate(batch)?;
+        for (id, question) in &batch.questions {
+            let rich = self
+                .answers
+                .get(id)
+                .ok_or_else(|| System1Error::protocol("missing rich answer"))?;
+            rich.validate(question)?;
+        }
+        Ok(())
     }
 }
 
@@ -239,8 +299,9 @@ impl RichAnswerBatch {
             answers.insert(id, decode_clef_answer(question, value)?);
         }
         let rich = RichAnswerBatch { answers };
-        // Validate answer count matches question count.
-        rich.to_answer_batch().validate(batch)?;
+        // Validate answer count matches question count, and every
+        // distribution is a real distribution (fail-closed).
+        rich.validate(batch)?;
         Ok(rich)
     }
 }
@@ -370,5 +431,76 @@ mod tests {
         let batch = noul_batch();
         let body = br#"{"model": "clef-flash", "answers": {"other": {"type": "noul", "noul": 0.5}}, "usage": {}}"#;
         assert!(RichAnswerBatch::from_clef_wire(&batch, body).is_err());
+    }
+
+    #[test]
+    fn rejects_distribution_not_summing_to_one() {
+        let batch = choice_batch();
+        // Probabilities are individually in range but sum to 0.75.
+        let body = br#"{"model": "clef-flash", "answers": {"team": {"type": "choice", "choice": "technical", "confidence": 0.5, "probabilities": {"billing": 0.1, "technical": 0.5, "sales": 0.15}}}, "usage": {}}"#;
+        assert!(RichAnswerBatch::from_clef_wire(&batch, body).is_err());
+    }
+
+    // --- RichAnswer::validate: validation + adversarial ---
+
+    fn choice_question() -> Question {
+        Question::Choice {
+            instructions: "Which team?".to_string(),
+            options: vec![
+                "billing".to_string(),
+                "technical".to_string(),
+                "sales".to_string(),
+            ],
+        }
+    }
+
+    #[test]
+    fn validate_accepts_a_real_distribution() {
+        let rich = RichAnswer {
+            answer: Answer::Choice {
+                selected: 1,
+                probability: 0.92,
+            },
+            distribution: vec![0.05, 0.92, 0.03],
+        };
+        assert!(rich.validate(&choice_question()).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_wrong_length() {
+        let rich = RichAnswer {
+            answer: Answer::Choice {
+                selected: 1,
+                probability: 0.92,
+            },
+            distribution: vec![0.08, 0.92],
+        };
+        assert!(rich.validate(&choice_question()).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_non_finite_and_out_of_range() {
+        for distribution in [vec![0.05, f64::NAN, 0.03], vec![-0.1, 0.92, 0.18]] {
+            let rich = RichAnswer {
+                answer: Answer::Choice {
+                    selected: 1,
+                    probability: 0.92,
+                },
+                distribution,
+            };
+            assert!(rich.validate(&choice_question()).is_err());
+        }
+    }
+
+    #[test]
+    fn validate_rejects_kind_mismatch() {
+        let rich = RichAnswer {
+            answer: Answer::Noul {
+                yes: true,
+                probability: 0.9,
+            },
+            distribution: vec![0.1, 0.9],
+        };
+        assert!(rich.validate(&choice_question()).is_err());
     }
 }
