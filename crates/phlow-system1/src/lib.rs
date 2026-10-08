@@ -24,12 +24,14 @@
 //! batch, state string or error.
 
 mod backend;
+mod clef;
 mod config;
 mod error;
 mod protocol;
 mod risk;
 
 pub use backend::{CONNECT_DEADLINE, HttpBackend, MockBackend, REQUEST_DEADLINE, System1Decider};
+pub use clef::{RichAnswer, RichAnswerBatch};
 pub use config::{
     API_KEY_ENV, CONFIG_VALUE_BYTES_MAX, DEFAULT_ENDPOINT, DEFAULT_MODEL, ENDPOINT_ENV, MODEL_ENV,
     System1Config,
