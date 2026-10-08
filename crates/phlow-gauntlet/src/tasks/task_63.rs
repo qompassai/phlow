@@ -17,7 +17,7 @@
 //! `ModelRole::Planner`) and prose ("planner -> coder -> verification ->
 //! reviewer loop") in `phlow-agent/src/orchestrator.rs`, plus one
 //! consumer of the role: the autoresearch proposer binding
-//! (`phlow-autoresearch/src/ollama_proposer.rs`), which binds the
+//! (the `phlow-autoresearch` crate's proposer surface), which binds the
 //! planner specialist to emit change-sets for the bounded experiment
 //! loop — classified in V2 as a role consumer, not a routine.
 //! `Orchestrator::run`
@@ -431,15 +431,14 @@ fn case_planner_is_role_not_routine() -> Result<CaseReport, DriverError> {
         // file and holds only while no real decomposition vocabulary
         // appears there (fail-closed: decomposition vocabulary
         // revokes it).
-        let is_proposer_binding = (file.contains("phlow-autoresearch/src/ollama_proposer.rs")
-            || file.contains("phlow-autoresearch/src/proposer.rs")
-            || file.contains("phlow-autoresearch/src/lib.rs"))
-            && text.contains("Proposer");
+        let is_proposer_binding =
+            file.contains("phlow-autoresearch/src/") && text.contains("Proposer");
         if is_proposer_binding && !has_decompose {
             evidence.push(format!(
                 "classified role consumer (autoresearch proposer binding surface of the \
-                 planner specialist — trait seam, live binding, crate surface; Proposer \
-                 binding present, no decomposition vocabulary): {file}"
+                 planner specialist — the experimental crate's Proposer seam, live \
+                 binding, crate surface, and CLI driver; Proposer binding present, no \
+                 decomposition vocabulary): {file}"
             ));
         } else if has_siblings && !has_decompose {
             evidence.push(format!(
@@ -654,7 +653,7 @@ fn run_inner(_ctx: &Ctx) -> Result<Vec<String>, TaskFailure> {
     );
     Err(TaskFailure {
         where_: "seam".to_string(),
-        how: "seam absent: no goal-decomposition routine exists in any phlow crate — the decomposition vocabulary scan (decompose, decomposition, decomposer, subgoal, subgoals, sub_goal) returns zero workspace-wide, and phlow-agent's public module list (read from the live lib.rs) contains no planner/decomposer/goal module. The 'planner' in phlow is an LLM role name (phlow-config ModelsConfig.planner / ModelRole::Planner), prose ('planner -> coder -> verification -> reviewer loop' in orchestrator.rs), and one role consumer (the autoresearch proposer binding of the planner specialist in the experimental crate); Orchestrator::run is a single pass into Runtime::run per user message with no goal-splitting loop. The design's pass criteria (always terminates, proven by the cap; the cap is a named constant; partial results at the cap are usable) need a decomposition routine with a depth bound, and there is none. Whether phlow wants goal decomposition at all is banked for Matt — a product decision, not a bug.".to_string(),
+        how: "seam absent: no goal-decomposition routine exists in any phlow crate — the decomposition vocabulary scan (decompose, decomposition, decomposer, subgoal, subgoals, sub_goal) returns zero workspace-wide, and phlow-agent's public module list (read from the live lib.rs) contains no planner/decomposer/goal module. The 'planner' in phlow is an LLM role name (phlow-config ModelsConfig.planner / ModelRole::Planner), prose ('planner -> coder -> verification -> reviewer loop' in orchestrator.rs), and one role consumer (the autoresearch proposer binding surface of the planner specialist in the experimental crate); Orchestrator::run is a single pass into Runtime::run per user message with no goal-splitting loop. The design's pass criteria (always terminates, proven by the cap; the cap is a named constant; partial results at the cap are usable) need a decomposition routine with a depth bound, and there is none. Whether phlow wants goal decomposition at all is banked for Matt — a product decision, not a bug.".to_string(),
         evidence,
     })
 }
