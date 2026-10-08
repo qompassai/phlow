@@ -5,6 +5,8 @@
 //! - `tasks` — list frozen tasks for a split (JSON).
 //! - `eval` — pass@k evaluation over a split.
 //! - `run` — one RLOO-statistics experiment run; writes a receipt.
+//!   With `--export-groups <path>` it also writes the per-group
+//!   export (prompt + completion text) a trainer backend consumes.
 //! - `record-selection` / `open-confirm` — confirmation-gate ledger
 //!   operations (see `phlow_trainlab::gate`).
 //!
@@ -22,7 +24,9 @@ use phlow_trainlab::TrainlabError;
 use phlow_trainlab::executor::{Executor, ExecutorConfig};
 use phlow_trainlab::gate::ConfirmationGate;
 use phlow_trainlab::reward::RewardConfig;
-use phlow_trainlab::runner::{RunConfig, evaluate_passk, run_experiment, select_tasks};
+use phlow_trainlab::runner::{
+    RunConfig, evaluate_passk, run_experiment, run_experiment_exporting, select_tasks,
+};
 use phlow_trainlab::sampler::{OllamaSampler, Sampler, ScriptedSampler};
 use phlow_trainlab::task::{Split, family_names};
 
@@ -254,21 +258,57 @@ fn cmd_run(args: &Args) -> Result<(), String> {
         .get("run-id")
         .map(str::to_string)
         .unwrap_or_else(|| format!("{}-seed{}", split.name(), config.seed));
+    let receipt_path = PathBuf::from(args.require("receipt")?);
+    let export_path = args.get("export-groups").map(PathBuf::from);
+    // Pre-flight the no-overwrite discipline before any sampling:
+    // a refused receipt/export path must not cost a run, and the
+    // run must not start when its evidence cannot be written.
+    if receipt_path.exists() {
+        return Err(format!(
+            "receipt already exists at {}; refusing to overwrite evidence",
+            receipt_path.display()
+        ));
+    }
+    if let Some(path) = &export_path
+        && path.exists()
+    {
+        return Err(format!(
+            "groups export already exists at {}; refusing to overwrite evidence",
+            path.display()
+        ));
+    }
     let sampler = build_sampler(args)?;
     let executor = build_executor(args)?;
-    let receipt = lib(run_experiment(
-        &run_id,
-        &config,
-        sampler.as_ref(),
-        &executor,
-    ))?;
-    let receipt_path = PathBuf::from(args.require("receipt")?);
+    let (receipt, export) = match &export_path {
+        Some(_) => {
+            let (receipt, export) = lib(run_experiment_exporting(
+                &run_id,
+                &config,
+                sampler.as_ref(),
+                &executor,
+            ))?;
+            (receipt, Some(export))
+        }
+        None => (
+            lib(run_experiment(
+                &run_id,
+                &config,
+                sampler.as_ref(),
+                &executor,
+            ))?,
+            None,
+        ),
+    };
     lib(receipt.write_new(&receipt_path))?;
+    if let (Some(export), Some(path)) = (&export, &export_path) {
+        lib(export.write_new(path))?;
+    }
     println!(
         "{}",
         serde_json::json!({
             "run_id": receipt.run_id,
             "receipt": receipt_path.display().to_string(),
+            "export_groups": export_path.as_ref().map(|path| path.display().to_string()),
             "config_sha256": receipt.config_sha256,
             "groups": receipt.groups.len(),
             "samples_total": receipt.samples_total,

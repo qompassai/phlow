@@ -27,6 +27,9 @@ pub enum TrainlabError {
     Confirmation(String),
     /// A receipt could not be written or verified.
     Receipt(String),
+    /// A groups export could not be written, loaded, or verified
+    /// against its run receipt.
+    Export(String),
     /// Underlying I/O failure.
     Io(std::io::Error),
     /// Underlying JSON failure.
@@ -44,6 +47,7 @@ impl fmt::Display for TrainlabError {
             TrainlabError::Executor(msg) => write!(f, "executor failure: {msg}"),
             TrainlabError::Confirmation(msg) => write!(f, "confirmation gate: {msg}"),
             TrainlabError::Receipt(msg) => write!(f, "receipt failure: {msg}"),
+            TrainlabError::Export(msg) => write!(f, "groups export failure: {msg}"),
             TrainlabError::Io(err) => write!(f, "i/o failure: {err}"),
             TrainlabError::Json(err) => write!(f, "json failure: {err}"),
         }
