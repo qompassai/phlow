@@ -431,12 +431,15 @@ fn case_planner_is_role_not_routine() -> Result<CaseReport, DriverError> {
         // file and holds only while no real decomposition vocabulary
         // appears there (fail-closed: decomposition vocabulary
         // revokes it).
-        let is_proposer_binding =
-            file.contains("phlow-autoresearch/src/ollama_proposer.rs") && text.contains("Proposer");
+        let is_proposer_binding = (file.contains("phlow-autoresearch/src/ollama_proposer.rs")
+            || file.contains("phlow-autoresearch/src/proposer.rs")
+            || file.contains("phlow-autoresearch/src/lib.rs"))
+            && text.contains("Proposer");
         if is_proposer_binding && !has_decompose {
             evidence.push(format!(
-                "classified role consumer (autoresearch proposer binding of the planner \
-                 specialist; Proposer binding present, no decomposition vocabulary): {file}"
+                "classified role consumer (autoresearch proposer binding surface of the \
+                 planner specialist — trait seam, live binding, crate surface; Proposer \
+                 binding present, no decomposition vocabulary): {file}"
             ));
         } else if has_siblings && !has_decompose {
             evidence.push(format!(
