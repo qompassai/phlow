@@ -721,6 +721,11 @@ pub struct RankEntry {
     pub prob: f32,
 }
 
+// Layout pin (2026-10-08 struct-size audit): 40 bytes is the floor for
+// these fields under rustc's default repr; a ranked answer holds at
+// most CANDIDATES_MAX (4096) entries.
+const _: () = assert!(std::mem::size_of::<RankEntry>() == 40);
+
 /// Order `(candidate, probability)` pairs best-first. Sort is stable, so
 /// exact ties keep input order — the same guarantee as Python's `sorted`
 /// in `Engine.rank`.

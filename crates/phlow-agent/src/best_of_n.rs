@@ -169,6 +169,12 @@ pub struct ScoredCandidate {
     pub passed: bool,
 }
 
+// Layout pin (2026-10-08 struct-size audit): 16 bytes is the floor for
+// an f64 plus a bool, and a selection holds at most CANDIDATES_MAX
+// (100_000) of these — the crate's most numerous record. Any growth
+// here is paid 100_000 times per selection, so it fails loudly instead.
+const _: () = assert!(std::mem::size_of::<ScoredCandidate>() == 16);
+
 /// The best-of-N report. Mirrors the dict `best_of_n` returns
 /// (`/tmp/CLM/evaluation/bon_eval.py:64-80`).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -252,6 +258,11 @@ pub struct Trajectory {
     /// Whether the trajectory passed.
     pub passed: bool,
 }
+
+// Layout pin (2026-10-08 struct-size audit): 56 bytes is the floor for
+// these fields under rustc's default repr, and `verify` accepts at
+// most CANDIDATES_MAX (100_000) trajectories per call.
+const _: () = assert!(std::mem::size_of::<Trajectory>() == 56);
 
 /// The verifier's decision.
 #[derive(Debug, Clone, PartialEq)]
