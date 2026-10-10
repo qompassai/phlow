@@ -108,8 +108,8 @@ def read_blocks(bin_path: Path) -> list[np.ndarray]:
 
 
 def check_synthetic(lib: ctypes.CDLL) -> None:
-    if lib.phlow_scoring_version() != 1:
-        raise CheckError("ABI version is not 1")
+    if lib.phlow_scoring_version() != 2:
+        raise CheckError("ABI version is not 2")
     # Uniform logits: every target has logp = -log(vocab).
     logits = np.zeros((2, 8), dtype=np.float32)
     got = call_logprob(lib, logits, np.array([0, 7], dtype=np.int32))
