@@ -7,7 +7,13 @@
 #   * per-token logprob of target tokens given rows of vocab logits
 #     (log-softmax reduction over the vocabulary, f32 in / f32 out),
 #   * RLOO leave-one-out advantages for reward groups,
-#   * a bench entry that re-launches the logprob kernel on resident data.
+#   * one composable sampling kernel (greedy / temperature / top-k /
+#     top-p, seeded SplitMix64 — deterministic per (seed, row, draw)),
+#   * bench entries that re-launch the logprob/sampling kernels on
+#     resident data.
+#
+# ABI version 2 (phlow_scoring_version): version 1 exports unchanged,
+# sampling exports added.
 #
 # Contract (all exports):
 #   * Inputs are borrowed host buffers owned by the caller; exports copy
@@ -228,11 +234,472 @@ def _run_advantages(
     unsafe_memcpy(dest=out_advantages, src=out_host.unsafe_ptr(), count=total)
 
 
+# --- Sampling ---------------------------------------------------------------
+# One composable sampling kernel covers greedy, temperature, top-k, and
+# top-p (nucleus) sampling. Semantics (the reference implementations in
+# Rust and in tools/check_sampling.py mirror these exactly):
+#
+#   * temperature == 0 selects greedy argmax (ties: lowest index wins).
+#   * Otherwise probabilities are p_i = exp(logit_i / T - LSE_T), where
+#     LSE_T is the log-sum-exp of the temperature-scaled row.
+#   * Candidates are ordered by (logit descending, index ascending).
+#     top_k > 0 restricts the universe to the first top_k candidates.
+#     top_p < 1 then takes the smallest prefix of that ordering whose
+#     cumulative full-vocab probability reaches top_p (the crossing
+#     candidate is included). The sample is drawn from that prefix,
+#     renormalized over the prefix's total probability mass.
+#   * With no restriction binding (top_k == 0 and top_p >= 1), the draw
+#     walks the full-vocab CDF in index order (chunked prefix sums).
+#   * Candidate extraction is bounded at SAMPLE_CANDIDATES_MAX; if the
+#     nucleus has not closed by then and top_k == 0, the kernel falls
+#     back to the full-vocab CDF walk. If top_k > 0 pushed extraction
+#     to the cap, the extracted prefix is the candidate set (documented
+#     bound; real model rows close their nucleus far below the cap).
+#   * The per-row uniform is SplitMix64 (the same generator trainlab's
+#     rng.rs uses) on a state mixed from (seed, row, draw_index), so a
+#     receipt carrying those three values reproduces the draw exactly.
+
+comptime SAMPLE_CANDIDATES_MAX = 2_048  # extracted candidates per row
+comptime SAMPLE_ROWS_PER_LAUNCH_MAX = 4_096  # rows per sampling launch
+comptime SAMPLE_DRAW_INDEX_MAX = 1_000_000  # draw_index bound per call
+
+
+def splitmix64_next(state: UInt64) -> UInt64:
+    """One SplitMix64 step (mirrors phlow-trainlab's rng.rs exactly)."""
+    var z = state + UInt64(0x9E3779B97F4A7C15)
+    z = (z ^ (z >> 30)) * UInt64(0xBF58476D1CE4E5B9)
+    z = (z ^ (z >> 27)) * UInt64(0x94D049BB133111EB)
+    return z ^ (z >> 31)
+
+
+def sample_uniform(seed: UInt64, row: Int, draw_index: Int) -> Float32:
+    """Deterministic uniform in [0, 1) for one (seed, row, draw)."""
+    var mixed = (
+        seed
+        ^ (UInt64(row + 1) * UInt64(0x9E3779B97F4A7C15))
+        ^ (UInt64(draw_index) * UInt64(0xBF58476D1CE4E5B9))
+    )
+    var z = splitmix64_next(mixed)
+    # Top 24 bits / 2^24: exactly representable steps in f32.
+    return Float32(Int(z >> 40)) * Float32(1.0 / 16777216.0)
+
+
+
+
+def sample_rows_kernel(
+    logits: Pointer[Float32, MutAnyOrigin],
+    cand_idx: Pointer[Int32, MutAnyOrigin],
+    cand_val: Pointer[Float32, MutAnyOrigin],
+    out_tokens: Pointer[Int32, MutAnyOrigin],
+    out_counts: Pointer[Int32, MutAnyOrigin],
+    vocab: Int32,
+    temperature: Float32,
+    top_k: Int32,
+    top_p: Float32,
+    seed: UInt64,
+    draw_index: Int32,
+):
+    """One block per row: sample one token per row (see section header).
+
+    cand_idx/cand_val are per-row scratch of SAMPLE_CANDIDATES_MAX
+    entries holding the extracted candidate prefix in sampling order;
+    out_counts[row] receives the candidate-set size actually used
+    (vocab for the unrestricted CDF walk, 1 for greedy).
+
+    Threading contract: pick state that every thread reads (last picked
+    value/index, loop outcome) lives in shared memory and is written
+    only by thread 0 between barriers; cumprob/count are thread-0
+    locals used solely by thread 0's final walk.
+    """
+    var row = Int(block_idx.x)
+    var tid = Int(thread_idx.x)
+    var width = Int(vocab)
+    var base = row * width
+    var u = sample_uniform(seed, row, Int(draw_index))
+
+    var shared_val = stack_allocation[
+        THREADS_PER_BLOCK, Float32, address_space=AddressSpace.SHARED
+    ]()
+    var shared_idx = stack_allocation[
+        THREADS_PER_BLOCK, Int32, address_space=AddressSpace.SHARED
+    ]()
+    var shared_max = stack_allocation[
+        THREADS_PER_BLOCK, Float32, address_space=AddressSpace.SHARED
+    ]()
+    var shared_sum = stack_allocation[
+        THREADS_PER_BLOCK, Float32, address_space=AddressSpace.SHARED
+    ]()
+    # Scalar shared slots: [0]=lse/residual, [1]=last picked value.
+    var shared_scalar = stack_allocation[
+        2, Float32, address_space=AddressSpace.SHARED
+    ]()
+    # Flag slots: [0]=loop outcome / path decision, [1]=last picked idx.
+    var shared_flag = stack_allocation[
+        2, Int32, address_space=AddressSpace.SHARED
+    ]()
+
+    # --- Greedy: block argmax, lowest index wins ties. ---
+    if temperature == Float32(0):
+        var best_val = F32_LOWEST
+        var best_idx = width
+        var col = tid
+        while col < width:
+            var value = logits[unsafe_offset=base + col]
+            if value > best_val or (value == best_val and col < best_idx):
+                best_val = value
+                best_idx = col
+            col += THREADS_PER_BLOCK
+        shared_val[unsafe_offset=tid] = best_val
+        shared_idx[unsafe_offset=tid] = Int32(best_idx)
+        barrier()
+        var stride = THREADS_PER_BLOCK // 2
+        while stride > 0:
+            if tid < stride:
+                var other_val = shared_val[unsafe_offset=tid + stride]
+                var own_val = shared_val[unsafe_offset=tid]
+                var other_idx = shared_idx[unsafe_offset=tid + stride]
+                var own_idx = shared_idx[unsafe_offset=tid]
+                if other_val > own_val or (
+                    other_val == own_val and other_idx < own_idx
+                ):
+                    shared_val[unsafe_offset=tid] = other_val
+                    shared_idx[unsafe_offset=tid] = other_idx
+            barrier()
+            stride //= 2
+        if tid == 0:
+            out_tokens[unsafe_offset=row] = shared_idx[unsafe_offset=0]
+            out_counts[unsafe_offset=row] = Int32(1)
+            cand_idx[unsafe_offset=row * SAMPLE_CANDIDATES_MAX] = (
+                shared_idx[unsafe_offset=0]
+            )
+            cand_val[unsafe_offset=row * SAMPLE_CANDIDATES_MAX] = (
+                shared_val[unsafe_offset=0]
+            )
+        return
+
+    # --- Scaled log-sum-exp of the row (online, as in logprob_rows). ---
+    var local_max = F32_LOWEST
+    var local_sum = Float32(0)
+    var col2 = tid
+    while col2 < width:
+        var scaled = logits[unsafe_offset=base + col2] / temperature
+        if scaled > local_max:
+            local_sum = local_sum * exp(local_max - scaled) + Float32(1)
+            local_max = scaled
+        else:
+            local_sum += exp(scaled - local_max)
+        col2 += THREADS_PER_BLOCK
+    shared_max[unsafe_offset=tid] = local_max
+    shared_sum[unsafe_offset=tid] = local_sum
+    barrier()
+    var stride2 = THREADS_PER_BLOCK // 2
+    while stride2 > 0:
+        if tid < stride2:
+            var other_max = shared_max[unsafe_offset=tid + stride2]
+            var own_max = shared_max[unsafe_offset=tid]
+            if other_max > own_max:
+                shared_sum[unsafe_offset=tid] = (
+                    shared_sum[unsafe_offset=tid] * exp(own_max - other_max)
+                    + shared_sum[unsafe_offset=tid + stride2]
+                )
+                shared_max[unsafe_offset=tid] = other_max
+            else:
+                shared_sum[unsafe_offset=tid] += shared_sum[
+                    unsafe_offset=tid + stride2
+                ] * exp(other_max - own_max)
+        barrier()
+        stride2 //= 2
+    if tid == 0:
+        shared_scalar[unsafe_offset=0] = (
+            shared_max[unsafe_offset=0] + log(shared_sum[unsafe_offset=0])
+        )
+        shared_scalar[unsafe_offset=1] = Float32(0)
+        shared_flag[unsafe_offset=0] = Int32(0)
+        shared_flag[unsafe_offset=1] = Int32(-1)
+    barrier()
+    var lse = shared_scalar[unsafe_offset=0]
+
+    var restricted = top_k > 0 or top_p < Float32(1)
+    var use_cdf = not restricted
+
+    # --- Restricted path: ordered candidate extraction. ---
+    if restricted:
+        var limit = SAMPLE_CANDIDATES_MAX
+        if top_k > 0 and Int(top_k) < limit:
+            limit = Int(top_k)
+        if width < limit:
+            limit = width
+        var cand_base = row * SAMPLE_CANDIDATES_MAX
+        var cumprob = Float32(0)
+        var count = 0
+        for _ in range(limit):
+            var have_pick = shared_flag[unsafe_offset=1] >= 0
+            var last_val = shared_scalar[unsafe_offset=1]
+            var last_idx = Int(shared_flag[unsafe_offset=1])
+            # Next candidate: the maximum element strictly after the
+            # last pick in (value desc, index asc) order -- earlier
+            # picks all precede the last one, so this excludes exactly
+            # the picked set.
+            var pick_val = F32_LOWEST
+            var pick_idx = width
+            var col3 = tid
+            while col3 < width:
+                var value = logits[unsafe_offset=base + col3]
+                var after = True
+                if have_pick:
+                    after = value < last_val or (
+                        value == last_val and col3 > last_idx
+                    )
+                if after and (
+                    value > pick_val or (value == pick_val and col3 < pick_idx)
+                ):
+                    pick_val = value
+                    pick_idx = col3
+                col3 += THREADS_PER_BLOCK
+            shared_val[unsafe_offset=tid] = pick_val
+            shared_idx[unsafe_offset=tid] = Int32(pick_idx)
+            barrier()
+            var stride3 = THREADS_PER_BLOCK // 2
+            while stride3 > 0:
+                if tid < stride3:
+                    var other_val = shared_val[unsafe_offset=tid + stride3]
+                    var own_val = shared_val[unsafe_offset=tid]
+                    var other_idx = shared_idx[unsafe_offset=tid + stride3]
+                    var own_idx = shared_idx[unsafe_offset=tid]
+                    if other_val > own_val or (
+                        other_val == own_val and other_idx < own_idx
+                    ):
+                        shared_val[unsafe_offset=tid] = other_val
+                        shared_idx[unsafe_offset=tid] = other_idx
+                barrier()
+                stride3 //= 2
+            if tid == 0:
+                var chosen_idx = Int(shared_idx[unsafe_offset=0])
+                var chosen_val = shared_val[unsafe_offset=0]
+                if chosen_idx >= width:
+                    # Universe exhausted before the loop bound.
+                    shared_flag[unsafe_offset=0] = Int32(1)
+                else:
+                    cand_idx[unsafe_offset=cand_base + count] = Int32(
+                        chosen_idx
+                    )
+                    cand_val[unsafe_offset=cand_base + count] = chosen_val
+                    cumprob += exp(chosen_val / temperature - lse)
+                    count += 1
+                    shared_scalar[unsafe_offset=1] = chosen_val
+                    shared_flag[unsafe_offset=1] = Int32(chosen_idx)
+                    if cumprob >= top_p:
+                        shared_flag[unsafe_offset=0] = Int32(2)
+                    else:
+                        shared_flag[unsafe_offset=0] = Int32(0)
+            barrier()
+            if shared_flag[unsafe_offset=0] != Int32(0):
+                break
+        # Thread 0 decides the path and, on the extraction path, walks
+        # the candidate prefix. Outcome codes: 0/2 = sample from the
+        # prefix (loop bound reached / nucleus closed / exhausted);
+        # 1 after the loop also means exhausted -- only the flag value
+        # 3 selects the CDF fallback, written here by thread 0.
+        if tid == 0:
+            out_counts[unsafe_offset=row] = Int32(count)
+            var nucleus_open = cumprob < top_p and count < width
+            if nucleus_open and top_k == 0 and count >= limit:
+                shared_flag[unsafe_offset=0] = Int32(3)
+            else:
+                shared_flag[unsafe_offset=0] = Int32(0)
+                var target = u * cumprob
+                var acc = Float32(0)
+                var chosen = Int(
+                    cand_idx[unsafe_offset=cand_base + count - 1]
+                )
+                for j in range(count):
+                    acc += exp(
+                        cand_val[unsafe_offset=cand_base + j] / temperature
+                        - lse
+                    )
+                    if acc > target:
+                        chosen = Int(cand_idx[unsafe_offset=cand_base + j])
+                        break
+                out_tokens[unsafe_offset=row] = Int32(chosen)
+        barrier()
+        if shared_flag[unsafe_offset=0] == Int32(3):
+            use_cdf = True
+        else:
+            use_cdf = False
+
+    # --- Unrestricted path: chunked CDF walk in index order. ---
+    if use_cdf:
+        var chunk = (width + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
+        var start = tid * chunk
+        var end = start + chunk
+        if end > width:
+            end = width
+        var chunk_sum = Float32(0)
+        var col4 = start
+        while col4 < end:
+            chunk_sum += exp(
+                logits[unsafe_offset=base + col4] / temperature - lse
+            )
+            col4 += 1
+        shared_sum[unsafe_offset=tid] = chunk_sum
+        barrier()
+        if tid == 0:
+            var total = Float32(0)
+            for t in range(THREADS_PER_BLOCK):
+                total += shared_sum[unsafe_offset=t]
+            var target = u * total
+            var acc = Float32(0)
+            var chosen_chunk = THREADS_PER_BLOCK - 1
+            var residual = target
+            for t in range(THREADS_PER_BLOCK):
+                var part = shared_sum[unsafe_offset=t]
+                if acc + part > target:
+                    chosen_chunk = t
+                    residual = target - acc
+                    break
+                acc += part
+            shared_idx[unsafe_offset=0] = Int32(chosen_chunk)
+            shared_scalar[unsafe_offset=0] = residual
+        barrier()
+        if tid == Int(shared_idx[unsafe_offset=0]):
+            var residual = shared_scalar[unsafe_offset=0]
+            var acc2 = Float32(0)
+            var chosen = width - 1
+            var col5 = start
+            while col5 < end:
+                acc2 += exp(
+                    logits[unsafe_offset=base + col5] / temperature - lse
+                )
+                if acc2 > residual:
+                    chosen = col5
+                    break
+                col5 += 1
+            out_tokens[unsafe_offset=row] = Int32(chosen)
+            out_counts[unsafe_offset=row] = Int32(width)
+
+
+def _run_sample(
+    mut ctx: DeviceContext,
+    logits: Pointer[Float32, MutAnyOrigin],
+    rows: Int,
+    vocab: Int,
+    temperature: Float32,
+    top_k: Int32,
+    top_p: Float32,
+    seed: UInt64,
+    draw_index: Int32,
+    out_tokens: Pointer[Int32, MutAnyOrigin],
+    out_counts: Pointer[Int32, MutAnyOrigin],
+    cand_idx: Pointer[Int32, MutAnyOrigin],
+    cand_val: Pointer[Float32, MutAnyOrigin],
+    repeats: Int,
+) raises -> Int64:
+    """Upload once, launch `repeats` times, download tokens/counts once.
+
+    Candidate buffers are device scratch owned by this scope; the
+    caller-visible candidate prefix is copied out only when repeats
+    == 1 (bench launches reuse the same seed, so their candidate sets
+    are identical and uninteresting). Returns launch-loop nanoseconds.
+    """
+    var elements = rows * vocab
+    var logits_host = ctx.enqueue_create_host_buffer[f32_dtype](elements)
+    ctx.synchronize()
+    unsafe_memcpy(dest=logits_host.unsafe_ptr(), src=logits, count=elements)
+
+    var logits_dev = ctx.enqueue_create_buffer[f32_dtype](elements)
+    var cand_idx_dev = ctx.enqueue_create_buffer[i32_dtype](
+        rows * SAMPLE_CANDIDATES_MAX
+    )
+    var cand_val_dev = ctx.enqueue_create_buffer[f32_dtype](
+        rows * SAMPLE_CANDIDATES_MAX
+    )
+    var out_dev = ctx.enqueue_create_buffer[i32_dtype](rows)
+    var counts_dev = ctx.enqueue_create_buffer[i32_dtype](rows)
+    ctx.enqueue_copy(dst_buf=logits_dev, src_buf=logits_host)
+
+    var started = perf_counter_ns()
+    for _ in range(repeats):
+        ctx.enqueue_function[sample_rows_kernel](
+            logits_dev.unsafe_ptr(),
+            cand_idx_dev.unsafe_ptr(),
+            cand_val_dev.unsafe_ptr(),
+            out_dev.unsafe_ptr(),
+            counts_dev.unsafe_ptr(),
+            Int32(vocab),
+            temperature,
+            top_k,
+            top_p,
+            seed,
+            draw_index,
+            grid_dim=rows,
+            block_dim=THREADS_PER_BLOCK,
+        )
+    ctx.synchronize()
+    var elapsed = perf_counter_ns() - started
+
+    var out_host = ctx.enqueue_create_host_buffer[i32_dtype](rows)
+    var counts_host = ctx.enqueue_create_host_buffer[i32_dtype](rows)
+    ctx.enqueue_copy(dst_buf=out_host, src_buf=out_dev)
+    ctx.enqueue_copy(dst_buf=counts_host, src_buf=counts_dev)
+    ctx.synchronize()
+    unsafe_memcpy(dest=out_tokens, src=out_host.unsafe_ptr(), count=rows)
+    unsafe_memcpy(dest=out_counts, src=counts_host.unsafe_ptr(), count=rows)
+    if repeats == 1:
+        var cand_idx_host = ctx.enqueue_create_host_buffer[i32_dtype](
+            rows * SAMPLE_CANDIDATES_MAX
+        )
+        var cand_val_host = ctx.enqueue_create_host_buffer[f32_dtype](
+            rows * SAMPLE_CANDIDATES_MAX
+        )
+        ctx.enqueue_copy(dst_buf=cand_idx_host, src_buf=cand_idx_dev)
+        ctx.enqueue_copy(dst_buf=cand_val_host, src_buf=cand_val_dev)
+        ctx.synchronize()
+        unsafe_memcpy(
+            dest=cand_idx,
+            src=cand_idx_host.unsafe_ptr(),
+            count=rows * SAMPLE_CANDIDATES_MAX,
+        )
+        unsafe_memcpy(
+            dest=cand_val,
+            src=cand_val_host.unsafe_ptr(),
+            count=rows * SAMPLE_CANDIDATES_MAX,
+        )
+    return Int64(elapsed)
+
+
+def _validate_sample_args(
+    rows: Int32,
+    vocab: Int32,
+    temperature: Float32,
+    top_k: Int32,
+    top_p: Float32,
+    draw_index: Int32,
+) -> Bool:
+    """Shared ABI validation for the sampling exports."""
+    if (
+        rows < 1
+        or rows > SAMPLE_ROWS_PER_LAUNCH_MAX
+        or vocab < 1
+        or vocab > VOCAB_SIZE_MAX
+        or Int(rows) * Int(vocab) > LOGITS_ELEMENTS_MAX
+    ):
+        return False
+    if temperature != temperature or temperature < 0 or temperature > 2:
+        return False
+    if top_k < 0 or top_k > SAMPLE_CANDIDATES_MAX:
+        return False
+    if top_p != top_p or top_p <= 0 or top_p > 1:
+        return False
+    if draw_index < 0 or draw_index > SAMPLE_DRAW_INDEX_MAX:
+        return False
+    return True
+
+
 # --- C ABI exports -----------------------------------------------------------
 @export
 def phlow_scoring_version() abi("C") -> Int32:
-    """ABI smoke entry: returns the scoring ABI version (1)."""
-    return Int32(1)
+    """ABI smoke entry: returns the scoring ABI version (2 since sampling)."""
+    return Int32(2)
 
 
 @export
@@ -345,6 +812,106 @@ def phlow_rloo_advantages(
     try:
         var ctx = DeviceContext()
         _run_advantages(ctx, rewards, offsets, Int(groups), total, out_advantages)
+    except:
+        return STATUS_ERR_DEVICE
+    return STATUS_OK
+
+
+@export
+def phlow_sample_tokens(
+    logits: Pointer[Float32, MutAnyOrigin],
+    rows: Int32,
+    vocab: Int32,
+    temperature: Float32,
+    top_k: Int32,
+    top_p: Float32,
+    seed: UInt64,
+    draw_index: Int32,
+    out_tokens: Pointer[Int32, MutAnyOrigin],
+    out_counts: Pointer[Int32, MutAnyOrigin],
+    cand_idx: Pointer[Int32, MutAnyOrigin],
+    cand_val: Pointer[Float32, MutAnyOrigin],
+) abi("C") -> Int32:
+    """Sample one token per logit row (composable sampling kernel).
+
+    temperature == 0 is greedy; top_k == 0 disables the top-k limit;
+    top_p == 1 disables the nucleus limit. cand_idx/cand_val receive
+    the extracted candidate prefix per row (rows *
+    SAMPLE_CANDIDATES_MAX entries each; only the first
+    out_counts[row] entries are meaningful, and only on the restricted
+    path). Outputs are written on STATUS_OK only. The draw is a pure
+    function of (logits, temperature, top_k, top_p, seed, draw_index).
+    """
+    if not _validate_sample_args(rows, vocab, temperature, top_k, top_p,
+                                  draw_index):
+        return STATUS_ERR_ARG
+    comptime if not has_accelerator():
+        return STATUS_ERR_NO_DEVICE
+    try:
+        var ctx = DeviceContext()
+        _ = _run_sample(
+            ctx, logits, Int(rows), Int(vocab), temperature, top_k, top_p,
+            seed, draw_index, out_tokens, out_counts, cand_idx, cand_val, 1
+        )
+    except:
+        return STATUS_ERR_DEVICE
+    return STATUS_OK
+
+
+@export
+def phlow_sample_bench_ns(
+    logits: Pointer[Float32, MutAnyOrigin],
+    rows: Int32,
+    vocab: Int32,
+    temperature: Float32,
+    top_k: Int32,
+    top_p: Float32,
+    seed: UInt64,
+    repeats: Int32,
+    out_total_ns: Pointer[Int64, MutAnyOrigin],
+) abi("C") -> Int32:
+    """Re-launch the sampling kernel `repeats` times on resident data.
+
+    Every launch draws draw_index 0 with the given seed (bench timing
+    only; outputs are discarded except the timing). Writes the total
+    launch-loop nanoseconds to out_total_ns[0].
+    """
+    if (
+        not _validate_sample_args(rows, vocab, temperature, top_k, top_p,
+                                  Int32(0))
+        or repeats < 1
+        or repeats > REPEATS_MAX
+    ):
+        return STATUS_ERR_ARG
+    comptime if not has_accelerator():
+        return STATUS_ERR_NO_DEVICE
+    try:
+        var ctx = DeviceContext()
+        var scratch_tokens = ctx.enqueue_create_host_buffer[i32_dtype](
+            Int(rows)
+        )
+        var scratch_counts = ctx.enqueue_create_host_buffer[i32_dtype](
+            Int(rows)
+        )
+        var scratch_idx = ctx.enqueue_create_host_buffer[i32_dtype](1)
+        var scratch_val = ctx.enqueue_create_host_buffer[f32_dtype](1)
+        ctx.synchronize()
+        var elapsed = _run_sample(
+            ctx, logits, Int(rows), Int(vocab), temperature, top_k, top_p,
+            seed, Int32(0),
+            rebind[Pointer[Int32, MutAnyOrigin]](
+                scratch_tokens.unsafe_ptr()
+            ),
+            rebind[Pointer[Int32, MutAnyOrigin]](
+                scratch_counts.unsafe_ptr()
+            ),
+            rebind[Pointer[Int32, MutAnyOrigin]](scratch_idx.unsafe_ptr()),
+            rebind[Pointer[Float32, MutAnyOrigin]](
+                scratch_val.unsafe_ptr()
+            ),
+            Int(repeats),
+        )
+        out_total_ns[unsafe_offset=0] = elapsed
     except:
         return STATUS_ERR_DEVICE
     return STATUS_OK
