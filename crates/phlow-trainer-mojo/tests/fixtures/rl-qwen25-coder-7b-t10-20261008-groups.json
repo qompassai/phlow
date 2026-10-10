@@ -1,0 +1,617 @@
+{
+  "schema": "phlow.trainlab.groups/v1",
+  "run_id": "rl-qwen25-coder-7b-t10-20261008",
+  "config_sha256": "234380f358418c39bd2992c989b46dc71f6fbc3eff07e76533c1e53571db63f5",
+  "split": "rl",
+  "sampler_id": "ollama:qwen2.5-coder:7b",
+  "groups": [
+    {
+      "group": 1,
+      "task_id": "rl-increment-002",
+      "family": "increment",
+      "prompt": "# Complete this Python function.\n# Increase x by one.\ndef increment_rebbzkz(x):",
+      "completions": [
+        "\n    return x + 1\n",
+        "\n    return x + 1\n",
+        "\n    return x + 1\n",
+        "\n    return x + 1\n",
+        "\n    return x + 1\n",
+        "\n    return x + 1\n",
+        "\n    return x + 1\n",
+        "\n    return x + 1\n"
+      ],
+      "rewards": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "advantages": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "reward_spread": 0.0,
+      "updated": false
+    },
+    {
+      "group": 2,
+      "task_id": "rl-even-002",
+      "family": "even",
+      "prompt": "# Complete this Python function.\n# Return whether x is even.\ndef even_fflpwom(x):",
+      "completions": [
+        "\n    return x % 2 == 0\n",
+        "\n    return x % 2 == 0\n",
+        "\n    return x % 2 == 0\n",
+        "\n    return x % 2 == 0\n",
+        "\n    return x % 2 == 0\n",
+        "\n    return x % 2 == 0\n",
+        "\n    return x % 2 == 0\n",
+        "\n    return x % 2 == 0\n"
+      ],
+      "rewards": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "advantages": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "reward_spread": 0.0,
+      "updated": false
+    },
+    {
+      "group": 3,
+      "task_id": "rl-double-003",
+      "family": "double",
+      "prompt": "# Complete this Python function.\n# Return two times x.\ndef double_vroavqr(x):",
+      "completions": [
+        "\n    return 2 * x\n",
+        "\n    return 2 * x\n",
+        "\n    return 2 * x\n",
+        "\n    return x * 2\n",
+        "\n    return 2 * x\n",
+        "\n    return 2 * x\n",
+        "\n    return 2 * x\n",
+        "\n    return x * 2\n"
+      ],
+      "rewards": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "advantages": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "reward_spread": 0.0,
+      "updated": false
+    },
+    {
+      "group": 4,
+      "task_id": "rl-increment-003",
+      "family": "increment",
+      "prompt": "# Complete this Python function.\n# Return x plus one.\ndef increment_fkkafac(x):",
+      "completions": [
+        "\n    return x + 1\n",
+        "\n    return x + 1\n",
+        "\n    return x + 1\n",
+        "\n    return x + 1\n",
+        "\n    return x + 1\n",
+        "\n    return x + 1\n",
+        "\n    return x + 1\n",
+        "\n    return x + 1\n"
+      ],
+      "rewards": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "advantages": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "reward_spread": 0.0,
+      "updated": false
+    },
+    {
+      "group": 5,
+      "task_id": "rl-square-002",
+      "family": "square",
+      "prompt": "# Complete this Python function.\n# Multiply x by itself.\ndef square_erjsopk(x):",
+      "completions": [
+        "\n    return x * x\n",
+        "\n    return x * x\n",
+        "\n    return x * x\n",
+        "\n    return x ** 2\n",
+        "\n    return x * x\n",
+        "\n    return x * x\n",
+        "\n    return x * x\n",
+        "\n    return x * x\n"
+      ],
+      "rewards": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "advantages": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "reward_spread": 0.0,
+      "updated": false
+    },
+    {
+      "group": 6,
+      "task_id": "rl-nonnegative-001",
+      "family": "nonnegative",
+      "prompt": "# Complete this Python function.\n# Return zero when x is negative.\ndef nonnegative_jduqdoq(x):",
+      "completions": [
+        "\n    if x < 0:\n        return 0\n    else:\n        return x\n",
+        "\n    return max(0, x)\n",
+        "\n    if x < 0:\n        return 0\n    else:\n        return x\n",
+        "\n    if x < 0:\n        return 0\n    else:\n        return x\n",
+        "\n    if x < 0:\n        return 0\n    else:\n        return x\n",
+        "\n    if x < 0:\n        return 0\n    else:\n        return x\n",
+        "\n    if x < 0:\n        return 0\n    else:\n        return x\n",
+        "\n    if x < 0:\n        return 0\n    else:\n        return x\n"
+      ],
+      "rewards": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "advantages": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "reward_spread": 0.0,
+      "updated": false
+    },
+    {
+      "group": 7,
+      "task_id": "rl-square-001",
+      "family": "square",
+      "prompt": "# Complete this Python function.\n# Multiply x by itself.\ndef square_yajfzsa(x):",
+      "completions": [
+        "\n    return x * x\n",
+        "\n    return x * x\n",
+        "\n    return x * x\n",
+        "\n    return x * x\n",
+        "\n    return x * x\n",
+        "\n    return x * x\n",
+        "\n    return x * x\n",
+        "\n    return x * x\n"
+      ],
+      "rewards": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "advantages": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "reward_spread": 0.0,
+      "updated": false
+    },
+    {
+      "group": 8,
+      "task_id": "rl-even-000",
+      "family": "even",
+      "prompt": "# Complete this Python function.\n# Check divisibility by two.\ndef even_tjvoiiw(x):",
+      "completions": [
+        "\n    \"\"\"\n    Check if the given number x is divisible by two.\n\n    Args:\n    x (int): The number to check.\n\n    Returns:\n    bool: True if x is divisible by two, False otherwise.\n    \"\"\"\n    return x % 2 == 0\n",
+        "\n    if x % 2 == 0:\n        return True\n    else:\n        return False\n",
+        "\n    \"\"\"\n    Check if a number is even.\n\n    Parameters:\n    number (int): The number to check.\n\n    Returns:\n    bool: True if the number is even, False otherwise.\n    \"\"\"\n    return number % 2 == 0\n",
+        "\n    if x % 2 == 0:\n        return True\n    else:\n        return False\n",
+        "\n    if x % 2 == 0:\n        return True\n    else:\n        return False\n",
+        "\n    if x % 2 == 0:\n        return True\n    else:\n        return False\n",
+        "\n    if x % 2 == 0:\n        return True\n    else:\n        return False\n",
+        "\n    return x % 2 == 0\n"
+      ],
+      "rewards": [
+        1.0,
+        1.0,
+        0.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "advantages": [
+        0.1428571428571429,
+        0.1428571428571429,
+        -1.0,
+        0.1428571428571429,
+        0.1428571428571429,
+        0.1428571428571429,
+        0.1428571428571429,
+        0.1428571428571429
+      ],
+      "reward_spread": 1.0,
+      "updated": true
+    },
+    {
+      "group": 9,
+      "task_id": "rl-increment-001",
+      "family": "increment",
+      "prompt": "# Complete this Python function.\n# Return x plus one.\ndef increment_fjszxhx(x):",
+      "completions": [
+        "\n    return x + 1\n",
+        "\n    return x + 1\n",
+        "\n    return x + 1\n",
+        "\n    return x + 1\n",
+        "\n    return x + 1\n",
+        "\n    return x + 1\n",
+        "\n    return x + 1\n",
+        "\n    return x + 1\n"
+      ],
+      "rewards": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "advantages": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "reward_spread": 0.0,
+      "updated": false
+    },
+    {
+      "group": 10,
+      "task_id": "rl-reverse-002",
+      "family": "reverse",
+      "prompt": "# Complete this Python function.\n# Reverse the string.\ndef reverse_ifhhbaj(text):",
+      "completions": [
+        "\n    return text[::-1]\n\n",
+        "\n    return text[::-1]\n\n",
+        "\n    return text[::-1]\n",
+        "\n    return text[::-1]\n\n",
+        "\n    return text[::-1]\n",
+        "\n    return text[::-1]\n\n",
+        "\n    return text[::-1]\n",
+        "\n    return text[::-1]\n"
+      ],
+      "rewards": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "advantages": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "reward_spread": 0.0,
+      "updated": false
+    },
+    {
+      "group": 11,
+      "task_id": "rl-absolute-002",
+      "family": "absolute",
+      "prompt": "# Complete this Python function.\n# Make a negative x positive.\ndef absolute_dunglqo(x):",
+      "completions": [
+        "\n    return abs(x)\n",
+        "\n    return abs(x)\n",
+        "\n    return abs(x)\n",
+        "\n    return abs(x)\n",
+        "\n    return abs(x)\n",
+        "\n    return abs(x)\n",
+        "\n    return abs(x)\n",
+        "\n    return abs(x)\n"
+      ],
+      "rewards": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "advantages": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "reward_spread": 0.0,
+      "updated": false
+    },
+    {
+      "group": 12,
+      "task_id": "rl-increment-000",
+      "family": "increment",
+      "prompt": "# Complete this Python function.\n# Increase x by one.\ndef increment_knhzfop(x):",
+      "completions": [
+        "\n    return x + 1\n",
+        "\n    return x + 1\n",
+        "\n    return x + 1\n",
+        "\n    return x + 1\n",
+        "\n    return x + 1\n",
+        "\n    return x + 1\n",
+        "\n    return x + 1\n",
+        "\n    return x + 1\n"
+      ],
+      "rewards": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "advantages": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "reward_spread": 0.0,
+      "updated": false
+    },
+    {
+      "group": 13,
+      "task_id": "rl-nonnegative-000",
+      "family": "nonnegative",
+      "prompt": "# Complete this Python function.\n# Return zero when x is negative.\ndef nonnegative_jsapxci(x):",
+      "completions": [
+        "\n    if x < 0:\n        return 0\n    else:\n        return x\n",
+        "\n    if x < 0:\n        return 0\n    else:\n        return x\n",
+        "\n    return x if x >= 0 else 0\n",
+        "\n    if x < 0:\n        return 0\n    else:\n        return x\n",
+        "\n    if x < 0:\n        return 0\n    else:\n        return x\n",
+        "\n    if x < 0:\n        return 0\n    else:\n        return x\n",
+        "\n    if x < 0:\n        return 0\n    else:\n        return x\n",
+        "\n    if x < 0:\n        return 0\n    else:\n        return x\n"
+      ],
+      "rewards": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "advantages": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "reward_spread": 0.0,
+      "updated": false
+    },
+    {
+      "group": 14,
+      "task_id": "rl-square-003",
+      "family": "square",
+      "prompt": "# Complete this Python function.\n# Multiply x by itself.\ndef square_zcsewyw(x):",
+      "completions": [
+        "\n    return x * x\n",
+        "\n    return x * x\n",
+        "\n    return x * x\n",
+        "\n    return x * x\n",
+        "\n    return x * x\n",
+        "\n    return x * x\n",
+        "\n    return x * x\n",
+        "\n    return x * x\n"
+      ],
+      "rewards": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "advantages": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "reward_spread": 0.0,
+      "updated": false
+    },
+    {
+      "group": 15,
+      "task_id": "rl-reverse-003",
+      "family": "reverse",
+      "prompt": "# Complete this Python function.\n# Return text in reverse order.\ndef reverse_khhpyum(text):",
+      "completions": [
+        "\n    return text[::-1]\n\n",
+        "\n    return text[::-1]\n",
+        "\n    return text[::-1]\n",
+        "\n    return text[::-1]\n\n",
+        "\n    return text[::-1]\n",
+        "\n    return text[::-1]\n",
+        "\n    return text[::-1]\n\n",
+        "\n    return text[::-1]\n\n"
+      ],
+      "rewards": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "advantages": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "reward_spread": 0.0,
+      "updated": false
+    },
+    {
+      "group": 16,
+      "task_id": "rl-double-001",
+      "family": "double",
+      "prompt": "# Complete this Python function.\n# Double the input.\ndef double_eekxryf(x):",
+      "completions": [
+        "\n    return 2 * x\n",
+        "\n    return x * 2\n",
+        "\n    return x * 2\n",
+        "\n    return 2 * x\n",
+        "\n    return x * 2\n",
+        "\n    return x * 2\n",
+        "\n    return x * 2\n",
+        "\n    return x * 2\n"
+      ],
+      "rewards": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "advantages": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "reward_spread": 0.0,
+      "updated": false
+    }
+  ]
+}
