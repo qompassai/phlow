@@ -23,7 +23,9 @@ use phlow_trainer_mojo::error::ScoringError;
 static GPU_LOCK: Mutex<()> = Mutex::new(());
 
 fn gpu_guard() -> std::sync::MutexGuard<'static, ()> {
-    GPU_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    GPU_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 use phlow_trainer_mojo::reference::{self, SampleParams};
 use phlow_trainlab::{GroupExportRecord, GroupsExport};
@@ -48,11 +50,10 @@ fn fixture() -> (Vec<ManifestEntry>, Vec<LogitBlock>) {
         (logits_a, 3_usize, targets_a),
         (logits_b, 2_usize, targets_b),
     ] {
-        let token_logps: Vec<f64> =
-            reference::logprob_token_logps(&logits, rows, VOCAB, &targets)
-                .iter()
-                .map(|value| f64::from(*value))
-                .collect();
+        let token_logps: Vec<f64> = reference::logprob_token_logps(&logits, rows, VOCAB, &targets)
+            .iter()
+            .map(|value| f64::from(*value))
+            .collect();
         let mean = token_logps.iter().sum::<f64>() / token_logps.len() as f64;
         entries.push(ManifestEntry {
             targets: targets.clone(),
@@ -136,7 +137,10 @@ fn v_run_scores_and_writes_receipt() {
     assert_eq!(outcome.receipt.groups[0].mean_logprobs.len(), 2);
     assert_eq!(outcome.receipt.groups[0].advantages, vec![1.0, -1.0]);
     let receipt_out = dir.join("scoring-receipt.json");
-    outcome.receipt.write_new(&receipt_out).expect("write receipt");
+    outcome
+        .receipt
+        .write_new(&receipt_out)
+        .expect("write receipt");
     let text = fs::read_to_string(&receipt_out).expect("read receipt");
     assert!(text.contains("phlow.trainer-mojo.scoring-receipt/v1"));
     let _ = fs::remove_dir_all(&dir);
@@ -214,7 +218,10 @@ fn a_run_refuses_receipt_overwrite() {
     )
     .expect("run_scoring");
     let receipt_out = dir.join("scoring-receipt.json");
-    outcome.receipt.write_new(&receipt_out).expect("first write");
+    outcome
+        .receipt
+        .write_new(&receipt_out)
+        .expect("first write");
     assert!(matches!(
         outcome.receipt.write_new(&receipt_out),
         Err(ScoringError::Contract { .. })
