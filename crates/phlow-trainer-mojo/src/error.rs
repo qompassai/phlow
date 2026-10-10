@@ -29,6 +29,22 @@ pub enum ScoringError {
         /// Bounded description of the failure.
         detail: String,
     },
+    /// The Mojo backend is unavailable: GPU residency policy refused
+    /// (free VRAM below the configured minimum, or the GPU is
+    /// unobservable). This is the fail-closed signal the dispatch
+    /// layer may answer with the reference fallback — it is never a
+    /// partial result.
+    Unavailable {
+        /// Bounded description, including observed/required VRAM
+        /// figures where the policy produced them.
+        detail: String,
+    },
+    /// A groups-export / trainlab-receipt contract violation detected
+    /// by the production backend surface (schema, hash tie, shapes).
+    Contract {
+        /// Bounded description of the violation.
+        detail: String,
+    },
 }
 
 impl Display for ScoringError {
@@ -42,6 +58,12 @@ impl Display for ScoringError {
             }
             ScoringError::InputFile { source, detail } => {
                 write!(f, "cannot use input {source}: {detail}")
+            }
+            ScoringError::Unavailable { detail } => {
+                write!(f, "mojo backend unavailable: {detail}")
+            }
+            ScoringError::Contract { detail } => {
+                write!(f, "trainer contract violation: {detail}")
             }
         }
     }

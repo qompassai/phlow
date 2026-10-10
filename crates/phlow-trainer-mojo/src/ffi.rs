@@ -19,9 +19,10 @@
 //!   and the output buffer's contents are discarded.
 
 use crate::error::ScoringError;
+use crate::reference::SampleParams;
 use crate::{
     COMPLETIONS_TOTAL_MAX, GROUP_COMPLETIONS_MAX, GROUPS_PER_LAUNCH_MAX, LOGITS_ELEMENTS_MAX,
-    REPEATS_MAX, TOKENS_PER_LAUNCH_MAX, VOCAB_SIZE_MAX,
+    REPEATS_MAX, SAMPLE_CANDIDATES_MAX, TOKENS_PER_LAUNCH_MAX, VOCAB_SIZE_MAX,
 };
 
 unsafe extern "C" {
@@ -46,6 +47,31 @@ unsafe extern "C" {
         offsets: *const i32,
         groups: i32,
         out_advantages: *mut f32,
+    ) -> i32;
+    fn phlow_sample_tokens(
+        logits: *const f32,
+        rows: i32,
+        vocab: i32,
+        temperature: f32,
+        top_k: i32,
+        top_p: f32,
+        seed: u64,
+        draw_index: i32,
+        out_tokens: *mut i32,
+        out_counts: *mut i32,
+        cand_idx: *mut i32,
+        cand_val: *mut f32,
+    ) -> i32;
+    fn phlow_sample_bench_ns(
+        logits: *const f32,
+        rows: i32,
+        vocab: i32,
+        temperature: f32,
+        top_k: i32,
+        top_p: f32,
+        seed: u64,
+        repeats: i32,
+        out_total_ns: *mut i64,
     ) -> i32;
 }
 
@@ -258,9 +284,172 @@ pub fn rloo_advantages(rewards: &[f32], offsets: &[i32]) -> Result<Vec<f32>, Sco
     Ok(out)
 }
 
+/// One sampling batch's outputs, as written by the kernel.
+///
+/// `cand_idx`/`cand_val` are row-major `rows * SAMPLE_CANDIDATES_MAX`
+/// scratch: row `r`'s first `candidate_counts[r]` entries are its
+/// candidate prefix in sampling order (meaningful on the greedy and
+/// restricted paths; the unrestricted CDF walk writes only the token
+/// and a count equal to the vocabulary size).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SampleBatch {
+    /// Sampled token id per row.
+    pub tokens: Vec<i32>,
+    /// Candidate-set size used per row.
+    pub candidate_counts: Vec<i32>,
+    /// Candidate token ids (see the struct docs for the layout).
+    pub cand_idx: Vec<i32>,
+    /// Candidate logit values, aligned with `cand_idx`.
+    pub cand_val: Vec<f32>,
+}
+
+/// Sample one token per logit row with the composable kernel.
+///
+/// Semantics (greedy at temperature 0, temperature scaling, top-k,
+/// top-p nucleus, seeded SplitMix64 draw) are defined in the kernel's
+/// section header and mirrored by [`crate::reference`]; the draw is a
+/// pure function of `(logits, params)`.
+///
+/// # Errors
+///
+/// [`ScoringError::InvalidShape`] on any bound or parameter
+/// violation (validated before FFI, and again in the kernel);
+/// [`ScoringError::KernelStatus`] on a non-zero kernel status.
+pub fn sample_tokens(
+    logits: &[f32],
+    rows: usize,
+    vocab: usize,
+    params: &SampleParams,
+) -> Result<SampleBatch, ScoringError> {
+    crate::reference::validate_params(params)
+        .map_err(|detail| ScoringError::InvalidShape { detail })?;
+    crate::reference::validate_batch(rows, vocab, logits.len())
+        .map_err(|detail| ScoringError::InvalidShape { detail })?;
+    let cand_len = rows * SAMPLE_CANDIDATES_MAX as usize;
+    let mut batch = SampleBatch {
+        tokens: vec![0_i32; rows],
+        candidate_counts: vec![0_i32; rows],
+        cand_idx: vec![0_i32; cand_len],
+        cand_val: vec![0.0_f32; cand_len],
+    };
+    // SAFETY: shapes and params were just validated — lengths match
+    // the ABI's expectations exactly (candidate buffers are exactly
+    // rows * SAMPLE_CANDIDATES_MAX), and the kernel borrows the
+    // pointers for the call only, writing outputs solely on success.
+    let status = unsafe {
+        phlow_sample_tokens(
+            logits.as_ptr(),
+            abi_i32(rows, "rows")?,
+            abi_i32(vocab, "vocab")?,
+            params.temperature,
+            abi_i32(params.top_k as usize, "top_k")?,
+            params.top_p,
+            params.seed,
+            abi_i32(params.draw_index as usize, "draw_index")?,
+            batch.tokens.as_mut_ptr(),
+            batch.candidate_counts.as_mut_ptr(),
+            batch.cand_idx.as_mut_ptr(),
+            batch.cand_val.as_mut_ptr(),
+        )
+    };
+    map_status(status)?;
+    Ok(batch)
+}
+
+/// Re-launch the sampling kernel `repeats` times on resident data
+/// and return the total launch-loop nanoseconds, as measured inside
+/// the Mojo export (draw_index is fixed at 0 inside the bench).
+///
+/// # Errors
+///
+/// As [`sample_tokens`], plus `repeats` outside `1..=REPEATS_MAX`.
+pub fn sample_bench_ns(
+    logits: &[f32],
+    rows: usize,
+    vocab: usize,
+    params: &SampleParams,
+    repeats: usize,
+) -> Result<i64, ScoringError> {
+    crate::reference::validate_params(params)
+        .map_err(|detail| ScoringError::InvalidShape { detail })?;
+    crate::reference::validate_batch(rows, vocab, logits.len())
+        .map_err(|detail| ScoringError::InvalidShape { detail })?;
+    if repeats == 0 || repeats > REPEATS_MAX as usize {
+        return Err(ScoringError::InvalidShape {
+            detail: format!("repeats = {repeats} outside 1..={REPEATS_MAX}"),
+        });
+    }
+    let mut total_ns: i64 = 0;
+    // SAFETY: shapes validated as in sample_tokens; the kernel writes
+    // exactly one i64 to total_ns on success and discards its draws.
+    let status = unsafe {
+        phlow_sample_bench_ns(
+            logits.as_ptr(),
+            abi_i32(rows, "rows")?,
+            abi_i32(vocab, "vocab")?,
+            params.temperature,
+            abi_i32(params.top_k as usize, "top_k")?,
+            params.top_p,
+            params.seed,
+            abi_i32(repeats, "repeats")?,
+            &mut total_ns,
+        )
+    };
+    map_status(status)?;
+    Ok(total_ns)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample_params() -> SampleParams {
+        SampleParams {
+            temperature: 1.0,
+            top_k: 0,
+            top_p: 1.0,
+            seed: 7,
+            draw_index: 0,
+        }
+    }
+
+    #[test]
+    fn a_sample_rejects_nan_temperature() {
+        let mut params = sample_params();
+        params.temperature = f32::NAN;
+        let logits = vec![0.0_f32; 8];
+        assert!(matches!(
+            sample_tokens(&logits, 1, 8, &params),
+            Err(ScoringError::InvalidShape { .. })
+        ));
+    }
+
+    #[test]
+    fn a_sample_rejects_zero_top_p_and_oversized_top_k() {
+        let logits = vec![0.0_f32; 8];
+        let mut params = sample_params();
+        params.top_p = 0.0;
+        assert!(matches!(
+            sample_tokens(&logits, 1, 8, &params),
+            Err(ScoringError::InvalidShape { .. })
+        ));
+        let mut params = sample_params();
+        params.top_k = SAMPLE_CANDIDATES_MAX + 1;
+        assert!(matches!(
+            sample_tokens(&logits, 1, 8, &params),
+            Err(ScoringError::InvalidShape { .. })
+        ));
+    }
+
+    #[test]
+    fn a_sample_rejects_row_overflow() {
+        let rows = crate::SAMPLE_ROWS_PER_LAUNCH_MAX as usize + 1;
+        let logits = vec![0.0_f32; rows];
+        assert!(matches!(
+            sample_tokens(&logits, rows, 1, &sample_params()),
+            Err(ScoringError::InvalidShape { .. })
+        ));
+    }
 
     #[test]
     fn a_logprob_rejects_length_mismatch() {

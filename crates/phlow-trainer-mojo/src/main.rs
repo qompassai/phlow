@@ -1,4 +1,4 @@
-//! CLI driver for the Mojo kernel track.
+//! CLI driver for the Mojo scoring + sampling backend.
 //!
 //! Modes:
 //! - `version` — print the scoring ABI version reported by the library.
@@ -10,6 +10,21 @@
 //!   export's f64 values.
 //! - `bench --batch <bin> --repeats <n>` — time the logprob kernel on a
 //!   seeded synthetic batch file (header + f32 logits + i32 targets).
+//! - `sample --batch <bin> [--temperature t] [--top-k k] [--top-p p]
+//!   [--seed s] [--draw d] [--dump-candidates <json>]` — sample one token
+//!   per row of a batch file (header + f32 logits; trailing targets, if
+//!   present, are ignored) through the backend dispatch.
+//! - `sample-bench --batch <bin> --repeats <n> [sampling flags]` — time
+//!   the sampling kernel on resident data.
+//! - `backend-info` — report backend availability (GPU residency policy
+//!   + kernel ABI) without allocating.
+//! - `run --export <groups.json> --trainlab-receipt <receipt.json>
+//!   --manifest <json> --blocks <bin> --group <n> --out <receipt.json>
+//!   [--sample] [sampling flags] [--gpu-free-mib-min <n>] [--no-fallback]`
+//!   — the production path: verify the export↔receipt tie, score one
+//!   group through the backend dispatch, and write a scoring receipt
+//!   (refusing to overwrite). `run`/`backend-info`/`sample` need the
+//!   default `trainlab-contract` feature.
 //!
 //! Exit status is non-zero if any comparison exceeds its tolerance or
 //! any kernel call fails; the tolerances match the Python check driver
@@ -19,8 +34,11 @@ use std::env;
 use std::fs;
 use std::process::ExitCode;
 
+#[cfg(feature = "trainlab-contract")]
+use phlow_trainer_mojo::backend::{self, BackendConfig, LogitBlock, ManifestEntry};
 use phlow_trainer_mojo::error::ScoringError;
 use phlow_trainer_mojo::ffi;
+use phlow_trainer_mojo::reference::SampleParams;
 
 /// Input files larger than this are refused before reading (1 GiB).
 const FILE_BYTES_MAX: u64 = 1 << 30;
@@ -320,6 +338,259 @@ fn mode_bench(batch_path: &str, repeats: usize) -> Result<bool, ScoringError> {
     Ok(true)
 }
 
+/// Read a batch file's logits: `(rows, vocab, logits)`. The bench
+/// batch format appends i32 targets after the logits; sampling
+/// ignores any trailing bytes.
+fn read_batch_logits(path: &str) -> Result<(usize, usize, Vec<f32>), ScoringError> {
+    let bytes = read_bounded(path)?;
+    if bytes.len() < 8 {
+        return Err(ScoringError::InputFile {
+            source: path.to_string(),
+            detail: "batch shorter than its header".to_string(),
+        });
+    }
+    let rows = read_i32(&bytes, 0)?;
+    let width = read_i32(&bytes, 4)?;
+    if rows < 0 || width < 0 {
+        return Err(ScoringError::InputFile {
+            source: path.to_string(),
+            detail: "negative batch shape".to_string(),
+        });
+    }
+    let rows = rows as usize;
+    let width = width as usize;
+    let count = rows
+        .checked_mul(width)
+        .ok_or_else(|| ScoringError::InputFile {
+            source: path.to_string(),
+            detail: "batch shape overflows usize".to_string(),
+        })?;
+    let data = bytes
+        .get(8..8 + count * 4)
+        .ok_or_else(|| ScoringError::InputFile {
+            source: path.to_string(),
+            detail: "truncated batch logits".to_string(),
+        })?;
+    let mut logits = Vec::with_capacity(count);
+    for index in 0..count {
+        let at = index * 4;
+        logits.push(f32::from_le_bytes([
+            data[at],
+            data[at + 1],
+            data[at + 2],
+            data[at + 3],
+        ]));
+    }
+    Ok((rows, width, logits))
+}
+
+/// Parse a `--flag value` as `T`, falling back to `default`.
+fn flag_parse<T: std::str::FromStr>(args: &[String], flag: &str, default: T) -> T {
+    flag_value(args, flag)
+        .ok()
+        .and_then(|value| value.parse::<T>().ok())
+        .unwrap_or(default)
+}
+
+/// Sampling parameters from CLI flags (defaults: T=1, no top-k,
+/// no nucleus limit, seed 0, draw 0).
+fn sample_params_from(args: &[String]) -> SampleParams {
+    SampleParams {
+        temperature: flag_parse(args, "--temperature", 1.0_f32),
+        top_k: flag_parse(args, "--top-k", 0_u32),
+        top_p: flag_parse(args, "--top-p", 1.0_f32),
+        seed: flag_parse(args, "--seed", 0_u64),
+        draw_index: flag_parse(args, "--draw", 0_u32),
+    }
+}
+
+/// `sample` mode: one draw per batch row through the backend
+/// dispatch; prints the tokens/counts as one JSON object.
+#[cfg(feature = "trainlab-contract")]
+fn mode_sample(args: &[String]) -> Result<bool, ScoringError> {
+    let (rows, width, logits) = read_batch_logits(&flag_value(args, "--batch")?)?;
+    let params = sample_params_from(args);
+    let config = BackendConfig::default();
+    let dispatch = backend::sample(&logits, rows, width, &params, &config)?;
+    let batch = &dispatch.value;
+    println!(
+        "{}",
+        serde_json::json!({
+            "path": dispatch.path.as_str(),
+            "fallback_reason": dispatch.fallback_reason,
+            "tokens": batch.tokens,
+            "candidate_counts": batch.candidate_counts,
+        })
+    );
+    if let Ok(path) = flag_value(args, "--dump-candidates") {
+        let max = phlow_trainer_mojo::SAMPLE_CANDIDATES_MAX as usize;
+        let rows_json: Vec<serde_json::Value> = (0..rows)
+            .map(|row| {
+                let count = batch.candidate_counts[row].max(0) as usize;
+                let shown = count.min(max);
+                serde_json::json!({
+                    "token": batch.tokens[row],
+                    "candidate_count": count,
+                    "candidates": batch.cand_idx[row * max..row * max + shown],
+                    "candidate_logits": batch.cand_val[row * max..row * max + shown],
+                })
+            })
+            .collect();
+        fs::write(
+            &path,
+            serde_json::to_string_pretty(&rows_json).unwrap_or_default(),
+        )
+        .map_err(|error| ScoringError::InputFile {
+            source: path.clone(),
+            detail: error.to_string(),
+        })?;
+        println!("candidates written to {path}");
+    }
+    Ok(true)
+}
+
+/// `sample-bench` mode: kernel launch timing on resident data.
+fn mode_sample_bench(args: &[String]) -> Result<bool, ScoringError> {
+    let (rows, width, logits) = read_batch_logits(&flag_value(args, "--batch")?)?;
+    let repeats = flag_parse(args, "--repeats", 50_usize);
+    let params = sample_params_from(args);
+    if let Ok(snapshot) = phlow_trainer_mojo::gpu_policy::query_gpu() {
+        println!(
+            "gpu: {} MiB free / {} MiB total at bench start",
+            snapshot.free_mib, snapshot.total_mib
+        );
+    }
+    let total_ns = ffi::sample_bench_ns(&logits, rows, width, &params, repeats)?;
+    let per_launch_us = total_ns as f64 / repeats as f64 / 1_000.0;
+    println!(
+        "sample-bench: {repeats} launches of {rows}x{width} f32 \
+         (T={} top_k={} top_p={}) = {per_launch_us:.1} us/launch",
+        params.temperature, params.top_k, params.top_p
+    );
+    Ok(true)
+}
+
+/// `backend-info` mode: availability probe (no allocation).
+#[cfg(feature = "trainlab-contract")]
+fn mode_backend_info(args: &[String]) -> Result<bool, ScoringError> {
+    let mut config = BackendConfig::default();
+    if let Ok(value) = flag_value(args, "--gpu-free-mib-min") {
+        config.gpu_free_mib_min = value.parse().unwrap_or(config.gpu_free_mib_min);
+    }
+    if args.iter().any(|arg| arg == "--no-fallback") {
+        config.allow_reference_fallback = false;
+    }
+    let info = backend::availability(&config);
+    println!(
+        "{}",
+        serde_json::json!({
+            "backend": backend::BACKEND_ID,
+            "kernel_version": backend::KERNEL_VERSION_LABEL,
+            "abi_version": info.abi_version,
+            "available": info.available,
+            "gpu_free_mib": info.gpu.map(|gpu| gpu.free_mib),
+            "gpu_total_mib": info.gpu.map(|gpu| gpu.total_mib),
+            "gpu_free_mib_min": config.gpu_free_mib_min,
+            "fallback_allowed": config.allow_reference_fallback,
+            "reason": info.reason,
+        })
+    );
+    Ok(true)
+}
+
+/// `run` mode: the production scoring path + scoring receipt.
+#[cfg(feature = "trainlab-contract")]
+fn mode_run(args: &[String]) -> Result<bool, ScoringError> {
+    let manifest_path = flag_value(args, "--manifest")?;
+    let manifest = read_json(&manifest_path)?;
+    let entries_json = manifest
+        .get("entries")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| ScoringError::InputFile {
+            source: manifest_path.clone(),
+            detail: "manifest has no entries array".to_string(),
+        })?;
+    let blocks_raw = read_blocks(&flag_value(args, "--blocks")?)?;
+    if blocks_raw.len() != entries_json.len() {
+        return Err(ScoringError::InputFile {
+            source: manifest_path.clone(),
+            detail: format!(
+                "{} blocks for {} manifest entries",
+                blocks_raw.len(),
+                entries_json.len()
+            ),
+        });
+    }
+    let mut entries: Vec<ManifestEntry> = Vec::with_capacity(entries_json.len());
+    let mut blocks: Vec<LogitBlock> = Vec::with_capacity(blocks_raw.len());
+    for (entry, block) in entries_json.iter().zip(blocks_raw.iter()) {
+        let targets: Vec<i32> = json_f64s(entry, "targets")?
+            .iter()
+            .map(|value| *value as i32)
+            .collect();
+        entries.push(ManifestEntry {
+            targets: targets.clone(),
+            token_logps: json_f64s(entry, "token_logps")?,
+            mean_logprob: entry
+                .get("mean_logprob")
+                .and_then(serde_json::Value::as_f64)
+                .unwrap_or(f64::NAN),
+        });
+        blocks.push(LogitBlock {
+            logits: block.logits.clone(),
+            rows: block.rows,
+            vocab: block.width,
+            targets,
+        });
+    }
+    let group: usize = flag_parse(args, "--group", 0_usize);
+    if group == 0 {
+        return Err(ScoringError::InputFile {
+            source: "--group".to_string(),
+            detail: "required 1-based group number missing".to_string(),
+        });
+    }
+    let mut config = BackendConfig::default();
+    if let Ok(value) = flag_value(args, "--gpu-free-mib-min") {
+        config.gpu_free_mib_min = value.parse().unwrap_or(config.gpu_free_mib_min);
+    }
+    if args.iter().any(|arg| arg == "--no-fallback") {
+        config.allow_reference_fallback = false;
+    }
+    let sampler = if args.iter().any(|arg| arg == "--sample") {
+        Some(sample_params_from(args))
+    } else {
+        None
+    };
+    let run = backend::run_scoring(
+        std::path::Path::new(&flag_value(args, "--export")?),
+        std::path::Path::new(&flag_value(args, "--trainlab-receipt")?),
+        group,
+        &entries,
+        &blocks,
+        sampler,
+        &config,
+    )?;
+    let out_path = flag_value(args, "--out")?;
+    run.receipt.write_new(std::path::Path::new(&out_path))?;
+    println!(
+        "run: path={} worst token |d| = {:.2e} (bound {LOGPROB_DIFF_MAX:.0e}), \
+         worst mean |d| = {:.2e}, worst advantage |d| = {:.2e} (bound \
+         {ADVANTAGE_DIFF_MAX:.0e})",
+        run.receipt.scoring_path,
+        run.worst_token_diff,
+        run.worst_mean_diff,
+        run.worst_advantage_diff
+    );
+    if let Some(tokens) = &run.sampled_tokens {
+        println!("run: sampled tokens (first block rows): {tokens:?}");
+    }
+    println!("run: scoring receipt written to {out_path}");
+    Ok(run.worst_mean_diff <= LOGPROB_DIFF_MAX
+        && run.worst_token_diff <= LOGPROB_DIFF_MAX
+        && run.worst_advantage_diff <= ADVANTAGE_DIFF_MAX)
+}
+
 /// Fetch a `--flag value` pair from argv.
 fn flag_value(args: &[String], flag: &str) -> Result<String, ScoringError> {
     let mut iter = args.iter();
@@ -357,9 +628,18 @@ fn run() -> Result<bool, ScoringError> {
                 .unwrap_or(50);
             mode_bench(&flag_value(&args, "--batch")?, repeats)
         }
+        "sample-bench" => mode_sample_bench(&args),
+        #[cfg(feature = "trainlab-contract")]
+        "sample" => mode_sample(&args),
+        #[cfg(feature = "trainlab-contract")]
+        "backend-info" => mode_backend_info(&args),
+        #[cfg(feature = "trainlab-contract")]
+        "run" => mode_run(&args),
         other => Err(ScoringError::InputFile {
             source: other.to_string(),
-            detail: "unknown mode (version|score|advantages|bench)".to_string(),
+            detail: "unknown mode (version|score|advantages|bench|sample|sample-bench|\
+                     backend-info|run)"
+                .to_string(),
         }),
     }
 }
