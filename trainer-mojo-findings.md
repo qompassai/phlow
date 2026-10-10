@@ -143,3 +143,145 @@ logits) so the kernels have a Mojo-native producer? Probe:
   libraries instead of pixi-env rpaths, and a GPU-residency policy on
   primo (the 8 GB card is shared with Ollama).
 </details>
+
+# Productization pass (2026-10-09)
+
+The three blockers named in the verdict above are resolved or
+documented below. Branch `pax/trainlab-mojo-20261008`, local
+commits only.
+
+<details>
+<summary>Logits producer decision — sidecar ships; pip modular probed, walled on tail-logprob accuracy</summary>
+
+- **Shipped:** the PyTorch sidecar stays the logits producer /
+  trainer (per the trainer-backend verdict). The Mojo crate is the
+  accelerated scoring + sampling backend behind the trainlab
+  contract; trainlab's default backend remains PyTorch, and the
+  Mojo backend is invoked explicitly through this crate.
+- **Bounded shot at pip `modular` (26.6.0 / max 26.6.0 / mojo
+  1.1.0, isolated venv `~/trainer-mojo-modular-probe`):**
+  `tools/probe_modular.py` + `tools/probe_reference.py`.
+  - Install: clean (`pip install modular`).
+  - `max serve` runs Qwen2.5-Coder-7B end-to-end on CPU with
+    `--quantization-encoding float32` (~30 s to ready). bf16 is
+    rejected on CPU ("encoding 'bfloat16' is not compatible with
+    the selected device type 'cpu'"); the 15 GB bf16 checkpoint
+    cannot fit the 8 GB GPU. `logprobs` is capped at 7.
+  - Accuracy: on a 5-token prompt, served top-7 logprobs agree
+    with transformers to ≤0.008 nats (bf16 and f32 references).
+    On a 73-token code prompt, top-1 and the top-7 set agree but
+    tail logprobs deviate up to ~2.6 nats (MAX systematically
+    flatter), with or without a trailing space in the prompt.
+  - Verdict: **not wired** — ~50× outside the contract's parity
+    bar (5e-2 nats/token). A documented wall; the mechanism
+    (serve-side logprob computation on longer prompts) was not
+    diagnosed further within the budget.
+</details>
+
+<details>
+<summary>Runtime deployment — vendored Mojo runtime, no pixi rpath in the shipped artifact</summary>
+
+`build.rs` copies the six runtime libraries the kernel `.so`
+needs (libKGENCompilerRTShared, libAsyncRTMojoBindings,
+libMSupportGlobals, libAsyncRTRuntimeGlobals, libstdc++.so.6,
+libgcc_s.so.1) next to it and rewrites the kernel's rpath to
+`$ORIGIN`; binaries link the build-dir copy in dev and
+`$ORIGIN/../lib` for the installed layout. The pixi env rpath is
+gone. `scripts/install-runtime.sh` installs `bin/` + `lib/` to a
+prefix (default `~/.local/share/phlow-trainlab-mojo`).
+
+Proof (primo, 2026-10-09): with the crate's `.pixi` renamed away
+and the build OUT_DIR hidden, the installed binary under `env -i`
+resolves every library from its own `lib/` (`ldd` shows
+`bin/../lib/...`) and completes the production `run` below with
+identical numbers.
+</details>
+
+<details>
+<summary>GPU-residency policy — fail closed on the shared 8 GB card</summary>
+
+`GPU_FREE_MIB_MIN_DEFAULT = 1024` MiB (named constant in
+`gpu_policy.rs`; working set measured ≤ ~250 MiB). Before any
+allocation the backend queries `nvidia-smi`; a missing tool,
+unparseable output, an ABI mismatch, or free VRAM below the
+threshold makes the Mojo path unavailable with a structured
+reason. With fallback allowed (the default) the run proceeds on
+the pure-Rust reference path and the scoring receipt records
+`scoring_path = "reference"` + the reason + the observed free
+VRAM; with `--no-fallback` the run errors
+(`mojo backend unavailable: GPU free VRAM 7712 MiB below required
+999999 MiB (total 8188 MiB)` — the forced-threshold proof).
+Kernel/shape errors never fall back.
+</details>
+
+<details>
+<summary>Production surface — backend dispatch, scoring receipt, end-to-end run</summary>
+
+- Surface: `backend::{score_blocks, rloo_advantages_backend,
+  sample, availability, run_scoring}`; trainlab stays
+  backend-agnostic (Candle/Burn pattern) — this crate depends on
+  `phlow-trainlab` behind the default `trainlab-contract`
+  feature and verifies the export↔receipt tie (`run_id` +
+  `config_sha256`, whole export hashed into the receipt).
+- Receipt: `phlow.trainer-mojo.scoring-receipt/v1` — backend id,
+  kernel ABI version + version label, scoring path, fallback
+  reason, GPU figures, per-group mean logprobs + recomputed
+  advantages, optional sampler record (temperature, top_k,
+  top_p, seed, draw_index). Written atomically, refuse-overwrite.
+- CLI: `phlow-trainer-mojo run|sample|sample-bench|backend-info`
+  alongside the original modes.
+- End-to-end (rl run `rl-qwen25-coder-7b-t10-20261008`, group 8,
+  8 completions, fixtures now in `tests/fixtures/`): path=mojo,
+  worst token |Δ| 1.49e-4 (bound 5e-4), worst mean |Δ| 4.18e-5,
+  worst advantage |Δ| 8.51e-9 (bound 1e-5), sampler draw recorded
+  (T=0.8, k=50, p=0.95, seed 42). GPU free at run: 7712/8188 MiB.
+</details>
+
+<details>
+<summary>Sampling primitives — one composable kernel (ABI v2), parity + bench</summary>
+
+`phlow_sample_tokens` / `phlow_sample_bench_ns`: temperature 0 =
+greedy argmax (ties → lowest index); otherwise one composable
+pass — temperature scaling, top-k universe restriction, top-p
+nucleus prefix (smallest prefix reaching top_p, crossing
+candidate included), draw renormalized over the prefix mass;
+unrestricted draws walk the full-vocab CDF in index order.
+Extraction is bounded at 2048 candidates; if the nucleus cannot
+close by the cap with no top_k bound, the kernel falls back to
+the exact CDF walk (documented bound, count == vocab signals
+it). Uniforms: SplitMix64 on `seed ^ ((row+1)·GOLDEN) ^
+(draw·PHI_M1)`, one step, top 24 bits / 2^24 — bit-identical in
+the kernel, the Rust reference, and the Python harness, so a run
+reproduces from its receipt (seed + draw_index recorded).
+
+Parity (`tools/check_sampling.py`, all passed): greedy exact vs
+torch argmax on bench-batch and group rows; candidate sets and
+tokens exact vs the semantics reference for 7 parameter combos
+(incl. the CDF-fallback branch); 4096 seeded draws, max
+|freq − p| = 0.0053 / 0.0048 (bound 0.025); determinism across
+repeated calls and a fresh library load. The Rust suite also
+proves kernel == reference exactly on fixed batches
+(`v_sample_matches_reference_batch`).
+
+Bench (resident 128×151,936, T=0.8/k=50/p=0.95, 7712 MiB free):
+Mojo 4811 µs/launch vs PyTorch equivalent (softmax → top-k →
+nucleus filter → multinomial) 8959 µs/launch — ~1.8×.
+Scoring-only class comparison, as with the logprob bench.
+</details>
+
+<details>
+<summary>Gates</summary>
+
+- `cargo test -p phlow-trainer-mojo`: 22 unit + 6 backend
+  integration + 10 FFI integration = 38 passed, 0 failed
+  (also green `--no-default-features`: 19 + 10). GPU tests are
+  serialized per test file — parallel device contexts in one
+  process stall on primo (observed; mutex documented in the
+  test files).
+- `cargo test -p phlow-trainlab`: 57 passed, 0 failed.
+- `cargo clippy -p phlow-trainer-mojo --all-targets -- -D
+  warnings`: clean, both feature configurations.
+- `cargo fmt -p phlow-trainer-mojo -- --check`: clean.
+- Python harnesses: `check_sampling.py` ALL PASSED;
+  `check_via_ctypes.py` ABI assertion updated 1 → 2.
+</details>
