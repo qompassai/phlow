@@ -27,6 +27,9 @@
 //! reward executor's harness spawn is the same class (one child per
 //! evaluation, deadline, bounded pipes); its remaining spawns are
 //! test-module probes, classified mechanically in the same audit.
+//! The trainer-mojo GPU residency probe is the same class again:
+//! one fixed-argv `nvidia-smi` child per residency check, captured
+//! synchronously and fail-closed — classified in the same audit.
 //!
 //! Four cases against the real manager (no mock limiter): two
 //! validation, two adversarial. The task-level verdict is `pass`: the
@@ -340,8 +343,10 @@ fn cfg_test_line(text: &str) -> Option<usize> {
 /// synchronous single-child per evaluation under a deadline with
 /// bounded output pipes (same class as the checks spawn), and the
 /// remaining trainlab spawns sit inside `#[cfg(test)]` modules
-/// (verified mechanically by line position). No other acquisition path
-/// may exist — a new spawn site fails this case.
+/// (verified mechanically by line position); the trainer-mojo GPU
+/// residency probe is the same class (one fixed-argv `nvidia-smi`
+/// child per check, captured synchronously). No other acquisition
+/// path may exist — a new spawn site fails this case.
 fn case_spawn_paths_go_through_limiter() -> Result<CaseReport, DriverError> {
     const CASE: &str = "spawn_paths_go_through_limiter";
     let root = workspace_root()?;
@@ -486,6 +491,48 @@ fn case_spawn_paths_go_through_limiter() -> Result<CaseReport, DriverError> {
                     evidence,
                 ));
             }
+        } else if site.contains("phlow-trainer-mojo/src/gpu_policy.rs") {
+            // Trainer-mojo spawn: the GPU residency probe's single
+            // `nvidia-smi` child. Position relative to the file's
+            // `#[cfg(test)]` boundary decides test-only vs production
+            // — verified mechanically, never assumed (the trainlab
+            // discipline above).
+            let (path, lineno) = parse_site(site)?;
+            let text = std::fs::read_to_string(&path)
+                .map_err(|e| fixture_error("trainer-mojo source", format!("{path}: {e}")))?;
+            let boundary = cfg_test_line(&text);
+            let in_tests = boundary.is_some_and(|b| lineno - 1 > b);
+            if in_tests {
+                test_only += 1;
+                evidence.push(format!(
+                    "{site}: inside the file's #[cfg(test)] module (test-only spawn)"
+                ));
+            } else {
+                // Production site: require the probe's anchors in the
+                // same file — a fixed `nvidia-smi` argv (no shell, no
+                // caller-supplied program) and a synchronous
+                // `.output()` capture — before classifying it
+                // synchronous.
+                let fixed_argv = text.contains("Command::new(\"nvidia-smi\")");
+                let sync_capture = text.contains(".output()");
+                evidence.push(format!(
+                    "trainer-mojo gpu_policy.rs:{lineno}: fixed nvidia-smi argv present={fixed_argv}, synchronous capture present={sync_capture}"
+                ));
+                if !fixed_argv || !sync_capture {
+                    return Ok(CaseReport::fail(
+                        CASE,
+                        format!(
+                            "trainer-mojo gpu probe spawn at {site} lost its bounds (fixed_argv={fixed_argv}, sync_capture={sync_capture})"
+                        ),
+                        evidence,
+                    ));
+                }
+                synchronous_single += 1;
+                evidence.push(
+                    "trainer-mojo gpu_policy.rs: query_gpu runs ONE nvidia-smi child synchronously per residency check (fixed argv, no shell, output captured whole, every failure a typed Unavailable) — no queue, no fan-out, nothing to limit"
+                        .to_string(),
+                );
+            }
         } else if site.contains("phlow-cli/src/lib.rs") {
             // Verify test-only-ness mechanically: the enclosing fn must
             // carry #[test]. Walk up from the hit line to the nearest
@@ -543,7 +590,7 @@ fn case_spawn_paths_go_through_limiter() -> Result<CaseReport, DriverError> {
         ));
     }
     evidence.push(
-        "every acquisition path is accounted for: the fan-out path is semaphore-gated (queue slot + run permit precede spawn; excess recorded as dropped); the other production spawners are sequential single-child (checks runner, trainlab reward executor); the remaining sites are test-only".to_string(),
+        "every acquisition path is accounted for: the fan-out path is semaphore-gated (queue slot + run permit precede spawn; excess recorded as dropped); the other production spawners are sequential single-child (checks runner, trainlab reward executor, trainer-mojo GPU residency probe); the remaining sites are test-only".to_string(),
     );
     Ok(CaseReport::pass(
         CASE,

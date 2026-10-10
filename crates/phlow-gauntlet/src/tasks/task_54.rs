@@ -178,6 +178,15 @@ fn seam_name_scan(
             let entry = entry.map_err(|e| fixture_error("source walk", e))?;
             let path = entry.path();
             if path.is_dir() {
+                // Vendored environment trees are not product modules:
+                // phlow-trainer-mojo carries a pixi environment (.pixi
+                // — the MAX/Python stack, gigabytes of third-party
+                // files whose names are not phlow's vocabulary). Skip
+                // by directory name, the same shape as phlow-workspace's
+                // SKIP_DIRS exclusions.
+                if path.file_name().is_some_and(|n| n == ".pixi") {
+                    continue;
+                }
                 stack.push(path);
                 continue;
             }
