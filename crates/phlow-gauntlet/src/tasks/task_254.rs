@@ -184,10 +184,17 @@ pub(super) mod support {
         // Exercise public validation, never reimplement it. The untrusted mock returns raw
         // answers; consumers must validate exactly as the real RiskScorer does.
         let answers = ready(backend.decide(batch))?;
-        Ok(answers.and_then(|answers| {
+        let scored = answers.and_then(|answers| {
             answers.validate(batch)?;
             Ok(answers)
-        }))
+        });
+        // Calibration capture: a validated batch is a scored decision
+        // point. Inert unless a trace recorder is installed; a capture
+        // failure fails the case rather than losing the trace silently.
+        if let Ok(scored_answers) = &scored {
+            crate::trace::record_decision(batch, scored_answers).map_err(error_text)?;
+        }
+        Ok(scored)
     }
 
     pub(crate) fn decide(
@@ -217,9 +224,51 @@ pub(super) mod support {
         })
     }
 
+    /// A forwarding fixture that keeps the batch and answers of the
+    /// decision it served, so `assess` can record the decision point
+    /// for calibration after the route is known to have consumed it.
+    struct TracedMock<'a> {
+        inner: BorrowedMock<'a>,
+        captured: std::sync::Mutex<Option<(QuestionBatch, AnswerBatch)>>,
+    }
+
+    impl System1Decider for TracedMock<'_> {
+        async fn decide(&self, batch: &QuestionBatch) -> Result<AnswerBatch, System1Error> {
+            let answers = self.inner.decide(batch).await?;
+            *self
+                .captured
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                Some((batch.clone(), answers.clone()));
+            Ok(answers)
+        }
+    }
+
     pub(crate) fn assess(backend: &MockBackend, state: &str, risk: Risk) -> Result<Route, String> {
-        let scorer = RiskScorer::new(BorrowedMock(backend));
-        ready(scorer.route(&approval_decision(risk)?, state))
+        let scorer = RiskScorer::new(TracedMock {
+            inner: BorrowedMock(backend),
+            captured: std::sync::Mutex::new(None),
+        });
+        let route = ready(scorer.route(&approval_decision(risk)?, state))?;
+        // Calibration capture: record the decision System 1 actually
+        // made, when route() called it at all. Only answers that pass
+        // the validation RiskScorer itself applies count as a scored
+        // prediction; route() escalates on the rest (missing, extra,
+        // wrong-kind, nonfinite), and those are never recorded — the
+        // same rule decide_result follows. Inert unless a trace
+        // recorder is installed.
+        let captured = scorer
+            .decider()
+            .captured
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some((batch, answers)) = captured
+            && answers.validate(&batch).is_ok()
+        {
+            crate::trace::record_decision(&batch, &answers).map_err(error_text)?;
+        }
+        Ok(route)
     }
 
     pub(crate) fn check_choice(

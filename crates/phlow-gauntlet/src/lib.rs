@@ -23,6 +23,7 @@
 //! # Layout
 //!
 //! - [`tasks`]: the 158 task modules, one per file, disjoint ownership.
+//! - [`trace`]: decision-trace capture for the calibration harness.
 //! - [`bounty`]: the shared scaffold for tasks 131–150 (async bug-bounty
 //!   cyclical workflow): scope feeds, scheduler, finding lifecycle,
 //!   validation pipeline, submission gate, fake platform.
@@ -38,6 +39,7 @@ pub mod skill_sync;
 pub mod skillopt;
 pub mod state_machine;
 pub mod tasks;
+pub mod trace;
 pub mod wire;
 
 use std::fmt;
@@ -172,6 +174,12 @@ pub enum GauntletError {
         /// Which field was empty.
         field: &'static str,
     },
+    /// Decision-trace capture failed; the run does not proceed on a
+    /// corpus it cannot trust.
+    Trace {
+        /// What failed, from the trace recorder.
+        reason: String,
+    },
     /// An unknown task id was requested.
     UnknownTask {
         /// The id that was requested.
@@ -189,6 +197,9 @@ impl fmt::Display for GauntletError {
         match self {
             GauntletError::EmptyField { field } => {
                 write!(f, "gauntlet: required field '{field}' was empty")
+            }
+            GauntletError::Trace { reason } => {
+                write!(f, "gauntlet: decision trace capture failed: {reason}")
             }
             GauntletError::UnknownTask { id } => {
                 write!(f, "gauntlet: unknown task id '{id}'")

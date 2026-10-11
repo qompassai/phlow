@@ -2288,15 +2288,25 @@ fn find_entry(id: &str) -> Option<TaskEntry> {
 pub fn run_task(id: &str, ctx: &Ctx) -> Result<TaskReport, GauntletError> {
     let started = Instant::now();
     let entry = find_entry(id).ok_or_else(|| GauntletError::UnknownTask { id: id.to_string() })?;
+    // Decision-trace capture brackets the attempt so the task's
+    // decision points are attributed to it. Inert unless a recorder
+    // was installed; a capture failure fails the run closed rather
+    // than letting it report green on an untrusted corpus.
+    let trace_failed = |error: crate::trace::TraceError| GauntletError::Trace {
+        reason: error.to_string(),
+    };
+    crate::trace::begin_task(entry.id).map_err(trace_failed)?;
     let outcome = (entry.run)(ctx);
     let duration_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
-    Ok(TaskReport {
+    let report = TaskReport {
         id: entry.id,
         name: entry.name,
         kind: entry.kind,
         outcome,
         duration_ms,
-    })
+    };
+    crate::trace::end_task(entry.id, report.passed()).map_err(trace_failed)?;
+    Ok(report)
 }
 
 /// Static metadata for one task id.

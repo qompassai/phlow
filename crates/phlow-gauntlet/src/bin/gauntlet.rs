@@ -5,9 +5,9 @@
 //! ```sh
 //! gauntlet list
 //! gauntlet run <task-id> [--nvim-bin PATH] [--diver-lua PATH]
-//!     [--work-dir PATH] [--clean]
+//!     [--work-dir PATH] [--trace-file PATH] [--clean]
 //! gauntlet run-all [--report-dir DIR] [--nvim-bin PATH] [--diver-lua PATH]
-//!     [--work-dir PATH] [--clean]
+//!     [--work-dir PATH] [--trace-file PATH] [--clean]
 //! gauntlet verify-claims <ledger.json>
 //! ```
 //!
@@ -22,13 +22,13 @@
 //! external CLI framework. Unknown flags are rejected, never ignored.
 
 use phlow_gauntlet::tasks::TaskEntry;
-use phlow_gauntlet::{Ctx, GauntletError, TaskOutcome, TaskReport, bound_evidence, tasks};
+use phlow_gauntlet::{Ctx, GauntletError, TaskOutcome, TaskReport, bound_evidence, tasks, trace};
 use serde_json::{Map, Value};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 /// Usage text printed on bad invocation.
-const USAGE: &str = "usage:\n  gauntlet list\n  gauntlet run <task-id> [--nvim-bin PATH] [--diver-lua PATH] [--work-dir PATH] [--clean]\n  gauntlet run-all [--report-dir DIR] [--nvim-bin PATH] [--diver-lua PATH] [--work-dir PATH] [--clean]\n  gauntlet verify-claims <ledger.json>";
+const USAGE: &str = "usage:\n  gauntlet list\n  gauntlet run <task-id> [--nvim-bin PATH] [--diver-lua PATH] [--work-dir PATH] [--trace-file PATH] [--clean]\n  gauntlet run-all [--report-dir DIR] [--nvim-bin PATH] [--diver-lua PATH] [--work-dir PATH] [--trace-file PATH] [--clean]\n  gauntlet verify-claims <ledger.json>";
 
 /// Parsed CLI options. All paths are required for `run`/`run-all`: the
 /// gauntlet never guesses where Matt's editor or config live.
@@ -37,6 +37,10 @@ struct Opts {
     diver_lua: Option<PathBuf>,
     work_dir: Option<PathBuf>,
     report_dir: Option<PathBuf>,
+    /// Decision-trace JSONL path. Defaults to
+    /// `<report-dir>/decision-traces.jsonl` when `--report-dir` is
+    /// given; with neither flag, trace capture stays off.
+    trace_file: Option<PathBuf>,
     /// Remove `work_dir` when the run fully passes; keep it for forensics
     /// otherwise. Only meaningful on `run`/`run-all`.
     clean: bool,
@@ -48,6 +52,7 @@ fn parse_flags(args: &[String]) -> Result<Opts, String> {
         diver_lua: None,
         work_dir: None,
         report_dir: None,
+        trace_file: None,
         clean: false,
     };
     let mut i = 0;
@@ -68,6 +73,10 @@ fn parse_flags(args: &[String]) -> Result<Opts, String> {
             "--report-dir" => {
                 i += 1;
                 opts.report_dir = Some(flag_value(args, i, "--report-dir")?);
+            }
+            "--trace-file" => {
+                i += 1;
+                opts.trace_file = Some(flag_value(args, i, "--trace-file")?);
             }
             "--clean" => {
                 opts.clean = true;
@@ -104,6 +113,36 @@ fn build_ctx(opts: &Opts) -> Result<Ctx, GauntletError> {
     })?;
     let work_dir = effective_work_dir(opts);
     Ctx::new(nvim_bin, diver_lua, work_dir)
+}
+
+/// Install the decision-trace recorder when the run asked for one:
+/// `--trace-file` wins; otherwise `--report-dir` implies
+/// `<report-dir>/decision-traces.jsonl`. Returns the path in use so
+/// the run can report the recorded count against it.
+fn install_trace_recorder(opts: &Opts) -> Result<Option<PathBuf>, String> {
+    let path = opts.trace_file.clone().or_else(|| {
+        opts.report_dir
+            .as_ref()
+            .map(|dir| dir.join("decision-traces.jsonl"))
+    });
+    match path {
+        None => Ok(None),
+        Some(path) => {
+            trace::install(&path).map_err(|error| error.to_string())?;
+            Ok(Some(path))
+        }
+    }
+}
+
+/// Name the recorded trace count for a capture run.
+fn report_trace_count(trace_path: &Option<PathBuf>) {
+    if let Some(path) = trace_path {
+        eprintln!(
+            "gauntlet: decision traces: {} recorded to {}",
+            trace::traces_written(),
+            path.display()
+        );
+    }
 }
 
 /// Absolute form of `work_dir` for safety checks and forensics messages.
@@ -276,6 +315,14 @@ fn cmd_run(id: &str, opts: &Opts) -> ExitCode {
                 .unwrap_or(ExitCode::from(2));
         }
     };
+    let trace_path = match install_trace_recorder(opts) {
+        Ok(path) => path,
+        Err(error) => {
+            eprintln!("gauntlet: decision trace recorder: {error}");
+            return clean_work_dir(opts, &effective_work_dir(opts), false)
+                .unwrap_or(ExitCode::from(2));
+        }
+    };
     let (code, passed) = match tasks::run_task(id, &ctx) {
         Ok(report) => {
             let passed = report.passed();
@@ -294,6 +341,7 @@ fn cmd_run(id: &str, opts: &Opts) -> ExitCode {
             (ExitCode::from(2), false)
         }
     };
+    report_trace_count(&trace_path);
     clean_work_dir(opts, &ctx.work_dir, passed).unwrap_or(code)
 }
 
@@ -305,6 +353,14 @@ fn cmd_run_all(opts: &Opts) -> ExitCode {
             // Context never built: still name the retained directory so a
             // `--clean` run error leaves forensics findable.
             clean_work_dir(opts, &effective_work_dir(opts), false);
+            return ExitCode::from(2);
+        }
+    };
+    let trace_path = match install_trace_recorder(opts) {
+        Ok(path) => path,
+        Err(error) => {
+            eprintln!("gauntlet: decision trace recorder: {error}");
+            clean_work_dir(opts, &ctx.work_dir, false);
             return ExitCode::from(2);
         }
     };
@@ -341,6 +397,7 @@ fn cmd_run_all(opts: &Opts) -> ExitCode {
         }
         eprintln!("gauntlet: report written to {}", path.display());
     }
+    report_trace_count(&trace_path);
     let all_passed = failed.is_empty();
     if !all_passed {
         eprintln!("gauntlet: {} task(s) failed", failed.len());
@@ -966,6 +1023,7 @@ mod clean_tests {
             diver_lua: None,
             work_dir: None,
             report_dir: None,
+            trace_file: None,
             clean,
         }
     }
