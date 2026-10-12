@@ -170,6 +170,14 @@ fn dispatch(cli: &Cli) -> Result<i32, String> {
             .set_editor_timeout(timeout)
             .map_err(|error| error.to_string())?;
     }
+    // The joint-attention gate over one process-wide board. `serve`
+    // hands the same board to the MCP server, so foci published through
+    // the `flow_attention_*` tools and the dispatch gate share one
+    // coordination state. The gate is consulted only when the operator
+    // config enables `[attention]`.
+    runtime.set_attention_gate(phlow_runtime::attention::AttentionGate::with_fresh_board(
+        "phlow",
+    ));
 
     match &cli.command {
         Some(Commands::Serve) => serve(runtime),
@@ -215,7 +223,11 @@ fn finish_report(mut runtime: wiring::ProductionRuntime, result: &Value) -> Resu
 /// `serve` flushes every frame. The server closes the runtime on every exit
 /// path, mirroring Python's `finally`.
 fn serve(runtime: wiring::ProductionRuntime) -> Result<i32, String> {
+    let board = runtime.attention_board();
     let mut server = McpServer::new(CliRuntime::new(runtime));
+    if let Some(board) = board {
+        server.set_attention_board(board);
+    }
     let stdin = io::stdin();
     let stdout = io::stdout();
     let mut input = stdin.lock();

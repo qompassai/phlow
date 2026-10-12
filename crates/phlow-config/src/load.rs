@@ -27,7 +27,7 @@ use crate::model::{
     AGENT_MAX_CONTEXT_CHARS_MAX, AGENT_MAX_CONTEXT_CHARS_MIN, AGENT_MAX_CYCLES_MAX,
     AGENT_MAX_CYCLES_MIN, AGENT_MAX_ITERATIONS_MAX, AGENT_MAX_ITERATIONS_MIN,
     AGENT_MAX_TASK_CHARS_MAX, AGENT_MAX_TASK_CHARS_MIN, AGENT_MAX_TOOL_CALLS_MAX,
-    AGENT_MAX_TOOL_CALLS_MIN, AgentConfig, CHECK_ARGV_MAX, CHECK_NAME_CHARS_MAX,
+    AGENT_MAX_TOOL_CALLS_MIN, AgentConfig, AttentionConfig, CHECK_ARGV_MAX, CHECK_NAME_CHARS_MAX,
     CHECK_TIMEOUT_MS_DEFAULT, CHECK_TIMEOUT_MS_MAX, CHECK_TIMEOUT_MS_MIN, CHECKS_MAX, CheckConfig,
     CheckKind, FlowConfig, ModelsConfig, OLLAMA_CONTEXT_LENGTH_MAX, OLLAMA_CONTEXT_LENGTH_MIN,
     OLLAMA_TEMPERATURE_MAX, OLLAMA_TEMPERATURE_MIN, OLLAMA_TIMEOUT_SECS_MAX,
@@ -49,6 +49,7 @@ const ROOT_KEYS: &[&str] = &[
     "models",
     "specialists",
     "agent",
+    "attention",
     "checks",
 ];
 
@@ -112,6 +113,7 @@ pub fn load_config(options: &LoadOptions) -> Result<FlowConfig, ConfigError> {
     let models = parse_models(table_section(&raw, "models")?)?;
     let specialists = parse_specialists(table_section(&raw, "specialists")?)?;
     let agent = parse_agent(table_section(&raw, "agent")?)?;
+    let attention = parse_attention(table_section(&raw, "attention")?)?;
     let checks = parse_checks(table_section(&raw, "checks")?)?;
 
     // 5. Workspace anchoring: config-relative when the TOML names it,
@@ -198,6 +200,7 @@ pub fn load_config(options: &LoadOptions) -> Result<FlowConfig, ConfigError> {
         models,
         specialists,
         agent,
+        attention,
         checks,
         workspace_dir,
         options.trusted,
@@ -654,6 +657,21 @@ fn parse_agent(
     ))
 }
 
+fn parse_attention(
+    table: Option<&toml::map::Map<String, toml::Value>>,
+) -> Result<AttentionConfig, ConfigError> {
+    const KNOWN: &[&str] = &["enabled"];
+    let Some(table) = table else {
+        return Ok(AttentionConfig::default());
+    };
+    reject_unknown_keys(table, KNOWN, "attention")?;
+    let enabled = match table.get("enabled") {
+        Some(value) => parse_bool(value, "attention.enabled")?,
+        None => false,
+    };
+    Ok(AttentionConfig::validated(enabled))
+}
+
 fn parse_checks(
     table: Option<&toml::map::Map<String, toml::Value>>,
 ) -> Result<BTreeMap<String, CheckConfig>, ConfigError> {
@@ -1033,6 +1051,27 @@ mod tests {
         assert!(cfg.warnings().is_empty());
         assert!(cfg.config_path().is_some());
         assert_eq!(cfg.workspace_dir(), &dir.canonicalize().unwrap());
+        assert!(!cfg.attention().enabled(), "attention defaults to off");
+    }
+
+    #[test]
+    fn attention_section_enables_the_gate() {
+        let dir = test_dir("attention-on");
+        let cfg = load_ok(&dir, "[attention]\nenabled = true\n");
+        assert!(cfg.attention().enabled());
+        let dir = test_dir("attention-off");
+        let cfg = load_ok(&dir, "[attention]\nenabled = false\n");
+        assert!(!cfg.attention().enabled());
+    }
+
+    #[test]
+    fn attention_section_rejects_unknown_keys_and_non_bools() {
+        let dir = test_dir("attention-unknown");
+        let err = load_text(&dir, "[attention]\nenabled = true\nradius = 3\n")
+            .expect_err("unknown attention keys must fail closed");
+        assert!(format!("{err}").contains("attention"), "got: {err}");
+        let dir = test_dir("attention-nonbool");
+        assert!(load_text(&dir, "[attention]\nenabled = \"yes\"\n").is_err());
     }
 
     #[test]

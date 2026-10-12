@@ -7,6 +7,9 @@ repository = "https://github.com/qompassai/phlow"
 edition = "2024"
 
 [dependencies]
+# phlow-attention: the joint-attention coordination board behind the
+# flow_attention_* tools.
+phlow-attention = { version = "0.1.0", path = "../phlow-attention" }
 # phlow-json: the narrowing layer for params/arguments objects. Wire frames
 # are parsed with plain serde_json (the serve loop already caps frames at
 # 1 MiB); nesting past serde_json's own recursion limit is a parse error.

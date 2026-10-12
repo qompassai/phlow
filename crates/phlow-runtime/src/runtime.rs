@@ -357,6 +357,10 @@ pub struct Runtime<L: LlmTransport, E: EditorTransport> {
     check_pins: CheckPins,
     /// Lazily probed served-model list for specialist fallback decisions.
     served_models: ServedModels,
+    /// The joint-attention dispatch gate, when the embedding (CLI/MCP
+    /// server) installed one. Consulted only when the operator config
+    /// enables `[attention]`; see [`crate::attention`].
+    attention_gate: Option<crate::attention::AttentionGate>,
 }
 
 impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
@@ -393,7 +397,25 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
             run_changed: BTreeSet::new(),
             check_pins,
             served_models: ServedModels::Unprobed,
+            attention_gate: None,
         })
+    }
+
+    /// Install the joint-attention dispatch gate. The gate is consulted
+    /// only when the operator config enables `[attention]`; installing
+    /// one without enabling it (or the reverse) leaves runs ungated but
+    /// never changes any other behaviour.
+    pub fn set_attention_gate(&mut self, gate: crate::attention::AttentionGate) {
+        self.attention_gate = Some(gate);
+    }
+
+    /// The installed gate's shared board, if any. The MCP server adopts
+    /// it (`McpServer::set_attention_board`) so the `flow_attention_*`
+    /// tools and the dispatch gate coordinate over one board.
+    pub fn attention_board(
+        &self,
+    ) -> Option<std::sync::Arc<std::sync::Mutex<phlow_attention::FocusBoard>>> {
+        self.attention_gate.as_ref().map(|gate| gate.board())
     }
 
     /// True while a `run`/`check` holds the single-writer lock.
@@ -1558,6 +1580,40 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
                     .unwrap_or(Value::String("Planning failed".to_owned())),
             );
             return Ok(());
+        }
+        // Joint-attention gate: with `[attention]` enabled and a gate
+        // installed, publish this run's focus and apply the coordination
+        // rule before any coder dispatch. Losing a contended target
+        // defers the run — two unfamiliar agents never edit the same
+        // file in parallel on a shared frame.
+        if self.config.attention().enabled()
+            && let Some(gate) = &self.attention_gate
+        {
+            let plan_text = planner["summary"].as_str().unwrap_or("");
+            let snapshot =
+                crate::attention::snapshot_from_workspace(&self.workspace, task, plan_text);
+            match gate.consult(&snapshot) {
+                crate::attention::GateVerdict::Proceed { record } => {
+                    report_mut::set(report, "attention", record);
+                }
+                crate::attention::GateVerdict::Defer {
+                    holder,
+                    reason,
+                    record,
+                    target,
+                } => {
+                    report_mut::set(report, "attention", record);
+                    report_mut::set(report, "status", Value::String("deferred".to_owned()));
+                    report_mut::set(
+                        report,
+                        "error",
+                        Value::String(format!(
+                            "Attention gate ({reason}): focus target {target} is held by {holder}"
+                        )),
+                    );
+                    return Ok(());
+                }
+            }
         }
         let mut context = Map::new();
         context.insert("plan".to_owned(), planner["summary"].clone());

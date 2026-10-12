@@ -1571,6 +1571,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "phlow-attention"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "phlow-autoresearch"
 version = "0.1.0"
 dependencies = [
@@ -1728,6 +1737,7 @@ dependencies = [
 name = "phlow-mcp"
 version = "0.2.0"
 dependencies = [
+ "phlow-attention",
  "phlow-json",
  "ryu",
  "serde_json",
@@ -1745,6 +1755,7 @@ version = "0.1.0"
 name = "phlow-runtime"
 version = "0.2.0"
 dependencies = [
+ "phlow-attention",
  "phlow-checks",
  "phlow-config",
  "phlow-editor",

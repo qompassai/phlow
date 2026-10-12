@@ -26,6 +26,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod attention;
 pub mod error;
 pub mod prompt;
 pub mod report;

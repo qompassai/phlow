@@ -477,6 +477,30 @@ impl AgentConfig {
     }
 }
 
+/// Joint-attention coordination settings (`[attention]` section).
+///
+/// When enabled, the runtime derives its focus from a shared workspace
+/// saliency snapshot (crate `phlow-attention`), publishes it to the
+/// coordination board, and defers dispatch when a partner agent holds
+/// the contended top target. Disabled by default: a gate that can
+/// refuse dispatch changes runtime behaviour and stays opt-in until
+/// the coordination evidence justifies otherwise.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AttentionConfig {
+    enabled: bool,
+}
+
+impl AttentionConfig {
+    pub(crate) fn validated(enabled: bool) -> AttentionConfig {
+        AttentionConfig { enabled }
+    }
+
+    /// Whether the attention coordination gate is active.
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
 /// Agent roles that can carry a model override.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelRole {
@@ -496,6 +520,7 @@ pub struct FlowConfig {
     models: ModelsConfig,
     specialists: SpecialistsConfig,
     agent: AgentConfig,
+    attention: AttentionConfig,
     checks: BTreeMap<String, CheckConfig>,
     workspace_dir: PathBuf,
     trusted: bool,
@@ -510,6 +535,7 @@ impl FlowConfig {
         models: ModelsConfig,
         specialists: SpecialistsConfig,
         agent: AgentConfig,
+        attention: AttentionConfig,
         checks: BTreeMap<String, CheckConfig>,
         workspace_dir: PathBuf,
         trusted: bool,
@@ -526,6 +552,7 @@ impl FlowConfig {
             models,
             specialists,
             agent,
+            attention,
             checks,
             workspace_dir,
             trusted,
@@ -557,6 +584,10 @@ impl FlowConfig {
     /// Agent loop budgets.
     pub fn agent(&self) -> &AgentConfig {
         &self.agent
+    }
+    /// Joint-attention coordination settings.
+    pub fn attention(&self) -> &AttentionConfig {
+        &self.attention
     }
     /// Named checks, sorted by name for deterministic iteration.
     pub fn checks(&self) -> &BTreeMap<String, CheckConfig> {
@@ -628,6 +659,7 @@ mod tests {
             ModelsConfig::validated("small".to_owned(), String::new(), String::new()),
             SpecialistsConfig::default(),
             AgentConfig::default(),
+            AttentionConfig::default(),
             BTreeMap::new(),
             PathBuf::from("/tmp"),
             false,

@@ -7,6 +7,9 @@ repository = "https://github.com/qompassai/phlow"
 edition = "2024"
 
 [dependencies]
+# phlow-attention: the joint-attention protocol (saliency snapshot, focus,
+# alignment, coordination board) behind the dispatch gate.
+phlow-attention = { version = "0.1.0", path = "../phlow-attention" }
 # phlow-config: FlowConfig/OllamaConfig/AgentConfig; read, never duplicated.
 phlow-config = { version = "0.1.0", path = "../phlow-config" }
 # phlow-json: narrowing for untrusted model/editor payloads.

@@ -3,7 +3,13 @@
 //!
 //! The fixture `fixtures/mcp_golden.jsonl` was generated from the real
 //! `flow/mcp.py` by `/tmp/gen_mcp_fixtures.py` (kept out of the repo; the
-//! fixture is the checked-in artifact). Each line is
+//! fixture is the checked-in artifact).
+//!
+//! One deliberate divergence: the `tools/list` pair records the Rust
+//! server's extended catalog — the Python three tools plus the four
+//! `flow_attention_*` joint-attention tools (crate `phlow-attention`),
+//! which have no Python counterpart. Every other pair remains
+//! byte-identical to Python. Each line is
 //! `{"request": <frame>, "reply": <frame|null>, "fresh"?: true,
 //! "failing"?: true}`. Lines run through one server in order unless
 //! `"fresh"` starts a new session; `"failing"` uses a runtime whose `run`

@@ -112,6 +112,56 @@ static TOOL_SPECS: LazyLock<Vec<ToolSpec>> = LazyLock::new(|| {
                 "additionalProperties": false,
             }),
         },
+        ToolSpec {
+            name: "flow_attention_alignment",
+            description: "Alignment between your published focus and a partner agent's focus (same saliency snapshot only)",
+            input_schema: json!({
+                "type": "object",
+                "properties": {"agent_id": {"type": "string"}},
+                "required": ["agent_id"],
+                "additionalProperties": false,
+            }),
+        },
+        ToolSpec {
+            name: "flow_attention_decide",
+            description: "Coordination decision against a partner agent's focus: parallel, serialize, or reject (stale frame)",
+            input_schema: json!({
+                "type": "object",
+                "properties": {"agent_id": {"type": "string"}},
+                "required": ["agent_id"],
+                "additionalProperties": false,
+            }),
+        },
+        ToolSpec {
+            name: "flow_attention_focus",
+            description: "Read a partner agent's currently advertised focus from the coordination board",
+            input_schema: json!({
+                "type": "object",
+                "properties": {"agent_id": {"type": "string"}},
+                "required": ["agent_id"],
+                "additionalProperties": false,
+            }),
+        },
+        ToolSpec {
+            name: "flow_attention_publish",
+            description: "Publish your attention focus (ordered salient targets + saliency snapshot hash) to the coordination board",
+            input_schema: json!({
+                "type": "object",
+                "properties": {"focus": {
+                    "type": "object",
+                    "properties": {
+                        "agent_id": {"type": "string"},
+                        "seq": {"type": "integer"},
+                        "snapshot_hash": {"type": "string"},
+                        "targets": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["agent_id", "seq", "snapshot_hash", "targets"],
+                    "additionalProperties": false,
+                }},
+                "required": ["focus"],
+                "additionalProperties": false,
+            }),
+        },
     ]
 });
 
@@ -436,11 +486,22 @@ mod tests {
     use crate::json_ascii::dumps;
 
     #[test]
-    fn tool_catalog_matches_python() {
+    fn tool_catalog_is_the_seven_tool_surface() {
+        // The first three tools mirror Python `flow serve`; the four
+        // `flow_attention_*` tools are the Rust port's joint-attention
+        // extension (crate `phlow-attention`) and have no Python twin.
         let specs = tool_specs();
         assert_eq!(
             specs.iter().map(|s| s.name).collect::<Vec<_>>(),
-            ["flow_run", "flow_status", "flow_check"]
+            [
+                "flow_run",
+                "flow_status",
+                "flow_check",
+                "flow_attention_alignment",
+                "flow_attention_decide",
+                "flow_attention_focus",
+                "flow_attention_publish"
+            ]
         );
         assert_eq!(
             tool_spec("flow_run").unwrap().description,
@@ -556,7 +617,18 @@ mod tests {
             .iter()
             .map(|tool| tool["name"].as_str().unwrap())
             .collect();
-        assert_eq!(names, ["flow_run", "flow_status", "flow_check"]);
+        assert_eq!(
+            names,
+            [
+                "flow_run",
+                "flow_status",
+                "flow_check",
+                "flow_attention_alignment",
+                "flow_attention_decide",
+                "flow_attention_focus",
+                "flow_attention_publish"
+            ]
+        );
         assert_eq!(result["ttlMs"], 3_600_000);
         assert_eq!(result["cacheScope"], "public");
     }

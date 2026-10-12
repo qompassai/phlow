@@ -13,12 +13,14 @@
 use crate::error::RuntimeError;
 use crate::json_ascii::{DumpsError, dumps};
 use crate::protocol::{
-    self, INVALID_PARAMS, INVALID_REQUEST, MAX_FRAME_BYTES, METHOD_NOT_FOUND, NOT_INITIALIZED,
-    PARSE_ERROR, PROTOCOL_VERSION, RequestId, SUPPORTED_PROTOCOL_VERSIONS,
+    self, INVALID_PARAMS, INVALID_REQUEST, MAX_FRAME_BYTES, META_CLIENT_INFO, METHOD_NOT_FOUND,
+    NOT_INITIALIZED, PARSE_ERROR, PROTOCOL_VERSION, RequestId, SUPPORTED_PROTOCOL_VERSIONS,
 };
 use crate::schema::validate_arguments;
+use phlow_attention::{Focus, FocusBoard};
 use serde_json::{Map, Value};
 use std::io::{self, BufRead, ErrorKind, Write};
+use std::sync::{Arc, Mutex};
 
 /// The agent runtime behind the MCP server.
 ///
@@ -78,6 +80,13 @@ pub struct McpServer<R: McpRuntime> {
     initialized: bool,
     ready: bool,
     frames_read: u64,
+    /// The joint-attention coordination board behind the
+    /// `flow_attention_*` tools. Shareable with the runtime's dispatch
+    /// gate via [`McpServer::set_attention_board`].
+    board: Arc<Mutex<FocusBoard>>,
+    /// The `clientInfo.name` from `initialize`: the transport-level
+    /// identity attention publishes are bound to (anti-spoofing).
+    client_name: Option<String>,
 }
 
 /// How a non-`initialize` request selects its era, from its `_meta`.
@@ -139,7 +148,21 @@ impl<R: McpRuntime> McpServer<R> {
             initialized: false,
             ready: false,
             frames_read: 0,
+            board: Arc::new(Mutex::new(FocusBoard::new())),
+            client_name: None,
         }
+    }
+
+    /// Replace the attention board with a shared one, so the runtime's
+    /// dispatch gate and the `flow_attention_*` tools see the same
+    /// coordination state.
+    pub fn set_attention_board(&mut self, board: Arc<Mutex<FocusBoard>>) {
+        self.board = board;
+    }
+
+    /// The server's attention board (share it with a dispatch gate).
+    pub fn attention_board(&self) -> Arc<Mutex<FocusBoard>> {
+        Arc::clone(&self.board)
     }
 
     /// Frames read so far (counts every `readline`, including blank and
@@ -327,6 +350,13 @@ impl<R: McpRuntime> McpServer<R> {
         } else {
             PROTOCOL_VERSION
         };
+        // Bind the transport identity: attention publishes must carry
+        // this name as their agent_id (the board rejects spoofing).
+        self.client_name = params_obj
+            .and_then(|params| params.get("clientInfo"))
+            .and_then(|info| info.get("name"))
+            .and_then(|name| name.as_str())
+            .map(str::to_owned);
         self.initialized = true;
         protocol::result_value(id, protocol::initialize_value(negotiated))
     }
@@ -379,12 +409,123 @@ impl<R: McpRuntime> McpServer<R> {
                 return protocol::error_value(id, INVALID_PARAMS, "Arguments must be an object");
             }
         };
-        self.execute_tool(id, name, args_obj)
+        self.execute_tool(id, name, args_obj, params_obj.get("_meta"), modern)
+    }
+
+    /// The caller's attention identity for this request: the legacy
+    /// `clientInfo.name` bound at `initialize`, or the modern `_meta`
+    /// clientInfo name. `None` means no identity was established, and
+    /// identity-bound attention calls must fail closed.
+    fn caller_identity(&self, meta: Option<&Value>, modern: bool) -> Option<String> {
+        if !modern {
+            return self.client_name.clone();
+        }
+        meta.and_then(|meta| meta.get(META_CLIENT_INFO))
+            .and_then(|info| info.get("name"))
+            .and_then(|name| name.as_str())
+            .map(str::to_owned)
+    }
+
+    /// Dispatch one `flow_attention_*` tool against the shared board.
+    ///
+    /// Every handler is fail-closed: no established identity, no focus
+    /// on the board, a stale or spoofed publish, or a cross-frame
+    /// comparison is a tool error, never a fabricated success.
+    fn execute_attention(
+        &mut self,
+        name: &str,
+        args: &Map<String, Value>,
+        meta: Option<&Value>,
+        modern: bool,
+    ) -> Result<Value, String> {
+        let caller = self
+            .caller_identity(meta, modern)
+            .ok_or_else(|| "attention tools require an identified client".to_owned())?;
+        let mut board = self.board.lock().expect("attention board lock");
+        match name {
+            "flow_attention_publish" => {
+                let raw = args
+                    .get("focus")
+                    .ok_or_else(|| "focus argument is required".to_owned())?;
+                let focus: Focus = serde_json::from_value(raw.clone())
+                    .map_err(|error| format!("invalid focus: {error}"))?;
+                board
+                    .publish(&caller, focus)
+                    .map_err(|error| error.to_string())?;
+                Ok(serde_json::json!({
+                    "status": "ok",
+                    "agent_id": caller,
+                    "seq": raw.get("seq").cloned().unwrap_or(Value::Null),
+                    "snapshot_hash": raw
+                        .get("snapshot_hash")
+                        .cloned()
+                        .unwrap_or(Value::Null),
+                }))
+            }
+            "flow_attention_focus" => {
+                let agent_id = args
+                    .get("agent_id")
+                    .and_then(|value| value.as_str())
+                    .ok_or_else(|| "agent_id argument is required".to_owned())?;
+                let focus = board.get(agent_id).map(|focus| {
+                    serde_json::to_value(focus).expect("focus serialization cannot fail")
+                });
+                Ok(serde_json::json!({"status": "ok", "focus": focus}))
+            }
+            "flow_attention_alignment" => {
+                let partner_id = args
+                    .get("agent_id")
+                    .and_then(|value| value.as_str())
+                    .ok_or_else(|| "agent_id argument is required".to_owned())?;
+                let score = board
+                    .alignment_between(&caller, partner_id)
+                    .ok_or_else(|| "both agents must publish a focus before alignment".to_owned())?
+                    .map_err(|error| error.to_string())?;
+                Ok(serde_json::json!({
+                    "status": "ok",
+                    "alignment": serde_json::to_value(score)
+                        .expect("alignment serialization cannot fail"),
+                }))
+            }
+            "flow_attention_decide" => {
+                let partner_id = args
+                    .get("agent_id")
+                    .and_then(|value| value.as_str())
+                    .ok_or_else(|| "agent_id argument is required".to_owned())?;
+                let decision = board.decide_between(&caller, partner_id).ok_or_else(|| {
+                    "both agents must publish a focus before a decision".to_owned()
+                })?;
+                Ok(serde_json::json!({
+                    "status": "ok",
+                    "decision": serde_json::to_value(decision)
+                        .expect("decision serialization cannot fail"),
+                }))
+            }
+            _ => Err(format!("unknown attention tool: {name}")),
+        }
     }
 
     /// Dispatch one validated tool call to the runtime and wrap the result.
     /// `name` is a known tool and `args` passed schema validation.
-    fn execute_tool(&mut self, id: &RequestId, name: &str, args: &Map<String, Value>) -> Value {
+    fn execute_tool(
+        &mut self,
+        id: &RequestId,
+        name: &str,
+        args: &Map<String, Value>,
+        meta: Option<&Value>,
+        modern: bool,
+    ) -> Value {
+        if name.starts_with("flow_attention_") {
+            // Attention tools are served from the coordination board,
+            // not the runtime.
+            return match self.execute_attention(name, args, meta, modern) {
+                Ok(result) => self.tool_result(id, &result, false),
+                Err(reason) => {
+                    let failed = serde_json::json!({"status": "error", "error": reason});
+                    self.tool_result(id, &failed, true)
+                }
+            };
+        }
         // Defense in depth: the schema already enforces these shapes, but
         // the explicit checks preserve the Python error precedence.
         let outcome = match name {
@@ -1131,7 +1272,18 @@ mod tests {
             .iter()
             .map(|tool| tool["name"].as_str().unwrap())
             .collect();
-        assert_eq!(names, ["flow_run", "flow_status", "flow_check"]);
+        assert_eq!(
+            names,
+            [
+                "flow_run",
+                "flow_status",
+                "flow_check",
+                "flow_attention_alignment",
+                "flow_attention_decide",
+                "flow_attention_focus",
+                "flow_attention_publish"
+            ]
+        );
         assert_eq!(result["ttlMs"], 3_600_000);
         assert_eq!(result["cacheScope"], "public");
         assert_eq!(
@@ -1276,5 +1428,141 @@ mod tests {
         let frame = br#"{"jsonrpc": "2.0", "id": 9, "method": "tools/call", "params": {"name": "flow_status", "arguments": {}, "inputResponses": {}}}"#;
         let reply: Value = serde_json::from_slice(&server.reply(frame).unwrap()).unwrap();
         assert_eq!(reply["error"]["code"], -32602);
+    }
+
+    /// A server whose client identified itself as `name` at initialize.
+    fn named_server(name: &str) -> McpServer<FakeRuntime> {
+        let mut server = McpServer::new(FakeRuntime::ok());
+        let init = format!(
+            "{{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"initialize\", \"params\": {{\"protocolVersion\": \"2025-11-25\", \"capabilities\": {{}}, \"clientInfo\": {{\"name\": \"{name}\", \"version\": \"1\"}}}}}}"
+        );
+        assert!(server.reply(init.as_bytes()).is_some());
+        assert!(
+            server
+                .reply(br#"{"jsonrpc": "2.0", "method": "notifications/initialized"}"#)
+                .is_none()
+        );
+        server
+    }
+
+    /// A two-target snapshot and one agent's derived focus over it.
+    fn sample_focus(agent: &str, seq: u64) -> phlow_attention::Focus {
+        use phlow_attention::{SaliencyInput, Snapshot, TargetId};
+        let snapshot = Snapshot::build(vec![
+            (
+                TargetId::new("src/a.rs").unwrap(),
+                SaliencyInput {
+                    named_in_task: true,
+                    ..SaliencyInput::quiet()
+                },
+            ),
+            (TargetId::new("src/b.rs").unwrap(), SaliencyInput::quiet()),
+        ])
+        .unwrap();
+        phlow_attention::Focus::derive(agent, &snapshot, seq, None).unwrap()
+    }
+
+    fn call_tool(server: &mut McpServer<FakeRuntime>, name: &str, args: Value) -> Value {
+        let frame = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": args},
+        });
+        let bytes = serde_json::to_vec(&frame).unwrap();
+        let reply: Value =
+            serde_json::from_slice(&server.reply(&bytes).expect("tool call replies")).unwrap();
+        assert!(
+            reply.get("result").is_some(),
+            "tool call must produce a result, got: {reply}"
+        );
+        reply["result"].clone()
+    }
+
+    fn result_text(result: &Value) -> String {
+        result["content"][0]["text"]
+            .as_str()
+            .expect("tool result carries text content")
+            .to_owned()
+    }
+
+    #[test]
+    fn attention_tools_publish_read_align_decide() {
+        let mut server = named_server("alice");
+        // A partner's focus is already on the shared board (as a second
+        // client's server-side state would hold it).
+        let bob = sample_focus("bob", 1);
+        server
+            .attention_board()
+            .lock()
+            .unwrap()
+            .publish("bob", bob)
+            .unwrap();
+        // Alice publishes her own focus through the tool.
+        let alice_focus = serde_json::to_value(sample_focus("alice", 1)).unwrap();
+        let result = call_tool(
+            &mut server,
+            "flow_attention_publish",
+            serde_json::json!({"focus": alice_focus}),
+        );
+        assert_eq!(result["isError"], false, "publish failed: {result}");
+        assert!(result_text(&result).contains("\"snapshot_hash\""));
+        // Reading the partner's focus back.
+        let result = call_tool(
+            &mut server,
+            "flow_attention_focus",
+            serde_json::json!({"agent_id": "bob"}),
+        );
+        assert_eq!(result["isError"], false);
+        assert!(result_text(&result).contains("\"bob\""));
+        // Same top target on a shared frame: serialize, alice holds it
+        // (lexicographically smaller agent id wins deterministically).
+        let result = call_tool(
+            &mut server,
+            "flow_attention_decide",
+            serde_json::json!({"agent_id": "bob"}),
+        );
+        assert_eq!(result["isError"], false);
+        let text = result_text(&result);
+        let payload: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            payload["decision"]["decision"], "serialize",
+            "payload: {payload}"
+        );
+        assert_eq!(payload["decision"]["holder"], "alice", "payload: {payload}");
+        assert_eq!(
+            payload["decision"]["target"], "src/a.rs",
+            "payload: {payload}"
+        );
+        // Alignment on the same frame is defined and maximal-overlap.
+        let result = call_tool(
+            &mut server,
+            "flow_attention_alignment",
+            serde_json::json!({"agent_id": "bob"}),
+        );
+        assert_eq!(result["isError"], false);
+    }
+
+    #[test]
+    fn attention_publish_cannot_spoof_another_agent() {
+        let mut server = named_server("alice");
+        let forged = serde_json::to_value(sample_focus("mallory", 1)).unwrap();
+        let result = call_tool(
+            &mut server,
+            "flow_attention_publish",
+            serde_json::json!({"focus": forged}),
+        );
+        assert_eq!(result["isError"], true, "spoofed publish must fail");
+    }
+
+    #[test]
+    fn attention_compare_before_publish_fails_closed() {
+        let mut server = named_server("alice");
+        let result = call_tool(
+            &mut server,
+            "flow_attention_decide",
+            serde_json::json!({"agent_id": "bob"}),
+        );
+        assert_eq!(result["isError"], true, "unpublished pair must fail");
     }
 }
