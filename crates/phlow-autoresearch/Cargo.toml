@@ -18,7 +18,7 @@ path = "src/main.rs"
 # splits, sampler, bounded reward executor, receipts). The loop's
 # containment forbids WRITING to trainlab; depending on it as a
 # library is how the loop measures without holding the metric.
-phlow-trainlab = { path = "../phlow-trainlab" }
+phlow-trainlab = { version = "0.1.0", path = "../phlow-trainlab" }
 # serde/serde_json: ledger entries, change-sets, and the scenario wire
 # format. Validation never relies on derive; every boundary value is
 # checked by hand after parsing.

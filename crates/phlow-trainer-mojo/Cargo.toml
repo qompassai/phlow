@@ -26,7 +26,7 @@ trainlab-contract = ["dep:phlow-trainlab"]
 # phlow-trainlab: the shared contract types (groups export +
 # receipt validation) the production run consumes — the same
 # dependency direction as the Candle/Burn trainer backends.
-phlow-trainlab = { path = "../phlow-trainlab", optional = true }
+phlow-trainlab = { version = "0.1.0", path = "../phlow-trainlab", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # sha2: receipt/input hashing, pinned exact to match phlow-trainlab.
