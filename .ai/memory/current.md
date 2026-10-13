@@ -11,9 +11,12 @@ Python agent runtime being ported to Rust. CLI/TUI/MCP share one safe runtime.
   GitHub Git Data API (no HTTPS git auth on VM). Byte-identical,
   force=false. Verify origin/main == local after each push. Confirm via
   ls-remote (beware stale remote-tracking refs in shallow clone).
-- **Pre-existing bugs** (separate follow-up, don't weaken):
-  package-linux.sh basename collision; 52 path-deps lack version reqs
-  (blocks cargo publish); flaky task_244/245 subprocess-timing tests.
+- **Pre-existing bugs**: none open. The three recorded 2026-10-04 are
+  closed: package-linux.sh basename collision (fixed `37ebe94`,
+  verified on main 2026-10-12); path-dep version requirements
+  (completed `8cb5aab` — the last two, both on phlow-trainlab);
+  task_244/245 subprocess-timing flakes (observations hardened to
+  poll-until-state, `5e40406`).
 - **Staged** (each needs one-time auth): (2) diver flip + push,
   (3) land rework + push, (4) delete flow/ + Python packaging (destructive,
   git-wip-guard). (1) smoke done.
