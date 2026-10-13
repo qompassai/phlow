@@ -420,6 +420,23 @@ os._exit(7 if sys.argv[2] == 'crash' else 0)
             .all(|o| o.dropped || o.exit_code == Some(if crash { 7 } else { 0 })))
 }
 
+/// Poll `state` until it holds or `bound` expires, checking every
+/// 10 ms — the same poll-until-state shape as the outcome wait in
+/// `storm`. Returns the state's final value; a state that never
+/// holds is a failed observation, never a longer sleep.
+fn poll_state(mut state: impl FnMut() -> bool, bound: Duration) -> bool {
+    let started = Instant::now();
+    loop {
+        if state() {
+            return true;
+        }
+        if started.elapsed() > bound {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 pub(super) fn reap(mode: &str) -> Result<bool, String> {
     const CHILDREN_MAX: usize = 8;
     std::thread::scope(|scope| {
@@ -440,6 +457,7 @@ pub(super) fn reap(mode: &str) -> Result<bool, String> {
 }
 
 fn reap_one(mode: &str) -> Result<bool, String> {
+    const REAP_WAIT_SECS: u64 = 5;
     let fixture = Fixture::new()?;
     let script = match mode {
         "normal" => "import os; print(os.getpid(), flush=True)",
@@ -472,7 +490,17 @@ fn reap_one(mode: &str) -> Result<bool, String> {
         "timeout" => "timeout",
         _ => "failed",
     };
-    Ok(check["status"] == expected && !PathBuf::from(format!("/proc/{pid}")).exists())
+    // The reaping observation is poll-until-state, not instantaneous:
+    // the runtime delivers the kill before it reports, but the child's
+    // exit can still be in flight at the instant `check` returns under
+    // load, so a single /proc probe can observe a child that is
+    // already dead. The invariant is unchanged — the child must be
+    // gone — it is observed under a bounded wait instead.
+    Ok(check["status"] == expected
+        && poll_state(
+            || !PathBuf::from(format!("/proc/{pid}")).exists(),
+            Duration::from_secs(REAP_WAIT_SECS),
+        ))
 }
 
 /// Timing contract: the kill must land after descendants start but before
@@ -483,8 +511,11 @@ fn reap_one(mode: &str) -> Result<bool, String> {
 /// sleep under a generous 10 s liveness bound. Markers are checked
 /// immediately after the check returns: every write happens-before the
 /// process exit the runner already waited for, so no post-check sleep is
-/// needed.
+/// needed. The ready barrier is the exception: it is a liveness
+/// observation, polled under a bounded wait — a descendant still
+/// starting under load has not proven anything either way.
 pub(super) fn group(timeout: bool, descendants: usize) -> Result<bool, String> {
+    const READY_WAIT_SECS: u64 = 5;
     let fixture = Fixture::new()?;
     let script = r#"import os, pathlib, sys, time
 for index in range(int(sys.argv[1])):
@@ -508,7 +539,8 @@ for index in range(int(sys.argv[1])):
     let report = runtime.check(Some("probe"));
     let expected = if timeout { "timeout" } else { "ok" };
     for index in 0..descendants {
-        if !fixture.path.join(format!("ready-{index}")).exists() {
+        let ready = fixture.path.join(format!("ready-{index}"));
+        if !poll_state(|| ready.exists(), Duration::from_secs(READY_WAIT_SECS)) {
             return Err("descendant did not reach ready barrier".to_owned());
         }
         if fixture.path.join(format!("late-{index}")).exists() == timeout {
