@@ -11,7 +11,10 @@
 //! Seam mapping (verified, not invented): there is NO rust A2A client
 //! boundary. Exact-token scans over every product crate's
 //! `src/**/*.rs` (the gauntlet crate itself excluded, per the
-//! harness-probe principle) find zero hits for `a2a`, for
+//! harness-probe principle) find zero unclassified hits for `a2a`
+//! — the only hits are phlow-attention doc comments naming A2A as
+//! an external transport coordination messages arrive over
+//! (classified: mentions, not a client) — zero hits for
 //! task-state vocabulary, for agent-card handling, and for the A2A
 //! JSON-RPC methods (`tasks/send`, `message/send`, `tasks/get`,
 //! `tasks/cancel`). The only A2A boundary in the workspace is
@@ -23,8 +26,9 @@
 //!
 //! Four cases: two validation, two adversarial — each a bounded
 //! source recon that fails closed (premise changed) if A2A
-//! vocabulary ever appears in a product crate. The task-level
-//! verdict is `fail` at `"seam"`: the seam is absent.
+//! vocabulary ever appears in a product crate outside the
+//! classified attention doc vocabulary. The task-level verdict
+//! is `fail` at `"seam"`: the seam is absent.
 //!
 //! Product-decision bank: whether phlow should gain a rust A2A
 //! client boundary with typed error-shape propagation and
@@ -285,6 +289,60 @@ fn assert_absent(
     ))
 }
 
+/// The product crate a scan hit path belongs to: the path component
+/// after `crates/`.
+fn hit_crate(path: &str) -> &str {
+    match path.split("/crates/").nth(1) {
+        Some(rest) => rest.split('/').next().unwrap_or(""),
+        None => "",
+    }
+}
+
+/// Assert an exact-token scan finds zero UNCLASSIFIED hits. Hits in a
+/// classified crate's doc vocabulary — the sense recorded at the
+/// call site — are counted as classification evidence instead of a
+/// refutation; a hit anywhere else fails closed (premise changed),
+/// exactly like `assert_absent`.
+fn assert_absent_classified(
+    case: &'static str,
+    root: &Path,
+    tokens: &[&str],
+    classified_crates: &[&str],
+    sense: &str,
+) -> Result<CaseReport, DriverError> {
+    let mut evidence = Vec::new();
+    let mut total_hits = 0usize;
+    let mut classified_hits = 0usize;
+    for token in tokens {
+        let hits = scan_workspace(root, token)?;
+        evidence.push(format!(
+            "exact-token scan for '{token}' over crates/*/src/**/*.rs: {} hit(s)",
+            hits.len()
+        ));
+        for hit in &hits {
+            if classified_crates.contains(&hit_crate(hit)) {
+                classified_hits += 1;
+                evidence.push(format!("  classified hit ({sense}): {hit}"));
+            } else {
+                total_hits += 1;
+                evidence.push(format!("  unexpected hit: {hit}"));
+            }
+        }
+    }
+    if total_hits != 0 {
+        return Ok(CaseReport::fail(
+            case,
+            format!("{total_hits} hit(s) — the absence finding is refuted (premise changed)"),
+            evidence,
+        ));
+    }
+    Ok(CaseReport::pass(
+        case,
+        serde_json::json!({"hits": 0, "classified_hits": classified_hits}),
+        evidence,
+    ))
+}
+
 // ---------------------------------------------------------------------------
 // Cases
 // ---------------------------------------------------------------------------
@@ -293,7 +351,15 @@ fn assert_absent(
 fn case_no_a2a_client_boundary() -> Result<CaseReport, DriverError> {
     const CASE: &str = "no_a2a_client_boundary";
     let root = workspace_root()?;
-    let mut report = assert_absent(CASE, &root, &["a2a"])?;
+    let mut report = assert_absent_classified(
+        CASE,
+        &root,
+        &["a2a"],
+        &["phlow-attention"],
+        "phlow-attention doc vocabulary — A2A named as an external \
+         transport coordination messages arrive over; no client, \
+         boundary, or RPC code",
+    )?;
     report.evidence.push(
         "no rust crate names an a2a module, type, or function: the A2A \
          client boundary the design asks about has no rust implementation"
@@ -411,7 +477,7 @@ fn run_inner() -> Result<Vec<String>, TaskFailure> {
     );
     Err(TaskFailure {
         where_: "seam".to_string(),
-        how: "seam absent: no rust A2A client boundary exists. Bounded exact-token scans over every product crate's src/**/*.rs (gauntlet crate excluded per the harness-probe principle) find zero hits for `a2a`, for task-state vocabulary (`task_state`, `taskstate`), for agent-card handling (`agent_card`, `agentcard`), and for the A2A JSON-RPC methods (`tasks/send`, `message/send`, `tasks/get`, `tasks/cancel`). Remote error shapes — code, message, attacker-controlled data — cross no rust boundary, so there is nothing to preserve, bound, or quote. The only A2A boundary in the workspace is diver's Lua (lua/ai/a2a/client.lua, lua/ai/a2a/tasks.lua; task-07's happy path), where the `bad-state` scenario showed unknown state strings are IGNORED by the task state machine rather than rejected as protocol violations — diver-owned, flagged. Product decision banked for Matt: whether phlow should gain a rust A2A client boundary with typed error-shape propagation (code/message/data preserved; attacker data size-bounded, quoted, never interpolated; unknown states rejected; remote claims about the local run recorded as remote assertions only) is not implemented on gauntlet authority.".to_string(),
+        how: "seam absent: no rust A2A client boundary exists. Bounded exact-token scans over every product crate's src/**/*.rs (gauntlet crate excluded per the harness-probe principle) find zero unclassified hits for `a2a` (the only hits are phlow-attention doc comments naming A2A as an external transport — classified mentions, not a client), zero hits for task-state vocabulary (`task_state`, `taskstate`), for agent-card handling (`agent_card`, `agentcard`), and for the A2A JSON-RPC methods (`tasks/send`, `message/send`, `tasks/get`, `tasks/cancel`). Remote error shapes — code, message, attacker-controlled data — cross no rust boundary, so there is nothing to preserve, bound, or quote. The only A2A boundary in the workspace is diver's Lua (lua/ai/a2a/client.lua, lua/ai/a2a/tasks.lua; task-07's happy path), where the `bad-state` scenario showed unknown state strings are IGNORED by the task state machine rather than rejected as protocol violations — diver-owned, flagged. Product decision banked for Matt: whether phlow should gain a rust A2A client boundary with typed error-shape propagation (code/message/data preserved; attacker data size-bounded, quoted, never interpolated; unknown states rejected; remote claims about the local run recorded as remote assertions only) is not implemented on gauntlet authority.".to_string(),
         evidence,
     })
 }
