@@ -29,7 +29,9 @@ use std::time::Duration;
 
 use phlow_editor::{CALL_LUA, SCHEMAS_LUA, TransportError, WORKER_GRACE};
 use serde_json::Value;
+#[cfg(unix)]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+#[cfg(unix)]
 use tokio::net::UnixStream;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -37,22 +39,30 @@ use tokio::task::JoinHandle;
 /// Bound on one msgpack-RPC response frame: 8 MiB. Generous (file tool
 /// results are capped at 1 MiB upstream), but a malicious or desynchronized
 /// peer cannot make the worker buffer without end.
+#[cfg(unix)]
 const FRAME_BYTES_MAX: usize = 8 * 1024 * 1024;
 /// Channel capacity: one in-flight request; `exec` takes `&mut self`.
 const WORKER_QUEUE_CAPACITY: usize = 1;
 /// Detail for `TransportError::Failed` when a response carries the wrong
 /// msgpack-RPC id: the peer desynchronized, so the stream (and its buffer)
 /// must be dropped and the next request reconnects.
+#[cfg(unix)]
 const ID_MISMATCH_DETAIL: &str = "msgpack-RPC reply id mismatch";
 /// Scratch read size for response frames.
+#[cfg(unix)]
 const READ_CHUNK: usize = 4096;
 
 /// Most notifications skipped while waiting for one response; bounds the
 /// work a chatty peer can force into a single request (the outer timeout
 /// still applies).
+#[cfg(unix)]
 const NOTIFICATIONS_MAX: usize = 16;
 
 /// One request handed to the owning worker task.
+///
+/// On non-Unix platforms the worker answers from `reply` alone, so the
+/// request fields are carried but never read.
+#[cfg_attr(not(unix), allow(dead_code))]
 struct WorkerRequest {
     /// msgpack-RPC id, echoed by the peer.
     id: u32,
@@ -152,6 +162,7 @@ impl phlow_editor::EditorTransport for MsgpackTransport {
 }
 
 /// The single owning worker: serializes requests over one `UnixStream`.
+#[cfg(unix)]
 async fn worker_loop(socket_path: &str, mut rx: mpsc::Receiver<WorkerRequest>) {
     let mut stream: Option<WorkerStream> = None;
     while let Some(request) = rx.recv().await {
@@ -162,8 +173,21 @@ async fn worker_loop(socket_path: &str, mut rx: mpsc::Receiver<WorkerRequest>) {
     }
 }
 
+/// Non-Unix worker: the editor bridge is a Unix domain socket, so there
+/// is nothing to dial. Every request is answered with the honest failure
+/// rather than a connection attempt against a path that cannot be one.
+#[cfg(not(unix))]
+async fn worker_loop(_socket_path: &str, mut rx: mpsc::Receiver<WorkerRequest>) {
+    while let Some(request) = rx.recv().await {
+        let _ = request.reply.send(Err(TransportError::Failed(
+            "Neovim editor socket requires POSIX".to_owned(),
+        )));
+    }
+}
+
 /// Serve one request: lazy connect, write `[0, id, "nvim_exec_lua", params]`,
 /// read and validate `[1, id, error, result]`.
+#[cfg(unix)]
 async fn service_request(
     stream: &mut Option<WorkerStream>,
     socket_path: &str,
@@ -220,6 +244,8 @@ fn request_params(expression: &str, args: &[Value]) -> Result<Vec<rmpv::Value>, 
 }
 
 /// Encode the msgpack-RPC request `[0, id, "nvim_exec_lua", params]`.
+/// Used by the Unix worker; the tests exercise it on every platform.
+#[cfg(any(unix, test))]
 fn encode_request(id: u32, params: &[rmpv::Value]) -> Result<Vec<u8>, TransportError> {
     let request = rmpv::Value::Array(vec![
         rmpv::Value::from(0),
@@ -237,11 +263,13 @@ fn encode_request(id: u32, params: &[rmpv::Value]) -> Result<Vec<u8>, TransportE
 /// outlive one `read_frame`: a single socket read can deliver our response
 /// followed by a notification (or part of the next frame), and discarding
 /// those bytes would desynchronize the stream.
+#[cfg(unix)]
 struct WorkerStream {
     stream: UnixStream,
     buffer: Vec<u8>,
 }
 
+#[cfg(unix)]
 impl WorkerStream {
     fn new(stream: UnixStream) -> Self {
         Self {
@@ -253,6 +281,7 @@ impl WorkerStream {
 
 /// Read one self-delimiting msgpack-RPC frame, preserving any trailing
 /// bytes in the stream's buffer for the next read.
+#[cfg(unix)]
 async fn read_frame(stream: &mut WorkerStream) -> Result<rmpv::Value, TransportError> {
     let mut chunk = [0u8; READ_CHUNK];
     loop {
@@ -294,6 +323,7 @@ async fn read_frame(stream: &mut WorkerStream) -> Result<rmpv::Value, TransportE
 /// notifications `[2, method, params]` Neovim may interleave. A response
 /// carrying the wrong id means the peer desynchronized: the caller drops
 /// the stream so the next request reconnects.
+#[cfg(unix)]
 async fn read_response(stream: &mut WorkerStream) -> Result<rmpv::Value, TransportError> {
     for _ in 0..NOTIFICATIONS_MAX {
         let frame = read_frame(stream).await?;
@@ -314,6 +344,7 @@ async fn read_response(stream: &mut WorkerStream) -> Result<rmpv::Value, Transpo
 }
 
 /// Validate `[1, id, error, result]` and return the result.
+#[cfg(unix)]
 fn decode_response(id: u32, response: rmpv::Value) -> Result<rmpv::Value, TransportError> {
     let malformed = || TransportError::Failed("malformed msgpack-RPC response".to_owned());
     let frame = match response {

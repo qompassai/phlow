@@ -17,11 +17,6 @@ edition = "2024"
 # `--version` is a manual flag because the required string is exactly
 # "Phlow 0.2.0", not clap's "{bin} {version}" rendering.
 clap = { version = "4", features = ["derive"] }
-# signal-hook 0.3: SIGTERM watcher thread (self-pipe based, no async
-# runtime needed) mapping SIGTERM to exit 130 like Python's
-# SIGTERM->KeyboardInterrupt handler. Already in the lockfile (0.3.18)
-# via mio, so no new packages enter the tree.
-signal-hook = "0.3"
 # serde_json: report values; serialization itself goes through
 # phlow_tools::python_json_dumps for byte-parity with Python's json.dumps.
 serde_json = "1"
@@ -31,3 +26,11 @@ phlow-mcp = { version = "0.2.0", path = "../phlow-mcp" }
 phlow-runtime = { version = "0.2.0", path = "../phlow-runtime" }
 phlow-tools = { version = "0.1.0", path = "../phlow-tools" }
 phlow-tui = { version = "0.1.0", path = "../phlow-tui" }
+
+[target.'cfg(unix)'.dependencies]
+# signal-hook 0.3: SIGTERM watcher thread (self-pipe based, no async
+# runtime needed) mapping SIGTERM to exit 130 like Python's
+# SIGTERM->KeyboardInterrupt handler. Already in the lockfile (0.3.18)
+# via mio, so no new packages enter the tree. Unix only: the watcher
+# itself is cfg(unix) (see src/signal.rs); elsewhere install is a no-op.
+signal-hook = "0.3"

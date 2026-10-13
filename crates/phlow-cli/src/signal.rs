@@ -14,7 +14,9 @@
 //! `if hasattr(signal, "SIGTERM")` guard.
 
 /// Exit code for keyboard/signal interruption, matching Python's
-/// `except KeyboardInterrupt: return 130`.
+/// `except KeyboardInterrupt: return 130`. Returned only by the unix
+/// watcher; the tests pin it on every platform.
+#[cfg(any(unix, test))]
 pub const EXIT_INTERRUPTED: i32 = 130;
 
 /// Usage or configuration error, matching Python's `return 2`.
@@ -25,6 +27,8 @@ pub const EXIT_USAGE: i32 = 2;
 pub const EXIT_COMMAND_FAILED: i32 = 1;
 
 /// The stderr line Python prints on interruption, byte for byte.
+/// Printed only by the unix watcher; the tests pin it on every platform.
+#[cfg(any(unix, test))]
 pub const INTERRUPTED_MESSAGE: &str =
     "Phlow interrupted; changes already written are not rolled back.";
 

@@ -6,8 +6,10 @@ license = "Apache-2.0"
 repository = "https://github.com/qompassai/phlow"
 edition = "2024"
 
-[dependencies]
+[target.'cfg(unix)'.dependencies]
 # rustix: the only way to express O_NOFOLLOW and dirfd-relative opens
 # (openat/mkdirat/renameat/fstatat) without unsafe code. The crate's whole
-# containment story depends on these; std cannot express them.
+# containment story depends on these; std cannot express them. Unix only:
+# rustix::fs does not exist on Windows, where read/write return
+# WorkspaceError::Unavailable instead.
 rustix = { version = "1", features = ["fs"] }

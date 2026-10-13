@@ -19,13 +19,18 @@
 
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
+#[cfg(unix)]
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
+#[cfg(unix)]
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(unix)]
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(unix)]
 use rustix::fd::OwnedFd;
+#[cfg(unix)]
 use rustix::fs::{AtFlags, FileType, Mode, OFlags};
 
 use crate::WorkspaceError;
@@ -76,15 +81,19 @@ const _: () = assert!(
 
 /// Permissions for directories the workspace creates while walking to a
 /// write target. Matches the Python implementation (`0o755`).
+#[cfg(unix)]
 const MKDIR_MODE: u32 = 0o755;
 /// Permissions for files the workspace creates. An overwritten file keeps
 /// its existing mode instead.
+#[cfg(unix)]
 const CREATE_MODE: u32 = 0o644;
 /// Prefix for atomic-write temporary files, created with `O_EXCL` beside
 /// the target so the rename is atomic on the same filesystem.
+#[cfg(unix)]
 const TEMP_NAME_PREFIX: &str = ".phlow-write-";
 
 /// Counter that makes atomic-write temporary names unique within a process.
+#[cfg(unix)]
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Result of [`Workspace::read`].
@@ -148,6 +157,7 @@ pub struct Workspace {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RootIdentity {
     /// POSIX: device + inode captured at open.
+    #[cfg_attr(not(unix), allow(dead_code))]
     DevIno { dev: u64, ino: u64 },
     /// Non-POSIX fallback: no stable identity available.
     #[cfg_attr(unix, allow(dead_code))]
@@ -419,6 +429,15 @@ impl Workspace {
                 "secure descriptor-relative file I/O requires POSIX",
             ));
         }
+        self.read_file(relative)
+    }
+
+    /// Descriptor-relative read behind [`Workspace::read`]'s platform
+    /// check. Unix only: `rustix::fs` does not exist on Windows, and the
+    /// no-follow open is the containment guarantee, so there is no
+    /// std-based substitute.
+    #[cfg(unix)]
+    fn read_file(&self, relative: &str) -> Result<ReadResult, WorkspaceError> {
         let (parent, name) = self.open_parent(relative, false)?;
         let fd = rustix::fs::openat(
             &parent,
@@ -453,6 +472,18 @@ impl Workspace {
         })
     }
 
+    /// Non-Unix `read_file`: unreachable in practice — `posix` is
+    /// `cfg!(unix)`, so [`Workspace::read`] has already returned
+    /// [`WorkspaceError::Unavailable`]. It exists so the crate compiles
+    /// where `rustix::fs` does not; the typed error, never a weakened
+    /// read, is the contract on those platforms.
+    #[cfg(not(unix))]
+    fn read_file(&self, _relative: &str) -> Result<ReadResult, WorkspaceError> {
+        Err(WorkspaceError::Unavailable(
+            "secure descriptor-relative file I/O requires POSIX",
+        ))
+    }
+
     /// Write a file through the workspace.
     ///
     /// Requires a trusted workspace. Writes to an exclusive temporary file
@@ -471,6 +502,14 @@ impl Workspace {
                 "secure descriptor-relative file I/O requires POSIX",
             ));
         }
+        self.write_file(relative, data)
+    }
+
+    /// Atomic write behind [`Workspace::write`]'s size and platform
+    /// checks. Unix only, for the same reason as `read_file`: the temp
+    /// file, fsync, and rename are all descriptor-relative.
+    #[cfg(unix)]
+    fn write_file(&self, relative: &str, data: &[u8]) -> Result<WriteResult, WorkspaceError> {
         let (parent, name) = self.open_parent(relative, true)?;
         let temp_name = temp_file_name();
         let outcome = self.write_temp(&parent, &name, &temp_name, data);
@@ -485,6 +524,18 @@ impl Workspace {
             bytes,
             revision,
         })
+    }
+
+    /// Non-Unix `write_file`: unreachable in practice — `posix` is
+    /// `cfg!(unix)`, so [`Workspace::write`] has already returned
+    /// [`WorkspaceError::Unavailable`]. It exists so the crate compiles
+    /// where `rustix::fs` does not; the typed error, never a weakened
+    /// write, is the contract on those platforms.
+    #[cfg(not(unix))]
+    fn write_file(&self, _relative: &str, _data: &[u8]) -> Result<WriteResult, WorkspaceError> {
+        Err(WorkspaceError::Unavailable(
+            "secure descriptor-relative file I/O requires POSIX",
+        ))
     }
 
     /// List regular files under a workspace-relative directory.
@@ -547,6 +598,7 @@ impl Workspace {
         Ok(ListResult { files, truncated })
     }
 
+    #[cfg(unix)]
     fn open_parent(
         &self,
         relative: &str,
@@ -595,6 +647,7 @@ impl Workspace {
 
     /// Write `data` to an exclusive temp file beside `name`, fsync, re-check
     /// freshness, and atomically rename over the target.
+    #[cfg(unix)]
     fn write_temp(
         &self,
         parent: &OwnedFd,
@@ -635,6 +688,7 @@ impl Workspace {
     }
 
     /// Record a successful write in the ledger. Returns the new revision.
+    #[cfg(unix)]
     fn record_write(&self, relative: &str) -> u64 {
         let normalized = Path::new(relative)
             .components()
@@ -718,6 +772,7 @@ fn has_windows_drive(relative: &str) -> bool {
 }
 
 /// Convert a rustix syscall error into a workspace error.
+#[cfg(unix)]
 fn syscall_err(err: rustix::io::Errno) -> WorkspaceError {
     WorkspaceError::Io(err.into())
 }
@@ -741,6 +796,7 @@ fn stat_identity(path: &Path) -> std::io::Result<RootIdentity> {
 }
 
 /// Compare a freshly statted root against the pinned identity.
+#[cfg(unix)]
 fn identity_matches(info: &rustix::fs::Stat, identity: &RootIdentity) -> bool {
     match identity {
         RootIdentity::DevIno { dev, ino } => info.st_dev == *dev && info.st_ino == *ino,
@@ -749,6 +805,7 @@ fn identity_matches(info: &rustix::fs::Stat, identity: &RootIdentity) -> bool {
 }
 
 /// Build a unique temporary file name for atomic writes.
+#[cfg(unix)]
 fn temp_file_name() -> String {
     let counter = TEMP_COUNTER.fetch_add(1, Ordering::SeqCst);
     let nanos = SystemTime::now()
