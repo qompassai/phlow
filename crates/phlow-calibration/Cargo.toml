@@ -1,0 +1,37 @@
+[package]
+name = "phlow-calibration"
+version = "0.1.0"
+edition = "2024"
+description = "Confidence-calibration harness for phlow's decision models (design 2026-10-04): collects calibration tuples from gauntlet decision traces, the feedback store, and the consumed-approvals store; computes Brier scores, ECE, and per-question-type calibration curves; renders threshold reports and exports weighted fine-tuning datasets. Measurement, collection, and export only — training is an external ML workload, never this crate."
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "phlow_calibration"
+path = "src/lib.rs"
+
+[dependencies]
+# phlow-gauntlet: the DecisionTrace record format, its validation, and
+# the task-ID held-out split (trace.rs). The collector parses the JSONL
+# the gauntlet recorder writes and reuses the recorder's own validation
+# instead of re-implementing the contract.
+phlow-gauntlet = { version = "0.1.0", path = "../phlow-gauntlet" }
+# phlow-self-improve: the feedback store (FeedbackStore/FeedbackEntry).
+# Rows are read through the store's own API; this crate never opens the
+# SQLite file directly, and never creates it when it is absent.
+phlow-self-improve = { version = "0.1.0", path = "../phlow-self-improve" }
+# phlow-system1: the Question/Answer protocol types the tuples carry.
+# Answers are decoded through AnswerBatch's real wire boundary, and
+# distributions are checked by RichAnswer::validate.
+phlow-system1 = { version = "0.1.0", path = "../phlow-system1" }
+# serde_json: the JSON boundary for trace JSONL, the consumed-approvals
+# store, and dataset export. No derive-based validation.
+serde_json = "1"
+
+[dev-dependencies]
+# Integration tests exercise the real boundaries: they build labeled
+# fixtures with the trace split function, write real feedback stores,
+# and decode protocol types directly.
+phlow-gauntlet = { version = "0.1.0", path = "../phlow-gauntlet" }
+phlow-self-improve = { version = "0.1.0", path = "../phlow-self-improve" }
+phlow-system1 = { version = "0.1.0", path = "../phlow-system1" }
+serde_json = "1"

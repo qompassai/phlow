@@ -1590,6 +1590,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "phlow-calibration"
+version = "0.1.0"
+dependencies = [
+ "phlow-gauntlet",
+ "phlow-self-improve",
+ "phlow-system1",
+ "serde_json",
+]
+
+[[package]]
 name = "phlow-canary"
 version = "0.1.0"
 dependencies = [
