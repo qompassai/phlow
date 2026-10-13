@@ -3,7 +3,7 @@ name = "phlow-json"
 version = "0.1.0"
 edition = "2024"
 description = "Checked JSON narrowing at untrusted boundaries for the phlow agent runtime"
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 
 [lib]
 name = "phlow_json"

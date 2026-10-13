@@ -3,7 +3,7 @@ name = "phlow-experiment"
 version = "0.1.0"
 edition = "2024"
 description = "Staged supervised-self-improvement experiment scaffolding for phlow: control-plane types, lifecycle and promotion gates, evaluator skeletons, manifest validators, and evaluation records. EXPERIMENTAL — no behavior enabled."
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 
 [lib]
 name = "phlow_experiment"

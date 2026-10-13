@@ -3,7 +3,7 @@ name = "phlow-canary"
 version = "0.1.0"
 edition = "2024"
 description = "Behavioral canary battery for phlow: pre-deployment screening of externally sourced models for injection susceptibility, backdoor trigger candidates, refusal inconsistency and calibration anomalies. Fail-closed verdicts cached against the exact model artifact hash; payloads live outside the repo in an access-controlled store."
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 
 [lib]
 name = "phlow_canary"

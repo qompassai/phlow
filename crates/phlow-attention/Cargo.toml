@@ -3,7 +3,7 @@ name = "phlow-attention"
 version = "0.1.0"
 edition = "2024"
 description = "Grounded joint-attention coordination for phlow agents: shared workspace saliency snapshots, focus advertisement, alignment and coordination decisions (MATE analog, arXiv:2610.06025)"
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 
 [lib]
 name = "phlow_attention"

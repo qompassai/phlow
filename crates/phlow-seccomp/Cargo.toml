@@ -3,7 +3,7 @@ name = "phlow-seccomp"
 version = "0.1.0"
 edition = "2024"
 description = "Linux seccomp egress filter for phlow check children: socket(AF_INET/AF_INET6) and io_uring_setup fail with EPERM. The crate's single unsafe block is the pre_exec registration."
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 
 [lib]
 name = "phlow_seccomp"

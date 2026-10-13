@@ -3,7 +3,7 @@ name = "phlow-autoresearch"
 version = "0.1.0"
 edition = "2024"
 description = "Bounded autoresearch loop orchestration for phlow: typed change-sets proposed against an allowlisted surface, evaluated on trainlab's frozen dev split, kept or discarded by metric, and recorded in a hash-chained experiment ledger. EXPERIMENTAL — the loop proposes and measures only; promotion stays behind phlow-experiment's human-signed gate."
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 
 [lib]
 name = "phlow_autoresearch"

@@ -3,7 +3,7 @@ name = "phlow-system1"
 version = "0.1.0"
 edition = "2024"
 description = "Fast System 1 decision layer for phlow: a bounded client for the Jev system-one wire protocol (as served by laya-serve), a scripted mock backend, and a confidence-gated approval risk fast path that can only escalate to the existing human path."
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 
 [lib]
 name = "phlow_system1"

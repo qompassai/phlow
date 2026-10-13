@@ -4,6 +4,7 @@ Local, bounded planner → coder → reviewer workflows, with real file tools an
 host-enforced verification gate. Ollama is the default backend. CLI, terminal UI
 and the MCP server share **one safe runtime**; none uses the old unrestricted shell
 or auto-loaded plugin path.
+<a href="./LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License: Apache 2.0"></a>
 
 Flow can work alone or bidirectionally with [Rose](https://github.com/qompassai/rose.nvim):
 Rose calls Flow over MCP stdio; Flow calls Rose's native editor tools over a private
@@ -277,4 +278,7 @@ edits or exhaust its budget; inspect the resulting report and diff.
 
 The Nix expression is retained but was not built in this environment.
 
-MIT — Amor Fati Labs.
+
+## License
+
+This project is licensed under the [Apache License, Version 2.0](./LICENSE).

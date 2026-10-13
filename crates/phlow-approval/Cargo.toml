@@ -3,7 +3,7 @@ name = "phlow-approval"
 version = "0.1.0"
 edition = "2024"
 description = "Fail-closed approval and policy subsystem for phlow: versioned policy parsing, scope decisions, human-bound approval queue, permission deltas, and an append-only event ledger. In-memory only; no persistence."
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 
 [lib]
 name = "phlow_approval"

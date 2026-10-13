@@ -3,7 +3,7 @@ name = "phlow-calibration"
 version = "0.1.0"
 edition = "2024"
 description = "Confidence-calibration harness for phlow's decision models (design 2026-10-04): collects calibration tuples from gauntlet decision traces, the feedback store, and the consumed-approvals store; computes Brier scores, ECE, and per-question-type calibration curves; renders threshold reports and exports weighted fine-tuning datasets. Measurement, collection, and export only — training is an external ML workload, never this crate."
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 
 [lib]
 name = "phlow_calibration"
