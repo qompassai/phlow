@@ -25,8 +25,11 @@
 //!   workflow revisions (phlow-council), check-runner revisions
 //!   (phlow-checks), GPU residency snapshots (phlow-trainer-mojo:
 //!   `GpuSnapshot`, an nvidia-smi memory observation carried
-//!   through dispatch results) — none is a model blob cache,
-//!   resume, or revision pin.
+//!   through dispatch results), attention snapshot frames
+//!   (phlow-attention: the common-ground frame two agents' focus
+//!   is measured against; phlow-mcp and phlow-config carry the
+//!   same frame's tool and config vocabulary) — none is a model
+//!   blob cache, resume, or revision pin.
 //! - Model bytes never enter phlow's address space: models are served
 //!   by Ollama over HTTP (`phlow-llm`). The byte caps that DO exist
 //!   guard other seams: `RESPONSE_BYTES_MAX` (2 MiB, phlow-llm
@@ -331,9 +334,12 @@ fn case_no_snapshot_revision_cache() -> Result<CaseReport, DriverError> {
     // manifests, council workflow revisions, check-runner revisions,
     // approval-record snapshots (owned Record copies, not model data),
     // GPU residency snapshots (trainer-mojo's GpuSnapshot, an
-    // nvidia-smi memory observation — not model data) — plus the
-    // gauntlet harness's own probe vocabulary.
-    const CLASSIFIED_CRATES: [&str; 10] = [
+    // nvidia-smi memory observation — not model data), attention
+    // snapshot frames (the phlow-attention common-ground frame
+    // for joint-attention alignment, with its phlow-mcp tool
+    // surface and phlow-config vocabulary — not model data) —
+    // plus the gauntlet harness's own probe vocabulary.
+    const CLASSIFIED_CRATES: [&str; 13] = [
         "phlow-workspace",
         "phlow-editor",
         "phlow-runtime",
@@ -344,6 +350,9 @@ fn case_no_snapshot_revision_cache() -> Result<CaseReport, DriverError> {
         "phlow-gauntlet",
         "phlow-approval",
         "phlow-trainer-mojo",
+        "phlow-attention",
+        "phlow-config",
+        "phlow-mcp",
     ];
     let root = workspace_root()?;
     let hits = scan_sources(&root, &["snapshot", "blob", "revision"])?;
@@ -366,7 +375,7 @@ fn case_no_snapshot_revision_cache() -> Result<CaseReport, DriverError> {
     }
     evidence.push(format!(
         "all {} hits classified into unrelated senses (workspace/editor/run/context/\
-         experiment snapshots, approval-record snapshots, GPU residency snapshots, report/manifest/workflow \
+         experiment snapshots, approval-record snapshots, GPU residency snapshots, attention snapshot frames, report/manifest/workflow \
          revisions, harness vocabulary): no blob cache, no resume logic, no model \
          revision pinning",
         hits.len()
@@ -465,7 +474,7 @@ struct TaskFailure {
 
 fn run_inner(_ctx: &Ctx) -> Result<Vec<String>, TaskFailure> {
     let mut evidence = vec![
-        "recon: the model-manager seam is absent — exact-token scans find no download client (sole `downloads` hit is prompt.rs's safe-runtime policy denying downloads), no huggingface client, the sole `hf` product hit is the autoresearch proposer's planner model name string (classified), and every snapshot/blob/revision hit is an unrelated sense (workspace/editor/run/context/experiment snapshots, report/manifest/workflow revisions, GPU residency snapshots)".to_string(),
+        "recon: the model-manager seam is absent — exact-token scans find no download client (sole `downloads` hit is prompt.rs's safe-runtime policy denying downloads), no huggingface client, the sole `hf` product hit is the autoresearch proposer's planner model name string (classified), and every snapshot/blob/revision hit is an unrelated sense (workspace/editor/run/context/experiment snapshots, report/manifest/workflow revisions, GPU residency snapshots, attention snapshot frames)".to_string(),
         "recon: model bytes never enter phlow's address space — models are served by Ollama over HTTP (phlow-llm); the existing byte caps guard other seams (RESPONSE_BYTES_MAX = 2 MiB on Ollama response bodies; FILE_BYTES_MAX = 256 KiB on workspace file reads)".to_string(),
     ];
     for case in CASES {
@@ -492,7 +501,7 @@ fn run_inner(_ctx: &Ctx) -> Result<Vec<String>, TaskFailure> {
     );
     Err(TaskFailure {
         where_: "seam".to_string(),
-        how: "seam absent, documented with file evidence: no model download/cache manager exists in any phlow crate — exact-token scans over crates/*/src/**/*.rs find `download` 0 hits, `downloads` 1 hit (crates/phlow-runtime/src/prompt.rs: the safe-runtime policy denying downloads), `huggingface` 0 hits, `hf` 1 product hit (the autoresearch proposer's HF-prefixed planner model name, classified — a served name, not a client), and every `snapshot`/`blob`/`revision` hit classified into unrelated senses (workspace/editor/run/context/experiment snapshots; report/manifest/workflow revisions; GPU residency snapshots). Model bytes never enter phlow's address space: Ollama serves models over HTTP and owns the pull. The design's pass criteria (observed-byte cap independent of advertised sizes, hash-verified resume, incomplete-never-loadable, pinned-exempt eviction) need a downloader, and there is none. Whether phlow should gain an HF model manager (download with observed-byte caps, hash-verified resume, blob cache with explicit eviction, incomplete markers) is a product decision for Matt, not a gauntlet-authorized change.".to_string(),
+        how: "seam absent, documented with file evidence: no model download/cache manager exists in any phlow crate — exact-token scans over crates/*/src/**/*.rs find `download` 0 hits, `downloads` 1 hit (crates/phlow-runtime/src/prompt.rs: the safe-runtime policy denying downloads), `huggingface` 0 hits, `hf` 1 product hit (the autoresearch proposer's HF-prefixed planner model name, classified — a served name, not a client), and every `snapshot`/`blob`/`revision` hit classified into unrelated senses (workspace/editor/run/context/experiment snapshots; report/manifest/workflow revisions; GPU residency snapshots; attention snapshot frames). Model bytes never enter phlow's address space: Ollama serves models over HTTP and owns the pull. The design's pass criteria (observed-byte cap independent of advertised sizes, hash-verified resume, incomplete-never-loadable, pinned-exempt eviction) need a downloader, and there is none. Whether phlow should gain an HF model manager (download with observed-byte caps, hash-verified resume, blob cache with explicit eviction, incomplete markers) is a product decision for Matt, not a gauntlet-authorized change.".to_string(),
         evidence,
     })
 }
