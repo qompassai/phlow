@@ -25,6 +25,15 @@
 #   * Numerics: logits are consumed as f32 exactly as the reference
 #     backend's `log_softmax(pred.float(), dim=-1)` sees them; the row
 #     reduction is max-shifted (log-sum-exp) so no intermediate overflows.
+#     Logprob precision: logits/targets/outputs, host and device buffers,
+#     the row max, and every per-element exp stay f32; the exp sums
+#     (per-thread running sums and the shared-memory tree combine)
+#     accumulate in f64, and log(sum), the max shift, and the target
+#     subtraction are f64, rounded to f32 once at the output store. The
+#     expected parity class against the crate's f64 reference
+#     (`reference::logprob_token_logps`) is that final f32 rounding, i.e.
+#     at most 1 ulp of the output; vs torch's f32 `log_softmax`, the diff
+#     is torch's own f32 rounding (~1 ulp at |logp| ~ 16-32: 1.9e-6).
 #     Rewards/advantages are f32 on device; trainlab's reference values
 #     are f64, so advantage agreement is expected at f32 precision
 #     (~1e-7 relative), and the check harness reports the actual diff.
@@ -58,6 +67,7 @@ comptime STATUS_ERR_NO_DEVICE = Int32(2)
 comptime STATUS_ERR_DEVICE = Int32(3)
 
 comptime f32_dtype = DType.float32
+comptime f64_dtype = DType.float64
 comptime i32_dtype = DType.int32
 # Most-negative finite f32, as a literal: logits are bounded far above it.
 comptime F32_LOWEST = Float32(-3.4028234663852886e38)
@@ -76,7 +86,9 @@ def logprob_rows_kernel(
     (max, scaled sum) pair over its strided slice, rescaling the sum
     whenever the max moves; the block then tree-reduces the pairs in
     shared memory, combining with the same rescaling. One read of the
-    row, no intermediate overflows, f32 throughout.
+    row, no intermediate overflows. Max tracking and every exp are f32;
+    the running sums, their tree combine, and the final log /
+    subtraction are f64, rounded to f32 once at the store.
     """
     var row = Int(block_idx.x)
     var tid = Int(thread_idx.x)
@@ -84,22 +96,23 @@ def logprob_rows_kernel(
     var base = row * width
 
     var local_max = F32_LOWEST
-    var local_sum = Float32(0)
+    var local_sum = Float64(0)
     var col = tid
     while col < width:
         var value = logits[unsafe_offset=base + col]
         if value > local_max:
-            local_sum = local_sum * exp(local_max - value) + Float32(1)
+            var rescale = exp(local_max - value).cast[f64_dtype]()
+            local_sum = local_sum * rescale + Float64(1)
             local_max = value
         else:
-            local_sum += exp(value - local_max)
+            local_sum += exp(value - local_max).cast[f64_dtype]()
         col += THREADS_PER_BLOCK
 
     var shared_max = stack_allocation[
         THREADS_PER_BLOCK, Float32, address_space=AddressSpace.SHARED
     ]()
     var shared_sum = stack_allocation[
-        THREADS_PER_BLOCK, Float32, address_space=AddressSpace.SHARED
+        THREADS_PER_BLOCK, Float64, address_space=AddressSpace.SHARED
     ]()
     shared_max[unsafe_offset=tid] = local_max
     shared_sum[unsafe_offset=tid] = local_sum
@@ -111,22 +124,26 @@ def logprob_rows_kernel(
             var own_max = shared_max[unsafe_offset=tid]
             if other_max > own_max:
                 shared_sum[unsafe_offset=tid] = (
-                    shared_sum[unsafe_offset=tid] * exp(own_max - other_max)
+                    shared_sum[unsafe_offset=tid]
+                    * exp(own_max - other_max).cast[f64_dtype]()
                     + shared_sum[unsafe_offset=tid + stride]
                 )
                 shared_max[unsafe_offset=tid] = other_max
             else:
                 shared_sum[unsafe_offset=tid] += shared_sum[
                     unsafe_offset=tid + stride
-                ] * exp(other_max - own_max)
+                ] * exp(other_max - own_max).cast[f64_dtype]()
         barrier()
         stride //= 2
 
     if tid == 0:
         var target_logit = logits[unsafe_offset=base + Int(targets[unsafe_offset=row])]
-        out_logps[unsafe_offset=row] = target_logit - (
-            shared_max[unsafe_offset=0] + log(shared_sum[unsafe_offset=0])
+        var lse = shared_max[unsafe_offset=0].cast[f64_dtype]() + log(
+            shared_sum[unsafe_offset=0]
         )
+        out_logps[unsafe_offset=row] = (
+            target_logit.cast[f64_dtype]() - lse
+        ).cast[f32_dtype]()
 
 
 def rloo_advantages_kernel(
