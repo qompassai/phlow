@@ -11,10 +11,10 @@
 use std::fs;
 use std::path::PathBuf;
 
-use phlow_trainer_mojo::backend::{self, BackendConfig, LogitBlock, ManifestEntry};
+use randori::backend::{self, BackendConfig, LogitBlock, ManifestEntry};
 use std::sync::Mutex;
 
-use phlow_trainer_mojo::error::ScoringError;
+use randori::error::ScoringError;
 
 /// GPU work in this process is serialized: parallel test threads
 /// launching kernels through separate device contexts in one
@@ -27,8 +27,8 @@ fn gpu_guard() -> std::sync::MutexGuard<'static, ()> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
-use phlow_trainer_mojo::reference::{self, SampleParams};
 use phlow_trainlab::{GroupExportRecord, GroupsExport};
+use randori::reference::{self, SampleParams};
 
 const VOCAB: usize = 8;
 const CONFIG_SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -73,11 +73,8 @@ fn fixture() -> (Vec<ManifestEntry>, Vec<LogitBlock>) {
 /// Set up the export + trainlab receipt in a fresh temp dir. Rewards
 /// [1, 0] give exact LOO advantages [1, -1] and spread 1.
 fn setup(run_id: &str) -> (PathBuf, PathBuf, PathBuf) {
-    let dir = std::env::temp_dir().join(format!(
-        "phlow-trainer-mojo-backend-{}-{}",
-        std::process::id(),
-        run_id
-    ));
+    let dir =
+        std::env::temp_dir().join(format!("randori-backend-{}-{}", std::process::id(), run_id));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("mkdir");
     let export = GroupsExport {

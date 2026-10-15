@@ -491,7 +491,7 @@ fn case_spawn_paths_go_through_limiter() -> Result<CaseReport, DriverError> {
                     evidence,
                 ));
             }
-        } else if site.contains("phlow-trainer-mojo/src/gpu_policy.rs") {
+        } else if site.contains("randori/src/gpu_policy.rs") {
             // Trainer-mojo spawn: the GPU residency probe's single
             // `nvidia-smi` child. Position relative to the file's
             // `#[cfg(test)]` boundary decides test-only vs production

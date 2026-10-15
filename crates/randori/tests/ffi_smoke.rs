@@ -10,7 +10,7 @@
 
 use std::sync::Mutex;
 
-use phlow_trainer_mojo::error::ScoringError;
+use randori::error::ScoringError;
 
 /// GPU work in this process is serialized: parallel test threads
 /// launching kernels through separate device contexts in one
@@ -23,8 +23,8 @@ fn gpu_guard() -> std::sync::MutexGuard<'static, ()> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
-use phlow_trainer_mojo::ffi;
-use phlow_trainer_mojo::reference::{self, SampleParams};
+use randori::ffi;
+use randori::reference::{self, SampleParams};
 
 #[test]
 fn v_version_is_two() {
@@ -110,7 +110,7 @@ fn v_sample_topk_candidate_set() {
     let logits: Vec<f32> = (0..16).map(|i| i as f32 * 0.5).collect();
     let batch = ffi::sample_tokens(&logits, 1, 16, &sample_params(1.0, 4, 1.0)).expect("sample");
     assert_eq!(batch.candidate_counts[0], 4);
-    let max = phlow_trainer_mojo::SAMPLE_CANDIDATES_MAX as usize;
+    let max = randori::SAMPLE_CANDIDATES_MAX as usize;
     assert_eq!(&batch.cand_idx[0..4], &[15, 14, 13, 12]);
     assert!(batch.cand_val[0] > batch.cand_val[3]);
     assert!((12..=15).contains(&batch.tokens[0]));
@@ -146,7 +146,7 @@ fn v_sample_matches_reference_batch() {
     ] {
         let batch = ffi::sample_tokens(&logits, 4, 257, &params).expect("sample");
         let want = reference::sample_batch(&logits, 4, 257, &params);
-        let max = phlow_trainer_mojo::SAMPLE_CANDIDATES_MAX as usize;
+        let max = randori::SAMPLE_CANDIDATES_MAX as usize;
         for (row, outcome) in want.iter().enumerate() {
             assert_eq!(
                 batch.tokens[row], outcome.token,
@@ -170,7 +170,7 @@ fn v_sample_matches_reference_batch() {
 #[test]
 fn a_rejects_oversized_rows() {
     let _gpu = gpu_guard();
-    let rows = phlow_trainer_mojo::TOKENS_PER_LAUNCH_MAX as usize + 1;
+    let rows = randori::TOKENS_PER_LAUNCH_MAX as usize + 1;
     let logits = vec![0.0_f32; rows];
     let targets = vec![0_i32; rows];
     assert!(matches!(

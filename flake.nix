@@ -102,16 +102,16 @@
 
         commonArgs = {
           src = crateSrc;
-          # phlow-trainer-mojo is excluded from the nix builds: its
+          # randori is excluded from the nix builds: its
           # build.rs compiles the Mojo kernel with the pixi-pinned
-          # MAX toolchain (crates/phlow-trainer-mojo/build.rs) and
+          # MAX toolchain (crates/randori/build.rs) and
           # panics without an installed pixi env, which the nix
           # sandbox does not provision. The crate stays in the cargo
           # workspace and builds on any host after 
           # in its directory (the documented developer path); the
           # full fix is a fixed-output derivation for the pixi env.
           # Nothing else in the workspace depends on the crate.
-          cargoExtraArgs = "--workspace --exclude phlow-trainer-mojo";
+          cargoExtraArgs = "--workspace --exclude randori";
           # The sandbox cannot run the integration tests: no /bin/sh,
           # no nvim, no diver checkout. Tests run on the host via cargo;
           # `nix build` compiles only.

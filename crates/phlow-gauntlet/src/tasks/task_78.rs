@@ -23,7 +23,7 @@
 //!   revisions (phlow-runtime), context snapshots (phlow-agent),
 //!   experiment snapshots and manifests (phlow-experiment), council
 //!   workflow revisions (phlow-council), check-runner revisions
-//!   (phlow-checks), GPU residency snapshots (phlow-trainer-mojo:
+//!   (phlow-checks), GPU residency snapshots (randori:
 //!   `GpuSnapshot`, an nvidia-smi memory observation carried
 //!   through dispatch results), attention snapshot frames
 //!   (phlow-attention: the common-ground frame two agents' focus
@@ -349,7 +349,7 @@ fn case_no_snapshot_revision_cache() -> Result<CaseReport, DriverError> {
         "phlow-checks",
         "phlow-gauntlet",
         "phlow-approval",
-        "phlow-trainer-mojo",
+        "randori",
         "phlow-attention",
         "phlow-config",
         "phlow-mcp",

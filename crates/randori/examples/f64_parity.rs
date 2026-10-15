@@ -18,7 +18,7 @@
 use std::fs;
 use std::process::ExitCode;
 
-use phlow_trainer_mojo::{ffi, reference};
+use randori::{ffi, reference};
 
 /// Input files larger than this are refused before reading (1 GiB).
 const FILE_BYTES_MAX: u64 = 1 << 30;

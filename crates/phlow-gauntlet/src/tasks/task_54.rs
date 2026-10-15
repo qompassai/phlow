@@ -179,7 +179,7 @@ fn seam_name_scan(
             let path = entry.path();
             if path.is_dir() {
                 // Vendored environment trees are not product modules:
-                // phlow-trainer-mojo carries a pixi environment (.pixi
+                // randori carries a pixi environment (.pixi
                 // — the MAX/Python stack, gigabytes of third-party
                 // files whose names are not phlow's vocabulary). Skip
                 // by directory name, the same shape as phlow-workspace's

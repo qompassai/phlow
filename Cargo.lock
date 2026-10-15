@@ -1822,16 +1822,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "phlow-trainer-mojo"
-version = "0.1.0"
-dependencies = [
- "phlow-trainlab",
- "serde",
- "serde_json",
- "sha2 0.10.9",
-]
-
-[[package]]
 name = "phlow-trainlab"
 version = "0.1.0"
 dependencies = [
@@ -2032,6 +2022,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "caa0f4137e1c0a72f4c651489402276c8e8e1cf081f3b0ba156d2cbeef09e86a"
 dependencies = [
  "rand_core 0.10.1",
+]
+
+[[package]]
+name = "randori"
+version = "0.1.0"
+dependencies = [
+ "phlow-trainlab",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]

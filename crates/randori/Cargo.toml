@@ -1,5 +1,5 @@
 [package]
-name = "phlow-trainer-mojo"
+name = "randori"
 version = "0.1.0"
 edition = "2024"
 description = "Mojo scoring + sampling backend for phlow-trainlab: GPU logprob-reduction, RLOO advantage, and composable sampling kernels behind the shared trainer contract, callable from Rust over a C ABI. Not a trainer — the PyTorch sidecar stays the logits producer and trainer of record; this backend accelerates scoring/sampling and records scoring receipts."
@@ -7,11 +7,11 @@ license = "Apache-2.0"
 publish = false
 
 [lib]
-name = "phlow_trainer_mojo"
+name = "randori"
 path = "src/lib.rs"
 
 [[bin]]
-name = "phlow-trainer-mojo"
+name = "randori"
 path = "src/main.rs"
 
 [features]

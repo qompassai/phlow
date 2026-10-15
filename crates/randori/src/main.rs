@@ -35,10 +35,10 @@ use std::fs;
 use std::process::ExitCode;
 
 #[cfg(feature = "trainlab-contract")]
-use phlow_trainer_mojo::backend::{self, BackendConfig, LogitBlock, ManifestEntry};
-use phlow_trainer_mojo::error::ScoringError;
-use phlow_trainer_mojo::ffi;
-use phlow_trainer_mojo::reference::SampleParams;
+use randori::backend::{self, BackendConfig, LogitBlock, ManifestEntry};
+use randori::error::ScoringError;
+use randori::ffi;
+use randori::reference::SampleParams;
 
 /// Input files larger than this are refused before reading (1 GiB).
 const FILE_BYTES_MAX: u64 = 1 << 30;
@@ -423,7 +423,7 @@ fn mode_sample(args: &[String]) -> Result<bool, ScoringError> {
         })
     );
     if let Ok(path) = flag_value(args, "--dump-candidates") {
-        let max = phlow_trainer_mojo::SAMPLE_CANDIDATES_MAX as usize;
+        let max = randori::SAMPLE_CANDIDATES_MAX as usize;
         let rows_json: Vec<serde_json::Value> = (0..rows)
             .map(|row| {
                 let count = batch.candidate_counts[row].max(0) as usize;
@@ -454,7 +454,7 @@ fn mode_sample_bench(args: &[String]) -> Result<bool, ScoringError> {
     let (rows, width, logits) = read_batch_logits(&flag_value(args, "--batch")?)?;
     let repeats = flag_parse(args, "--repeats", 50_usize);
     let params = sample_params_from(args);
-    if let Ok(snapshot) = phlow_trainer_mojo::gpu_policy::query_gpu() {
+    if let Ok(snapshot) = randori::gpu_policy::query_gpu() {
         println!(
             "gpu: {} MiB free / {} MiB total at bench start",
             snapshot.free_mib, snapshot.total_mib

@@ -69,7 +69,7 @@ fn main() {
     println!("cargo:rerun-if-changed={}", file!());
     assert!(
         env_lib.is_dir(),
-        "pixi env not installed for phlow-trainer-mojo: run `pixi install` in {} first",
+        "pixi env not installed for randori: run `pixi install` in {} first",
         manifest_dir.display()
     );
     let lib_path = out_dir.join("libphlow_scoring.so");

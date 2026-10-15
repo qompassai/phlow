@@ -126,7 +126,7 @@ impl ScoringReceipt {
             detail: error.to_string(),
         })?;
         let temp = parent.join(format!(
-            ".phlow-trainer-mojo-receipt-{}-{}.tmp",
+            ".randori-receipt-{}-{}.tmp",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -228,10 +228,8 @@ mod tests {
 
     #[test]
     fn receipt_writes_and_verifies() {
-        let path = std::env::temp_dir().join(format!(
-            "phlow-trainer-mojo-receipt-test-{}.json",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("randori-receipt-test-{}.json", std::process::id()));
         let _ = fs::remove_file(&path);
         receipt().write_new(&path).expect("write");
         assert!(path.exists());
@@ -241,7 +239,7 @@ mod tests {
     #[test]
     fn receipt_refuses_overwrite() {
         let path = std::env::temp_dir().join(format!(
-            "phlow-trainer-mojo-receipt-test-{}-twice.json",
+            "randori-receipt-test-{}-twice.json",
             std::process::id()
         ));
         let _ = fs::remove_file(&path);

@@ -1,5 +1,5 @@
 # ===----------------------------------------------------------------------=== #
-# phlow-trainer-mojo scoring kernels (Mojo 1.0 / MAX 26.5, pixi-pinned).
+# randori scoring kernels (Mojo 1.0 / MAX 26.5, pixi-pinned).
 #
 # Purpose: the parity-critical scoring math of the phlow-trainlab trainer
 # contract, as GPU kernels behind a small C ABI:

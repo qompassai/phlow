@@ -1,5 +1,5 @@
 # ===----------------------------------------------------------------------=== #
-# phlow-trainer-mojo Phase A probe: prove a Mojo kernel compiles and runs
+# randori Phase A probe: prove a Mojo kernel compiles and runs
 # on primo's RTX 4070 through the pixi-pinned MAX 26.5 / Mojo 1.0 toolchain.
 #
 # Contract: adds two f32 vectors element-wise on the device and verifies

@@ -3,7 +3,7 @@
 #
 # Builds the release binary and installs a self-contained runtime:
 #
-#   <prefix>/bin/phlow-trainer-mojo     (the CLI / production entry)
+#   <prefix>/bin/randori     (the CLI / production entry)
 #   <prefix>/lib/libphlow_scoring.so    (the Mojo kernel library)
 #   <prefix>/lib/libKGENCompilerRTShared.so, libAsyncRT*.so,
 #   libMSupportGlobals.so, libstdc++.so.6, libgcc_s.so.1
@@ -26,15 +26,15 @@ WORKSPACE_DIR="$(cd "$CRATE_DIR/../.." && pwd)"
 echo "install-runtime: building release (workspace $WORKSPACE_DIR)"
 # Run cargo from the workspace root so rustup honors the workspace's
 # pinned toolchain (rust-toolchain.toml), not the caller's default.
-(cd "$WORKSPACE_DIR" && cargo build --release -p phlow-trainer-mojo)
+(cd "$WORKSPACE_DIR" && cargo build --release -p randori)
 
 # The build-script output dir appears under two layouts
 # (build/<pkg>-<hash>/out and build/<pkg>/<hash>/out); take the
 # newest one that actually holds the kernel library.
 OUT_DIR=""
 for candidate in $(ls -dt \
-    "$WORKSPACE_DIR"/target/release/build/phlow-trainer-mojo-*/out \
-    "$WORKSPACE_DIR"/target/release/build/phlow-trainer-mojo/*/out 2>/dev/null); do
+    "$WORKSPACE_DIR"/target/release/build/randori-*/out \
+    "$WORKSPACE_DIR"/target/release/build/randori/*/out 2>/dev/null); do
     if [[ -f "$candidate/libphlow_scoring.so" ]]; then
         OUT_DIR="$candidate"
         break
@@ -46,7 +46,7 @@ if [[ -z "$OUT_DIR" ]]; then
 fi
 
 mkdir -p "$PREFIX/bin" "$PREFIX/lib"
-install -m 0755 "$WORKSPACE_DIR/target/release/phlow-trainer-mojo" "$PREFIX/bin/phlow-trainer-mojo"
+install -m 0755 "$WORKSPACE_DIR/target/release/randori" "$PREFIX/bin/randori"
 for lib in libphlow_scoring.so libKGENCompilerRTShared.so libAsyncRTMojoBindings.so \
            libMSupportGlobals.so libAsyncRTRuntimeGlobals.so libstdc++.so.6 libgcc_s.so.1; do
     if [[ ! -f "$OUT_DIR/$lib" ]]; then
@@ -57,4 +57,4 @@ for lib in libphlow_scoring.so libKGENCompilerRTShared.so libAsyncRTMojoBindings
 done
 
 echo "install-runtime: installed to $PREFIX"
-env -i "$PREFIX/bin/phlow-trainer-mojo" version
+env -i "$PREFIX/bin/randori" version
