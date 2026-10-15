@@ -34,6 +34,8 @@ pub const KIND: TaskKind = TaskKind::Rust;
 pub const CASES: [&str; 2] = ["three_byte_stall_reaped", "hundred_stallers_reaped"];
 /// Fixture credential for the legitimate client.
 const TOKEN: &str = "fixture-token-164";
+/// Bound for the post-reap census to settle back to baseline.
+const CENSUS_BOUND: Duration = Duration::from_secs(4);
 /// How long the tests wait for the reaper beyond the read deadline.
 const REAP_SLACK: Duration = Duration::from_millis(600);
 /// Bound for reaping all stalled peers in A2.
@@ -73,9 +75,7 @@ fn case_three_byte_stall_reaped() -> Result<CaseReport, TaskDriverError> {
     // releases its side before the census.
     std::thread::sleep(FRAME_READ_TIMEOUT + REAP_SLACK);
     drop(_holder);
-    std::thread::sleep(Duration::from_millis(100));
-    let fds_after = fd_count();
-    let threads_after = threads_named("phlow-daemon-");
+    let (fds_after, threads_after) = wait_for_census(fds_before, threads_before);
     let slots = fixture.slots();
     if slots != 0 {
         failures.push(format!(
@@ -176,6 +176,26 @@ fn wait_for_reap(fixture: &DaemonFixture, failures: &mut Vec<String>) -> (Durati
     (reap_elapsed, slots)
 }
 
+/// Poll the fd/thread census until it returns to the pre-stall
+/// baseline, bounded by [`CENSUS_BOUND`], and return the final counts.
+/// Handler threads exit asynchronously once the read deadline fires,
+/// so an instantaneous census can catch a handler that is already
+/// reaped but not yet terminated; a census that never settles still
+/// fails on its final counts, exactly as the fixed-sleep census did.
+fn wait_for_census(fds_before: usize, threads_before: usize) -> (usize, usize) {
+    let start = Instant::now();
+    loop {
+        let fds_after = fd_count();
+        let threads_after = threads_named("phlow-daemon-");
+        if (fds_after == fds_before && threads_after == threads_before)
+            || start.elapsed() >= CENSUS_BOUND
+        {
+            return (fds_after, threads_after);
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 /// A legitimate client must still be accepted after the storm.
 fn check_legitimate(
     fixture: &DaemonFixture,
@@ -206,13 +226,13 @@ fn case_hundred_stallers_reaped() -> Result<CaseReport, TaskDriverError> {
     let mut failures = Vec::new();
 
     let fds_before = fd_count();
+    let threads_before = threads_named("phlow-daemon-");
     let holders = stall_peers(&fixture, 100, &mut failures);
     let (reap_elapsed, slots) = wait_for_reap(&fixture, &mut failures);
     // The test held its side of all 100 sockets; dropping them must
     // restore the exact baseline fd count.
     drop(holders);
-    std::thread::sleep(Duration::from_millis(100));
-    let fds_after = fd_count();
+    let (fds_after, _) = wait_for_census(fds_before, threads_before);
     if fds_after != fds_before {
         failures.push(format!(
             "fd count {fds_before} → {fds_after} after reaping 100 stallers"
