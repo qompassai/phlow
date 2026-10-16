@@ -11,8 +11,11 @@ allow_remote = false
 [models]
 # Empty strings inherit ollama.model. Set any role to a separately installed local model.
 planner = ""
-coder = ""
+coder = "hf-qwen3-coder-30b"
 reviewer = ""
+
+[specialists.coder]
+source_dir = "/home/phaedrus/.local/share/models/qwen3-coder-30b"
 
 [agent]
 max_iterations = 6
