@@ -28,6 +28,7 @@
 
 pub mod attention;
 pub mod error;
+pub mod multiagent;
 pub mod prompt;
 pub mod report;
 pub mod runtime;

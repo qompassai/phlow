@@ -1550,6 +1550,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "phlow-a2a"
+version = "0.1.0"
+dependencies = [
+ "phlow-attention",
+ "phlow-flowguard",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "phlow-agent"
 version = "0.1.0"
 dependencies = [
@@ -1689,6 +1701,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "phlow-flowguard"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "toml",
+]
+
+[[package]]
 name = "phlow-gauntlet"
 version = "0.1.0"
 dependencies = [
@@ -1769,6 +1791,7 @@ dependencies = [
  "phlow-checks",
  "phlow-config",
  "phlow-editor",
+ "phlow-flowguard",
  "phlow-json",
  "phlow-llm",
  "phlow-mcp",

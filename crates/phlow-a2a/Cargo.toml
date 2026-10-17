@@ -1,0 +1,35 @@
+[package]
+name = "phlow-a2a"
+version = "0.1.0"
+edition = "2024"
+description = "Agent2Agent (A2A) protocol v1.0 interop for phlow: Agent Cards, the task lifecycle, a bounded loopback-first JSON-RPC server and client, every inbound and outbound flow gated by phlow-flowguard"
+license = "Apache-2.0"
+repository = "https://github.com/qompassai/phlow"
+
+[lib]
+name = "phlow_a2a"
+path = "src/lib.rs"
+
+[dependencies]
+# phlow-attention: the shared coordination board an A2A server can
+# publish focus to (and the MultiAgent runtime consumes).
+phlow-attention = { path = "../phlow-attention" }
+# phlow-flowguard: the flow gate every inbound and outbound A2A
+# message passes through.
+phlow-flowguard = { path = "../phlow-flowguard" }
+# serde: the A2A wire shapes are serde structures end to end.
+serde = { version = "1", features = ["derive"] }
+# serde_json: JSON-RPC framing and card/message (de)serialisation.
+serde_json = "1"
+# sha2: boot-seed derivation for opaque task/context handles.
+sha2 = "0.10"
+
+[dependencies.reqwest]
+version = "0.12"
+default-features = false
+# blocking: the client is synchronous, like phlow-mcp's client side;
+# the server is hand-rolled std::net (see the crate docs for why).
+# rustls-tls-webpki-roots matches the transport posture phlow-runtime
+# already enforces (TLS on, system roots, no native-tls). json is
+# the request-body convenience the JSON-RPC calls are built with.
+features = ["blocking", "json", "rustls-tls-webpki-roots"]

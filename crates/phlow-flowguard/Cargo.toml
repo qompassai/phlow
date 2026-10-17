@@ -1,0 +1,25 @@
+[package]
+name = "phlow-flowguard"
+version = "0.1.0"
+edition = "2024"
+description = "OpenAPPA-style flow security for phlow: audience x trust labels, monotone by construction, a deterministic pre-dispatch gate over an append-only event log, declarative TOML policy, and machine-readable remedy plans"
+license = "Apache-2.0"
+repository = "https://github.com/qompassai/phlow"
+
+[lib]
+name = "phlow_flowguard"
+path = "src/lib.rs"
+
+[dependencies]
+# serde: labels, events and decisions are wire/audit shapes; the derive
+# macros generate the (de)serialisation.
+serde = { version = "1", features = ["derive"] }
+# serde_json: tool-call arguments are JSON values; action digests hash a
+# canonical serialisation of the action.
+serde_json = "1"
+# sha2: SHA-256 action/policy digests (byte-compatible with the rest of
+# the estate's fingerprinting).
+sha2 = "0.10"
+# toml: the policy file format (same major version phlow-config and
+# phlow-experiment already use).
+toml = "0.8"

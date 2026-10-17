@@ -20,6 +20,9 @@ phlow-workspace = { version = "0.2.0", path = "../phlow-workspace" }
 phlow-checks = { version = "0.2.0", path = "../phlow-checks" }
 # phlow-editor: EditorBridge + EditorTransport behind the editor tools.
 phlow-editor = { version = "0.2.0", path = "../phlow-editor" }
+# phlow-flowguard: the OpenAPPA-style flow gate (labels, policy, remedies)
+# that multiagent sessions propose every tool call and message to.
+phlow-flowguard = { version = "0.1.0", path = "../phlow-flowguard" }
 # phlow-llm: OllamaBackend + LlmTransport behind the model turns.
 phlow-llm = { version = "0.2.0", path = "../phlow-llm" }
 # phlow-mcp: validate_arguments (iterative, depth/node caps) and
