@@ -1773,6 +1773,7 @@ dependencies = [
  "phlow-json",
  "ryu",
  "serde_json",
+ "toml",
 ]
 
 [[package]]

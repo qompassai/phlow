@@ -49,12 +49,16 @@
 
 #![forbid(unsafe_code)]
 
+pub mod client;
 pub mod error;
 pub mod json_ascii;
 pub mod protocol;
 pub mod schema;
 pub mod server;
 
+pub use client::{
+    ClientError, FRAME_BYTES_MAX, McpClient, McpServerConfig, load_profile, parse_profile,
+};
 pub use error::{McpError, RuntimeError};
 pub use json_ascii::{DumpsError, dumps};
 pub use protocol::{

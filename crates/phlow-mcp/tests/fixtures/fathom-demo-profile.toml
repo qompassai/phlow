@@ -1,0 +1,12 @@
+[[servers]]
+name = "fathom"
+# Placeholder command: the demo and the integration test override
+# it with the FATHOM_BIN environment variable (an absolute path to
+# a fathom build). In a real deployment this is the installed
+# fathom binary.
+command = "fathom"
+# "{fathom_config}" is substituted by the caller with the path of
+# a generated fathom config whose target_roots cover the analysis
+# target — fathom is fail-closed, so the demo never widens roots
+# beyond the scratch directory it prepared.
+args = ["--config", "{fathom_config}", "serve"]

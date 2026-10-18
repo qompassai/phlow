@@ -22,3 +22,7 @@ serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision
 # ryu: shortest-round-trip float formatting, post-processed to Python repr
 # exponent style (e+16 / e-07) in json_ascii.
 ryu = "1"
+# toml: the MCP client profile format (the same crate phlow-config
+# uses for the operator config). Only toml::Value is used; profile
+# validation is explicit control flow in client::parse_profile.
+toml = "0.8"
