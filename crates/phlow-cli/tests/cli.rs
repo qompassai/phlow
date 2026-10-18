@@ -260,14 +260,41 @@ fn check_name_flag_reaches_the_runtime() {
 
 #[test]
 fn run_without_ollama_fails_closed_with_exit_1() {
-    // No Ollama here: the backend is refused, the runtime must encode the
-    // failure in the report (status != ok) and exit 1 — never panic, never
-    // hang, never print a bare traceback.
-    let (output, report) = report_of(&["run", "hello"]);
-    assert_ne!(report["status"], "ok", "report: {report}");
+    // No Ollama here — by construction, not by assumption. The ambient
+    // machine may have a live server on the default port 11434 (rose-serve
+    // does on primo), in which case `run` executes for real and reports
+    // "failed" (unverified) with no top-level error — a different contract
+    // than the refused-backend one. So the test pins the backend to a
+    // loopback port it bound and released itself: connection refused is
+    // deterministic on any machine. The runtime must encode the failure in
+    // the report (status "error") and exit 1 — never panic, never hang,
+    // never print a bare traceback.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+    let dead_port = listener.local_addr().expect("local addr").port();
+    drop(listener);
+    let config_dir =
+        std::env::temp_dir().join(format!("phlow-cli-dead-backend-{}", std::process::id()));
+    std::fs::create_dir_all(&config_dir).expect("create config dir");
+    let config_path = config_dir.join("config.toml");
+    std::fs::write(
+        &config_path,
+        format!("[ollama]\nbase_url = \"http://127.0.0.1:{dead_port}\"\ntimeout = 5.0\n"),
+    )
+    .expect("write dead-backend config");
+    let output = phlow()
+        .arg("--config")
+        .arg(&config_path)
+        .args(["run", "hello"])
+        .output()
+        .expect("spawn phlow");
+    let lines = stdout_lines(&output);
+    assert_eq!(lines.len(), 1, "exactly one JSON line on stdout");
+    let report: Value = serde_json::from_str(&lines[0]).expect("stdout is JSON");
+    assert_eq!(report["status"], "error", "report: {report}");
     assert_eq!(output.status.code(), Some(1));
     assert!(report.get("error").is_some(), "failure must be explained");
     assert!(output.stdout.is_ascii());
+    let _ = std::fs::remove_dir_all(&config_dir);
 }
 
 // --- signals -----------------------------------------------------------------
