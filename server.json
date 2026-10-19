@@ -1,0 +1,39 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "ai.qompass/phlow",
+  "title": "Phlow MCP Server",
+  "description": "MCP server for the phlow agent runtime: bounded planner-coder-reviewer agent workflows.",
+  "version": "0.2.0",
+  "websiteUrl": "https://qompass.ai/mcp/phlow",
+  "repository": {
+    "url": "https://github.com/qompassai/phlow",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "mcpb",
+      "identifier": "https://github.com/qompassai/phlow/releases/download/v0.2.0/phlow-mcp-0.2.0-linux-x64.mcpb",
+      "fileSha256": "095d2330fe70e7d35fb3b261e4897dc3607ef0d47d9ca41e8a3bc42bc93b8dc5",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ],
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "ai.qompass/identity": {
+        "publisher": "Qompass AI",
+        "about": "https://qompass.ai/about",
+        "mcpCatalog": "https://qompass.ai/mcp",
+        "contact": "mailto:map@qompass.ai",
+        "githubOrganization": "https://github.com/qompassai",
+        "githubMaintainer": "https://github.com/PhaedrusFlow",
+        "gitlabMaintainer": "https://gitlab.com/PhaedrusFlow",
+        "cratesIoMaintainer": "https://crates.io/users/PhaedrusFlow",
+        "huggingFace": "https://huggingface.co/qompass",
+        "orcid": "https://orcid.org/0000-0002-0302-4812",
+        "zenodoCommunity": "https://zenodo.org/communities/qompassai"
+      }
+    }
+  }
+}
