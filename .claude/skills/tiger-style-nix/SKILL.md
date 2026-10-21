@@ -1,10 +1,10 @@
 ---
 name: tiger-style-nix
 description: >
-  Write or review Nix expressions in Matt's Tiger Style: safety-first Nix standard with explicit contracts, assertions, bounded work, and disciplined ownership. Applies whenever Nix expressions are written, regenerated, refactored, reviewed, or debugged - from flake.nix and packages to NixOS and Home Manager modules and dev shells. Toolchain pairing: nil and nixd for LSP (diagnostics, completions), alejandra and nixfmt for formatting, nix-debug-adapter for DAP debugging. Covers pure evaluation discipline, explicit inputs, pinned sources, and half-adversarial test splits. See references/TIGER_STYLE_NIX.md for the full guide.
+  Write or review Nix expressions in Owner's Tiger Style: safety-first Nix standard with explicit contracts, assertions, bounded work, and disciplined ownership. Applies whenever Nix expressions are written, regenerated, refactored, reviewed, or debugged - from flake.nix and packages to NixOS and Home Manager modules and dev shells. Toolchain pairing: nil and nixd for LSP (diagnostics, completions), alejandra and nixfmt for formatting, nix-debug-adapter for DAP debugging. Covers pure evaluation discipline, explicit inputs, pinned sources, and half-adversarial test splits. See references/TIGER_STYLE_NIX.md for the full guide.
 license: Apache-2.0
 compatibility: >
-  Requires Nix with nil or nixd for LSP, alejandra or nixfmt for formatting, and nix-debug-adapter for DAP debugging. Built for Neovim with Matt's diver config (lsp/nil_ls, lsp/nixd_ls, formatters/alejandra, lua/dap/nix); usable by any coding agent that can read the guide and invoke the toolchain.
+  Requires Nix with nil or nixd for LSP, alejandra or nixfmt for formatting, and nix-debug-adapter for DAP debugging. Built for Neovim with Owner's diver config (lsp/nil_ls, lsp/nixd_ls, formatters/alejandra, lua/dap/nix); usable by any coding agent that can read the guide and invoke the toolchain.
 metadata:
     language: nix
     lsp: nil,nixd
@@ -18,7 +18,7 @@ allowed-tools: Read Edit Bash
 
 ## Purpose
 
-Apply Matt's Tiger Style standard to Nix expressions. Priority order, always:
+Apply Owner's Tiger Style standard to Nix expressions. Priority order, always:
 **Safety > Performance > Developer Experience.** The full guide lives in
 [references/TIGER_STYLE_NIX.md](references/TIGER_STYLE_NIX.md); this file is
 the operational core. When the two disagree, the full guide wins.
@@ -108,7 +108,7 @@ are omitted rather than invented.
 
 ## Output Contract
 
-Nix you produce for Matt must: evaluate cleanly under the declared Nix
+Nix you produce for Owner must: evaluate cleanly under the declared Nix
 version, document argument sets on functions, assert its invariants, return
 tagged `{ ok = false; error = ...; }` on expected invalid input, bound all
 folds/traversals with named constants, stay near ≤70 lines per function and

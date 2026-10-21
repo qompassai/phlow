@@ -1,13 +1,13 @@
 ---
 name: "tiger-style-mojo"
-description: "Write or review Mojo code in Matt's Tiger Style: safety-first Mojo standard with explicit contracts, assertions, bounded work, and disciplined ownership. Use when writing, regenerating, refactoring, or reviewing Mojo — especially numerical kernels, GPU/accelerator code, and Python-interop orchestration. See references/TIGER_STYLE_MOJO.md for the full guide."
+description: "Write or review Mojo code in Owner's Tiger Style: safety-first Mojo standard with explicit contracts, assertions, bounded work, and disciplined ownership. Use when writing, regenerating, refactoring, or reviewing Mojo — especially numerical kernels, GPU/accelerator code, and Python-interop orchestration. See references/TIGER_STYLE_MOJO.md for the full guide."
 ---
 
 # Tiger Style Mojo
 
 ## Purpose
 
-Apply Matt's Tiger Style standard to Mojo code. Priority order, always:
+Apply Owner's Tiger Style standard to Mojo code. Priority order, always:
 **Safety > Performance > Developer Experience.** The full guide lives in
 [references/TIGER_STYLE_MOJO.md](references/TIGER_STYLE_MOJO.md); this file
 is the operational core. When the two disagree, the full guide wins.
@@ -68,7 +68,7 @@ is the operational core. When the two disagree, the full guide wins.
 
 ## Output Contract
 
-Mojo you produce for Matt must: compile on the pinned toolchain with
+Mojo you produce for Owner must: compile on the pinned toolchain with
 diagnostics at full strength, carry doc comments on public items stating
 contract and bounds, return typed errors on expected failures, assert
 internal invariants, bound all work/queues/retries/memory, keep kernels

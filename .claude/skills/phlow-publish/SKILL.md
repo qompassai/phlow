@@ -1,6 +1,6 @@
 ---
 name: "phlow-publish"
-description: "Crates.io release checklist for the phlow Rust workspace (~27 crates). Trigger when Matt asks to publish phlow crates: covers preconditions, version audit, topological publish order, and post-publish verification."
+description: "Crates.io release checklist for the phlow Rust workspace (~27 crates). Trigger when Owner asks to publish phlow crates: covers preconditions, version audit, topological publish order, and post-publish verification."
 metadata:
   includeInPrompt: "true"
 ---
@@ -19,7 +19,7 @@ without breaking downstream consumers.
    - `cargo fmt --all -- --check` — clean
    - `cargo test --workspace` — all pass
 3. `CHANGELOG.md` updated with the release notes for this version.
-4. Matt has explicitly authorized this release (version number included).
+4. Owner has explicitly authorized this release (version number included).
    Each release authorization is one-time.
 
 ## Version audit first
@@ -28,7 +28,7 @@ The workspace has mixed versions (19 crates at `0.1.0`, 6 at `0.2.0`).
 Before anything else:
 
 1. List every crate version: `grep -h '^version' crates/*/Cargo.toml`.
-2. Decide the release version with Matt. Do not invent one.
+2. Decide the release version with Owner. Do not invent one.
 3. Bump consistently: every crate being released gets the new version,
    and every `phlow-*` path dependency requirement inside the workspace
    is updated to match. A crate published against a path-dep version
@@ -63,4 +63,4 @@ in topological order of the `phlow-*` path dependencies:
   (`~/.cargo/credentials.toml` or `cargo login`). Never ask for, read,
   or echo a token.
 - Yanking a bad release, transferring crate ownership, or reserving new
-  crate names — those need Matt's explicit direction each time.
+  crate names — those need Owner's explicit direction each time.
