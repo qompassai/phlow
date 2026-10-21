@@ -1,6 +1,6 @@
 [book]
 title = "phlow"
-authors = ["Matt"]
+authors = ["Owner"]
 description = "phlow: physics-informed flow — a bounded local multi-agent coding runtime, ported from Python to Rust."
 language = "en"
 src = "src"

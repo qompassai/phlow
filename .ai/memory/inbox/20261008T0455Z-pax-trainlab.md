@@ -8,7 +8,7 @@ Branch: `pax/trainlab-20261007` off `8e2a82d` · LOCAL COMMIT ONLY (no push).
 New workspace member `crates/phlow-trainlab` (+ root `Cargo.toml`
 member entry, `Cargo.lock` entries). It ports the measurement half of
 the GLM-5.3-Flash from-scratch course (freeCodeCamp / Vuk Rosić;
-repo `vukrosic/glm-5.3-flash-from-scratch`) into phlow, per Matt's
+repo `vukrosic/glm-5.3-flash-from-scratch`) into phlow, per Owner's
 2026-10-07 commission after reviewing the video:
 
 - `task`: the course's 8 synthetic Python families and frozen split

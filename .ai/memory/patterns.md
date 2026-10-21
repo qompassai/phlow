@@ -11,7 +11,7 @@
 ## Testing
 
 - Half adversarial / half validation. Don't weaken pre-existing flaky tests;
-  fix or queue separately with Matt's decision.
+  fix or queue separately with Owner's decision.
 - Gauntlet: 130 difficult agent-orchestration tests (in progress).
 
 ## Neovim integration

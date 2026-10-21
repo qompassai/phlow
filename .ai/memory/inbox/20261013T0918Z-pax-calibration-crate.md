@@ -1,9 +1,9 @@
 # Calibration crate built — 2026-10-13 (Pax)
 
-Matt ordered the build ("please ensure phlow calibration crate is
+Owner ordered the build ("please ensure phlow calibration crate is
 built"), superseding the 2026-10-11/12 activation STOP. The crate
 exists now: `crates/phlow-calibration`, per the design of record
-(`calibration-harness-design-2026-10-04.md`, Matt approved
+(`calibration-harness-design-2026-10-04.md`, Owner approved
 harness-design-first 2026-10-04). Modules: tuple, metrics,
 collector, dataset, report. Deps: phlow-gauntlet (trace contract +
 held-out split), phlow-system1 (protocol types, real wire boundary),
@@ -35,7 +35,7 @@ workspace has none) and no serde derive — manual JSON, estate style.
   `None` (never 0.0) with none, and the report's Phase A verdict
   on the real corpora is INSUFFICIENT DATA. Calibration numbers
   arrive when real labels do (adjudicated scenario verdicts or
-  Matt's own decisions); nothing is estimated in the meantime.
+  Owner's own decisions); nothing is estimated in the meantime.
 - **Approval source.** Approval *decision* history is persisted
   nowhere in phlow (phlow-approval events are in-memory;
   `~/.local/share/phlow/consumed-approvals.jsonl` is

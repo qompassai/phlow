@@ -53,7 +53,7 @@ actions, and validation rejects anything outside the schema first).
 rejects `run`. The runtime is correct and fail-closed; Rose's own schema
 is misleading. Fixing it means editing the rose.nvim repo, which is **not
 authorized** in this port — it is flagged for the rose/diver integration
-pass with Matt's go-ahead. Do not "fix" it from the phlow side by
+pass with Owner's go-ahead. Do not "fix" it from the phlow side by
 accepting `run`: that would widen the model-facing surface beyond what
 Python allows.
 

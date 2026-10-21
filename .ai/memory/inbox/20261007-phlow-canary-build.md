@@ -1,6 +1,6 @@
 # 2026-10-07 — phlow-canary crate built (design + 2026-10-07 amendment)
 
-Built per Matt's authorization ("please build the canary build
+Built per Owner's authorization ("please build the canary build
 crate", 2026-10-07), implementing
 `~/workspace/phlow/canary-battery-design-2026-10-04.md` as amended.
 

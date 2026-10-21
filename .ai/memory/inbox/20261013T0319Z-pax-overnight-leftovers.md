@@ -17,7 +17,7 @@ Reconciled the 2026-10-11 open-items list against live `origin/main`
   in the sandbox checkout is a stale duplicate (two files
   byte-identical to main; three are older variants without the
   2026-10-08 layout pins) — committing it would regress main. Left
-  untouched; the sandbox checkout's disposition is Matt's ruling.
+  untouched; the sandbox checkout's disposition is Owner's ruling.
 - **Supervisor run (tasks 101–120)**: MOOT. Wave 1 (Seat A) found a
   slot collision before writing anything and stopped clean, per
   `~/supervisor-wave1-progress.md`: tasks 101–105 (and through 120)
@@ -29,7 +29,7 @@ Reconciled the 2026-10-11 open-items list against live `origin/main`
   DecisionTrace corpus files (capture code landed in `9d764ca`), no
   approval-history dataset, no feedback-store data (`~/.config/phlow`
   holds only config.toml). Per the design's own stop rule, the crate
-  waits on those inputs; a gauntlet trace run plus Matt's approval
+  waits on those inputs; a gauntlet trace run plus Owner's approval
   history are the unblocking artifacts.
 - **Baseline note**: full suite at `a5332b2` needs
   `GAUNTLET_NVIM_BIN=/usr/bin/nvim` on primo (the compiled-in default

@@ -2,7 +2,7 @@
 
 This directory holds vendored agent skills for working on the phlow repo —
 finishing the Rust build-out and publishing the crates. They are copies of
-Matt's canonical skills, vendored here so any agent (Claude Code or opencode)
+Owner's canonical skills, vendored here so any agent (Claude Code or opencode)
 working in this checkout gets the same rules without extra setup.
 
 Skills: `tiger-style-rust` (all Rust code), `tiger-style-nix` (flake.nix /

@@ -2,7 +2,7 @@
 
 Commission: replay the mock-backend gauntlet corpus through a real
 distribution-bearing backend, label from scenario semantics, and
-produce phlow's first honest calibration numbers (Matt's word,
+produce phlow's first honest calibration numbers (Owner's word,
 2026-10-13, on Pax's recommendation (b)).
 
 ## What was built

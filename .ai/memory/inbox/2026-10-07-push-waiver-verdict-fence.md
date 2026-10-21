@@ -1,6 +1,6 @@
 # 2026-10-07 — Specialists push waiver + fenced-verdict normalization
 
-Two decisions by Matt (2026-10-07), executed the same day.
+Two decisions by Owner (2026-10-07), executed the same day.
 
 ## Decision 1: push b20c160 under a one-time waiver
 

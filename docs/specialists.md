@@ -2,7 +2,7 @@
 
 Phlow's agent loop has three roles — **planner**, **coder**, **reviewer** —
 and each role can be bound to a different model. This document records how
-the models Matt downloaded to `~/.local/share/models` (HuggingFace
+the models Owner downloaded to `~/.local/share/models` (HuggingFace
 safetensors, October 2026) are provisioned into the Ollama backend phlow
 already talks to, which model is the specialist for which role and why,
 and what the measured trials showed.
@@ -188,7 +188,7 @@ Findings, in order of leverage:
 
 ## Follow-up (2026-10-07): push waiver and fenced-verdict normalization
 
-Two decisions by Matt on 2026-10-07 closed the open items above:
+Two decisions by Owner on 2026-10-07 closed the open items above:
 
 1. **Push waiver.** The specialists commit `b20c160` was pushed to
    `main` under a documented one-time waiver of the standing

@@ -5,7 +5,7 @@
 **Decision**: `main` is the Rust port branch. Binary renamed flow→phlow
 (`crates/phlow-cli/src/bin/flow.rs` kept as compat alias).
 
-**Context**: Matt ordered the completion program: integrate CLM + tuios
+**Context**: Owner ordered the completion program: integrate CLM + tuios
 concepts in Tiger Style, iterate until complete.
 
 **Consequence**: Product-wide rename. Python deletion authorized in
@@ -17,7 +17,7 @@ principle; staged execution with per-step auth.
 rsync to primo. Primo's LIVE diver config used as-is for Neovim validation,
 never modified.
 
-**Context**: Sandbox lacks the toolchain and Matt's live config.
+**Context**: Sandbox lacks the toolchain and Owner's live config.
 
 ## Push authorization (2026-09-28, standing)
 

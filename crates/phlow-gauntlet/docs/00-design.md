@@ -3,7 +3,7 @@
 ## Objective
 
 Cue phlow (agent runtime, `qompassai/phlow`) to attempt 20 DIFFERENT difficult
-tasks exercising **agent orchestration** with Matt's Neovim config (diver) in
+tasks exercising **agent orchestration** with Owner's Neovim config (diver) in
 the loop. Let it fail where it fails. Document every failure honestly with
 evidence. Fix between iterations, citing what changed and why. Commit, push
 (only primo-green trees, fast-forward, byte-verified), rebuild on primo, and
@@ -62,7 +62,7 @@ Each task's test module carries a 50/50 validation/adversarial case split.
 ## Neovim-in-the-loop scoping (deliberate)
 
 Headless nvim runs with diver's `lua/` directory on the runtimepath so
-`require("ai.harness")` loads Matt's actual config code, but the full
+`require("ai.harness")` loads Owner's actual config code, but the full
 `init.lua` is NOT bootstrapped (it would pull lazy.nvim plugin management
 and network). The harness modules under test are byte-identical to his
 config; the plugin layer is out of scope for orchestration testing. This
@@ -70,7 +70,7 @@ is documented, not hidden.
 
 ## Nix flake (Deliverable 1): `crates/phlow-gauntlet/flake.nix`
 
-Matt's order: a flake that DIRECTS the 20 tasks — contained, reproducible,
+Owner's order: a flake that DIRECTS the 20 tasks — contained, reproducible,
 sterile. Tiger Style Nix v1.0 (canonical guide) applies rigorously;
 validation recipes: `nixfmt --check`, `statix check .`, `deadnix --fail .`,
 `nix flake check`.
@@ -113,7 +113,7 @@ unverified until primo.
   commit + rationale; the task re-runs next iteration.
 - Progress reports every 10% (every 2 tasks) measured from real gate numbers.
 
-## Fix loop (Matt's standing requirement, 2026-09-28)
+## Fix loop (Owner's standing requirement, 2026-09-28)
 
 For EVERY proposed fix — no exceptions:
 

@@ -1,7 +1,7 @@
 # MATE joint-attention coordination landed (crate + config flag + runtime gate + MCP tools)
 
 Date: 2026-10-12 (UTC 08:00). Agent: pax (MATE implementation run,
-commissioned by Matt 2026-10-12 00:28 PDT).
+commissioned by Owner 2026-10-12 00:28 PDT).
 Source paper: "Grounded Joint-Attention Other-Play for Zero-Shot
 Coordination", arXiv:2610.06025. Full design + evidence:
 `~/workspace/mate-implementation/{mechanism.md,design.md,REPORT.md}`.
@@ -35,7 +35,7 @@ Coordination", arXiv:2610.06025. Full design + evidence:
 - `crates/phlow-cli`: installs the gate (agent id `phlow`) at runtime
   construction; `serve` hands the gate's board to the MCP server.
 
-## Deliberate divergence (needs Matt's awareness)
+## Deliberate divergence (needs Owner's awareness)
 
 The MCP tool catalog is no longer byte-identical to Python
 `flow serve`: it has 7 tools, not 3. The golden fixture
