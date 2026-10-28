@@ -1,20 +1,21 @@
 //! Integration tests for task-89 (protocol version skew).
 //!
-//! The seam is REAL and half-capable: `phlow-mcp`'s
-//! `McpServer::initialize` negotiates KNOWN versions correctly
-//! (matching and skew), but unknown versions — garbage AND future
-//! alike — silently negotiate to the NEWEST supported version with
-//! no typed error, and a mid-session version change is rejected
-//! without invalidating the session. Each test drives the real
-//! `McpServer<FakeRuntime>` and asserts the honest `fail` at
-//! `"seam"`: 2 validation, 2 adversarial.
+//! The seam moved: the hand-rolled dual-era server negotiated
+//! versions in `McpServer::initialize`, and did it half-right —
+//! known versions negotiated, unknown versions (garbage AND
+//! future) silently upgraded to the newest, and a mid-session
+//! re-initialize was rejected without invalidating the session.
+//! This task honestly failed at `"seam"` on that evidence.
 //!
-//! Product decisions banked for Matt (phlow-owned, not implemented
-//! on gauntlet authority): whether unknown versions should fail
-//! closed with a typed `version_negotiation_failed`, and whether a
-//! mid-session re-initialize should invalidate the session. Diver's
-//! client side (sends `protocolVersion = '2024-11-05'`, discards the
-//! negotiated version) is diver-owned and flagged.
+//! The fleet standardization (D-113/D-200) and phlow's rmcp
+//! migration (Stage C2) deleted the negotiation entirely: the
+//! server is modern-only, and the seam is the era guard's
+//! admission function `phlow_mcp::classify`. Every non-modern
+//! version contact now fails closed with the typed `-32022`
+//! refusal; modern frames are admitted statelessly; mid-session
+//! version changes are impossible by construction. Each test
+//! drives the real guard and asserts the honest `pass`:
+//! 2 validation, 2 adversarial.
 
 use phlow_gauntlet::tasks::task_89;
 use phlow_gauntlet::{Ctx, TaskKind, TaskOutcome};
@@ -29,118 +30,105 @@ fn ctx() -> Ctx {
     .unwrap_or_else(|e| panic!("task-89: cannot build Ctx: {e}"))
 }
 
-/// Unwrap the expected `fail` at `"seam"`, or panic with the details.
-fn fail_at_seam(outcome: TaskOutcome) -> (String, String, Vec<String>) {
-    match outcome {
-        TaskOutcome::Fail {
-            where_,
-            how,
-            evidence,
-        } => (where_, how, evidence),
-        TaskOutcome::Pass { evidence } => panic!(
-            "task-89 passed: version-skew discipline was invented, not found\nevidence: {evidence:?}"
-        ),
-    }
-}
-
 // --- validation ---
 
-/// V1: matching versions negotiate to the offered version — the
-/// negotiation works for known versions. The task-level driver then
-/// runs all four cases and reports the honest seam failure: the
-/// skew-discipline product decisions are banked in the task-level
-/// `how`, not implemented on gauntlet authority.
+/// V1: `initialize` at legacy versions is refused with the typed
+/// -32022 error naming the requested version and the one
+/// supported version. The task-level driver runs all four cases
+/// and passes: the skew discipline now holds at the real seam.
 #[test]
-fn matching_versions_negotiate() {
+fn legacy_initialize_refused_typed() {
     assert_eq!(task_89::ID, "task-89");
     assert_eq!(task_89::NAME, "protocol version skew");
     assert_eq!(task_89::KIND, TaskKind::Rust);
     assert_eq!(task_89::CASES.len(), 4, "2 validation + 2 adversarial");
-    let report = task_89::run_case("matching_versions_negotiate")
+    let report = task_89::run_case("legacy_initialize_refused_typed")
         .unwrap_or_else(|e| panic!("task-89 case failed to run: {e}"));
     assert!(
         report.passed,
-        "matching-versions case must hold: {}",
+        "legacy-initialize case must hold: {}",
         report.failures.join("; ")
     );
-    assert_eq!(report.metrics["negotiated"], "2025-11-25");
-    // Task-level: the driver fails at the seam (not a pass), and the
-    // `how` banks the product decisions for Matt.
-    let (where_, how, _) = fail_at_seam(task_89::run(&ctx()));
-    assert_eq!(where_, "seam", "task-89 must fail at the seam");
-    assert!(
-        how.contains("silently negotiate"),
-        "the 'how' must name the silent upgrade: {how}"
-    );
-    assert!(
-        how.contains("Product decisions banked for Matt"),
-        "the 'how' must bank the product decisions: {how}"
-    );
+    assert_eq!(report.metrics["2025-06-18"], -32022);
+    assert_eq!(report.metrics["2025-11-25"], -32022);
+    // Task-level: the driver passes (the gap it documented is
+    // closed), and the evidence names the closure.
+    match task_89::run(&ctx()) {
+        TaskOutcome::Pass { evidence } => {
+            let joined = evidence.join("\n");
+            assert!(
+                joined.contains("closed by the rmcp migration"),
+                "evidence must name the closure:\n{joined}"
+            );
+        }
+        TaskOutcome::Fail {
+            where_,
+            how,
+            evidence,
+        } => panic!("task-89 must pass after the migration: fail at {where_}: {how}\n{evidence:?}"),
+    }
 }
 
-/// V2: skew (client N-1) negotiates the greatest mutually supported
-/// version — the supported-version path is correct.
+/// V2: modern frames (discover, list, call) are admitted
+/// verbatim — stateless, no handshake.
 #[test]
-fn skew_negotiates_older() {
-    let report = task_89::run_case("skew_negotiates_older")
+fn modern_discover_admitted() {
+    let report = task_89::run_case("modern_discover_admitted")
         .unwrap_or_else(|e| panic!("task-89 case failed to run: {e}"));
     assert!(
         report.passed,
-        "skew case must hold: {}",
+        "modern-admission case must hold: {}",
         report.failures.join("; ")
     );
-    assert_eq!(report.metrics["negotiated"], "2025-06-18");
+    assert_eq!(report.metrics["forwarded"], 3);
     let joined = report.evidence.join("\n");
     assert!(
-        joined.contains("the supported-version path is correct"),
-        "evidence must confirm the correct path:\n{joined}"
+        joined.contains("admitted statelessly"),
+        "evidence must confirm stateless admission:\n{joined}"
     );
 }
 
 // --- adversarial ---
 
-/// A1: garbage ("banana") and a future version ("2999-99-99") both
-/// silently negotiate to the newest supported version — no typed
-/// error, no fail-closed. The server cannot distinguish a future
-/// version from garbage, and a client implementing only an older
-/// version is told the server speaks the newest.
+/// A1: garbage ("banana") and a future version ("2999-99-99")
+/// are refused identically — same typed code, same shape — with
+/// the requested version echoed so the record distinguishes
+/// them. Neither unlocks anything.
 #[test]
-fn garbage_and_future_silently_upgrade() {
-    let report = task_89::run_case("garbage_and_future_silently_upgrade")
+fn garbage_and_future_refused_identically() {
+    let report = task_89::run_case("garbage_and_future_refused_identically")
         .unwrap_or_else(|e| panic!("task-89 case failed to run: {e}"));
     assert!(
         report.passed,
         "garbage/future case must hold: {}",
         report.failures.join("; ")
     );
-    assert_eq!(report.metrics["banana"], "2025-11-25");
-    assert_eq!(report.metrics["2999-99-99"], "2025-11-25");
+    assert_eq!(report.metrics["banana"], -32022);
+    assert_eq!(report.metrics["2999-99-99"], -32022);
     let joined = report.evidence.join("\n");
     assert!(
-        joined.contains("typed `version_negotiation_failed` does not exist"),
-        "evidence must state the missing typed error:\n{joined}"
+        joined.contains("version_negotiation_failed exists"),
+        "evidence must state the typed refusal exists:\n{joined}"
     );
 }
 
-/// A2: a mid-session version change does not invalidate the session.
-/// After initialize("2025-06-18") + notifications/initialized, a
-/// second initialize("2025-11-25") is rejected with -32600
-/// ("Already initialized") but the session continues on the old
-/// version — ping still succeeds.
+/// A2: an `initialize` after modern traffic is refused exactly
+/// like one arriving first, and the modern traffic around it is
+/// unaffected — there is no session to invalidate.
 #[test]
-fn mid_session_change_not_invalidated() {
-    let report = task_89::run_case("mid_session_change_not_invalidated")
+fn mid_session_initialize_still_refused() {
+    let report = task_89::run_case("mid_session_initialize_still_refused")
         .unwrap_or_else(|e| panic!("task-89 case failed to run: {e}"));
     assert!(
         report.passed,
-        "mid-session-change case must hold: {}",
+        "mid-session case must hold: {}",
         report.failures.join("; ")
     );
-    assert_eq!(report.metrics["second_initialize_code"], -32600);
+    assert_eq!(report.metrics["initialize_code"], -32022);
     assert_eq!(report.metrics["session_invalidated"], false);
     let joined = report.evidence.join("\n");
     assert!(
-        joined.contains("the session survives on the old version"),
-        "evidence must show the surviving session:\n{joined}"
+        joined.contains("met by construction"),
+        "evidence must show the by-construction argument:\n{joined}"
     );
 }

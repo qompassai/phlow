@@ -20,10 +20,17 @@
 //!    phlow-trainlab/src/export.rs) — neither is a scheduling quantum.
 //! 2. There is no worker pool to schedule: the pool-vocabulary scan
 //!    (`worker_pool`, `thread_pool`, `task_pool`) returns zero, and the
-//!    only tokio consumer in the workspace is the msgpack transport's
-//!    single current-thread worker (`phlow-runtime/src/transport/msgpack.rs`,
-//!    the task-25 channel) — one worker thread, not a scheduled pool; no
-//!    fairness question arises there and none is implemented.
+//!    only tokio consumers in the workspace are transports: the msgpack
+//!    transport's single current-thread worker
+//!    (`phlow-runtime/src/transport/msgpack.rs`, the task-25 channel)
+//!    and, since the rmcp migration (fleet standardization Stage C2),
+//!    phlow-mcp's protocol framing — the SDK is async, so the era
+//!    guard, the handler, and the outbound client run on private
+//!    tokio runtimes; the domain dispatch behind them stays a
+//!    mutex-serialized single-owner pipeline and the client makes
+//!    one bounded request at a time. Neither is a scheduled pool of
+//!    agent tasks; no fairness question arises there and none is
+//!    implemented.
 //! 3. The experiment `Scheduler` (phlow-experiment) is admission-only
 //!    with no consumer (established in tasks 13 and 25): it admits nodes
 //!    against limits but executes nothing — there is no task tree to be
@@ -313,10 +320,12 @@ fn case_no_scheduling_discipline_tokens() -> Result<CaseReport, DriverError> {
 }
 
 /// V2: there is no worker pool to schedule. The pool-vocabulary scan
-/// returns zero, and the only async-task machinery in the workspace is
-/// the msgpack transport's single current-thread worker — one thread,
-/// not a scheduled pool, so no fairness question arises there and none
-/// is implemented.
+/// returns zero, and the only async machinery in the workspace is
+/// transport-class: the msgpack transport's single current-thread
+/// worker, and phlow-mcp's rmcp framing (private runtimes around a
+/// mutex-serialized dispatch — protocol plumbing, not agent-task
+/// execution). Neither is a scheduled pool, so no fairness question
+/// arises there and none is implemented.
 fn case_no_worker_pool_to_schedule() -> Result<CaseReport, DriverError> {
     const CASE: &str = "no_worker_pool_to_schedule";
     let root = workspace_root()?;
@@ -353,6 +362,16 @@ fn case_no_worker_pool_to_schedule() -> Result<CaseReport, DriverError> {
             evidence.push(format!("classified (prose mention, not machinery): {hit}"));
         } else if hit.contains("transport/msgpack.rs") {
             evidence.push(format!("classified (single transport worker): {hit}"));
+        } else if hit.contains("crates/phlow-mcp/src/") {
+            // The rmcp migration (Stage C2) made phlow-mcp's
+            // protocol layer async: the SDK's framing runs on
+            // private tokio runtimes. That is transport plumbing
+            // around a mutex-serialized dispatch — the same class
+            // as the msgpack worker above, not a pool of agent
+            // tasks a scheduler could be fair across.
+            evidence.push(format!(
+                "classified (MCP protocol transport, rmcp framing): {hit}"
+            ));
         } else {
             non_transport.push(hit.clone());
         }
@@ -368,7 +387,7 @@ fn case_no_worker_pool_to_schedule() -> Result<CaseReport, DriverError> {
         ));
     }
     evidence.push(
-        "the only task machinery is the msgpack transport's single current-thread worker (the task-25 channel) — no pool, no scheduling discipline".to_string(),
+        "the only async machinery is transport-class: the msgpack transport's single current-thread worker (the task-25 channel) and phlow-mcp's rmcp protocol framing — no pool, no scheduling discipline".to_string(),
     );
     Ok(CaseReport::pass(
         CASE,

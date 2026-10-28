@@ -1,6 +1,6 @@
 # task-89: protocol version skew
 
-**Kind:** rust (driver) · **Status:** fail (open) · **Wave:** 86–90 · **Commits:** pending (wave 86-90)
+**Kind:** rust (driver) · **Status:** pass (closed by the rmcp migration, Stage C2, 2026-10-28; originally fail (open)) · **Wave:** 86–90 · **Commits:** pending (wave 86-90)
 
 ## ELI5
 
@@ -33,6 +33,17 @@ Source-level mechanism (verified by reading `crates/phlow-mcp/src/server.rs` and
 Distinct from task-86 (the *client's* capability record): this is the *server's* version negotiation — and from the diver client's side, which speaks an older version and discards the negotiated one (diver-owned, flagged).
 
 Product decisions banked for Matt (phlow-owned): whether unknown versions should fail closed with a typed `version_negotiation_failed` instead of silently upgrading to newest, and whether a mid-session re-initialize should invalidate the session. Not implemented on gauntlet authority — `phlow-mcp` is untouched.
+
+## Resolution (2026-10-28, fleet standardization Stage C2)
+
+The banked decisions were answered by the fleet standardization (D-113/D-200): phlow's server migrated to rmcp and became **modern-only** (2026-07-28). The negotiation this task probed no longer exists — there is no `initialize` handshake to skew. The driver was re-based onto the seam that replaced it, the era guard's admission function `phlow_mcp::classify` (`crates/phlow-mcp/src/guard.rs`), in four cases mirroring the originals:
+
+- **V1 `legacy_initialize_refused_typed`:** `initialize` at 2025-06-18 and 2025-11-25 is refused with the typed `-32022` error; its data names the requested version and the one supported version. Fail-closed, as the design asked.
+- **V2 `modern_discover_admitted`:** `server/discover`, `tools/list`, and `tools/call` carrying the modern `_meta` are admitted verbatim — statelessly, no handshake.
+- **A1 `garbage_and_future_refused_identically`:** "banana" and "2999-99-99" are refused with the identical typed shape (`-32022`, requested + supported), distinguishable in the record by the echoed `requested` value. The design's typed `version_negotiation_failed` exists; nothing unlocks.
+- **A2 `mid_session_initialize_still_refused`:** an `initialize` after modern traffic is refused identically, and the modern traffic around it is unaffected. There is no session to invalidate — the invalidation requirement is met by construction.
+
+Verdict: **pass**. The benchmark-semantics change is deliberate and recorded here: the task's subject changed because the product's protocol surface changed by Owner-ruled program decision, not because the bar moved. The diver client side remains diver-owned (task-86; the WS3 sidecar program serves that client now).
 
 ## Sources
 

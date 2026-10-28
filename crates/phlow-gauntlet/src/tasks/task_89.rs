@@ -7,38 +7,53 @@
 //! the session; garbage version strings are a typed
 //! `version_negotiation_failed`, not a parse panic.
 //!
-//! Seam mapping (verified, not invented): the rust seam is
-//! `phlow-mcp`'s `McpServer::initialize`
-//! (`crates/phlow-mcp/src/server.rs`), the real MCP server-side
-//! negotiation. It negotiates KNOWN versions correctly (client
-//! "2025-06-18" → "2025-06-18"), but UNKNOWN versions — garbage
-//! ("banana") and future ("2999-99-99") alike — silently negotiate
-//! to the NEWEST supported version (`PROTOCOL_VERSION =
-//! "2025-11-25"`) with no typed error: the server cannot distinguish
-//! a future version from garbage, and a client implementing only an
-//! older version is told the server speaks the newest. A second
-//! `initialize` mid-session is rejected ("Already initialized",
-//! -32600) but the session is NOT invalidated — it continues on the
-//! old version.
+//! History (the finding this task originally recorded): against
+//! the hand-rolled dual-era server, the seam was
+//! `McpServer::initialize`. Known versions negotiated correctly,
+//! but UNKNOWN versions — garbage ("banana") and future
+//! ("2999-99-99") alike — silently negotiated to the NEWEST
+//! supported version with no typed error, and a mid-session
+//! `initialize` was rejected (-32600) without invalidating the
+//! session. The task failed honestly at `"seam"`, and the two
+//! product decisions (fail closed on unknown versions? invalidate
+//! on re-initialize?) were banked for the owner.
 //!
-//! The diver client side (diver-owned, flagged): `ai.mcp.client`
-//! sends `protocolVersion = '2024-11-05'` — older than every version
-//! phlow-mcp supports — and DISCARDS the initialize result, so the
-//! negotiated version never reaches any feature gate. Skew is
-//! silently accepted on both ends.
+//! Resolution (fleet standardization, D-113/D-200; phlow rmcp
+//! migration, Stage C2): the banked decisions were answered by
+//! making the question disappear. The server is modern-only
+//! (2026-07-28): there is no `initialize` negotiation at all. The
+//! seam is now the era guard's admission function,
+//! `phlow_mcp::classify` (crates/phlow-mcp/src/guard.rs), the
+//! byte-level front door in front of the rmcp service:
 //!
-//! Four cases: two validation (known-version negotiation, which the
-//! server gets right), two adversarial (garbage/future versions,
-//! mid-session change). The task-level verdict is `fail` at
-//! `"seam"`.
+//! - `initialize` at ANY version is refused with the typed
+//!   `-32022` unsupported-version error, its `data` naming the
+//!   requested version and the one supported version — garbage
+//!   and future versions are refused *identically in shape* and
+//!   *distinguishably by name* (the refusal echoes what was
+//!   asked), which is exactly the typed fail-closed the design
+//!   asked for.
+//! - Modern frames (`server/discover`, `tools/*` carrying the
+//!   modern `_meta`) are admitted verbatim.
+//! - An `initialize` arriving after modern traffic is refused the
+//!   same way: the server is stateless, so there is no session to
+//!   invalidate and no version to change mid-stream — the
+//!   design's invalidation requirement is met by construction.
 //!
-//! Product-decision bank (phlow-owned, not implemented on gauntlet
-//! authority): whether unknown versions should fail closed (-32602)
-//! instead of silently upgrading to newest, and whether a
-//! mid-session re-initialize should invalidate the session.
+//! Four cases: two validation (legacy initialize refused typed;
+//! modern frames admitted), two adversarial (garbage/future
+//! refused identically; mid-session initialize still refused).
+//! The task-level verdict is `pass`: the skew discipline the
+//! design asks for now holds at the real seam.
+//!
+//! The diver client side remains diver-owned and flagged (see
+//! task-86): diver's `ai.mcp.client` spoke `2024-11-05` and
+//! discarded the initialize result. Under the modern-only fleet
+//! that client is served by the WS3 sidecar program, not by this
+//! server — out of this task's seam.
 
 use crate::{Ctx, TaskKind, TaskOutcome, bound_evidence};
-use phlow_mcp::server::{FakeRuntime, McpServer};
+use phlow_mcp::{GuardAction, classify};
 use std::fmt;
 
 // ---------------------------------------------------------------------------
@@ -55,10 +70,10 @@ pub const KIND: TaskKind = TaskKind::Rust;
 /// Probe cases the driver runs, in order:
 /// two validation, two adversarial.
 pub const CASES: [&str; 4] = [
-    "matching_versions_negotiate",
-    "skew_negotiates_older",
-    "garbage_and_future_silently_upgrade",
-    "mid_session_change_not_invalidated",
+    "legacy_initialize_refused_typed",
+    "modern_discover_admitted",
+    "garbage_and_future_refused_identically",
+    "mid_session_initialize_still_refused",
 ];
 
 // ---------------------------------------------------------------------------
@@ -151,17 +166,21 @@ impl CaseReport {
 // Driver plumbing
 // ---------------------------------------------------------------------------
 
-/// The newest version phlow-mcp supports (mirrors
-/// `phlow_mcp::protocol::PROTOCOL_VERSION`; read from the reply, not
-/// assumed, wherever the assertion needs it).
-const NEWEST: &str = "2025-11-25";
+/// The one version the migrated server speaks.
+const MODERN: &str = "2026-07-28";
+/// The typed refusal code for era violations.
+const UNSUPPORTED: i64 = -32022;
 
-/// Send one `initialize` with `version` and return the parsed reply.
-fn initialize_reply(
-    server: &mut McpServer<FakeRuntime>,
-    version: &str,
-) -> Result<serde_json::Value, DriverError> {
-    let frame = serde_json::json!({
+/// Classify one JSON frame value through the real guard seam.
+fn classify_value(frame: &serde_json::Value) -> Result<GuardAction, DriverError> {
+    let bytes =
+        serde_json::to_vec(frame).map_err(|e| fixture_error("frame", format!("serialize: {e}")))?;
+    Ok(classify(&bytes))
+}
+
+/// An `initialize` frame offering `version`.
+fn initialize_frame(version: &str) -> serde_json::Value {
+    serde_json::json!({
         "jsonrpc": "2.0",
         "id": 1,
         "method": "initialize",
@@ -170,149 +189,88 @@ fn initialize_reply(
             "capabilities": {},
             "clientInfo": {"name": "gauntlet", "version": "0.1.0"},
         },
-    });
-    let bytes = serde_json::to_vec(&frame)
-        .map_err(|e| fixture_error("initialize frame", format!("serialize: {e}")))?;
-    let reply = server
-        .reply(&bytes)
-        .ok_or_else(|| fixture_error("initialize reply", "server sent no reply"))?;
-    serde_json::from_slice(&reply)
-        .map_err(|e| fixture_error("initialize reply", format!("unparseable: {e}")))
+    })
 }
 
-/// The negotiated `protocolVersion` from an initialize result, or the
-/// JSON-RPC error code when the reply is an error.
-fn negotiated_or_code(reply: &serde_json::Value) -> Result<String, i64> {
-    if let Some(code) = reply
-        .pointer("/error/code")
-        .and_then(serde_json::Value::as_i64)
-    {
-        return Err(code);
+/// A modern-era frame for `method`, carrying the per-request
+/// `_meta` the era requires.
+fn modern_frame(method: &str) -> serde_json::Value {
+    let mut params = serde_json::json!({
+        "_meta": {
+            "io.modelcontextprotocol/protocolVersion": MODERN,
+            "io.modelcontextprotocol/clientInfo": {"name": "gauntlet", "version": "0.1.0"},
+            "io.modelcontextprotocol/clientCapabilities": {},
+        },
+    });
+    if method == "tools/call" {
+        params["name"] = serde_json::json!("flow_status");
+        params["arguments"] = serde_json::json!({});
     }
-    reply
-        .pointer("/result/protocolVersion")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_owned)
-        .ok_or(-1)
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": method,
+        "params": params,
+    })
+}
+
+/// The refusal in a `Respond` frame: `(code, requested, supported)`.
+fn refusal_parts(action: &GuardAction) -> Option<(i64, serde_json::Value, serde_json::Value)> {
+    let GuardAction::Respond(frame) = action else {
+        return None;
+    };
+    let code = frame.pointer("/error/code")?.as_i64()?;
+    let requested = frame.pointer("/error/data/requested")?.clone();
+    let supported = frame.pointer("/error/data/supported")?.clone();
+    Some((code, requested, supported))
 }
 
 // ---------------------------------------------------------------------------
 // Cases
 // ---------------------------------------------------------------------------
 
-/// V1: matching versions negotiate to the offered version.
-fn case_matching_versions_negotiate() -> Result<CaseReport, DriverError> {
-    const CASE: &str = "matching_versions_negotiate";
-    let mut server = McpServer::new(FakeRuntime::ok());
-    let reply = initialize_reply(&mut server, NEWEST)?;
-    let mut evidence = Vec::new();
-    match negotiated_or_code(&reply) {
-        Ok(negotiated) => {
-            evidence.push(format!("offered {NEWEST}, negotiated {negotiated}"));
-            if negotiated != NEWEST {
-                return Ok(CaseReport::fail(
-                    CASE,
-                    format!("matching version negotiated to {negotiated}, not {NEWEST}"),
-                    evidence,
-                ));
-            }
-        }
-        Err(code) => {
-            return Ok(CaseReport::fail(
-                CASE,
-                format!("matching version rejected with code {code}"),
-                evidence,
-            ));
-        }
-    }
-    evidence
-        .push("matching versions proceed: the negotiation works for known versions".to_string());
-    Ok(CaseReport::pass(
-        CASE,
-        serde_json::json!({"offered": NEWEST, "negotiated": NEWEST}),
-        evidence,
-    ))
-}
-
-/// V2: skew (client N-1) negotiates the greatest mutually supported
-/// version — the server gets the known-version case right.
-fn case_skew_negotiates_older() -> Result<CaseReport, DriverError> {
-    const CASE: &str = "skew_negotiates_older";
-    let mut server = McpServer::new(FakeRuntime::ok());
-    let reply = initialize_reply(&mut server, "2025-06-18")?;
-    let mut evidence = Vec::new();
-    match negotiated_or_code(&reply) {
-        Ok(negotiated) => {
-            evidence.push(format!("offered 2025-06-18, negotiated {negotiated}"));
-            if negotiated != "2025-06-18" {
-                return Ok(CaseReport::fail(
-                    CASE,
-                    format!("skew negotiated to {negotiated}, not 2025-06-18"),
-                    evidence,
-                ));
-            }
-        }
-        Err(code) => {
-            return Ok(CaseReport::fail(
-                CASE,
-                format!("known older version rejected with code {code}"),
-                evidence,
-            ));
-        }
-    }
-    evidence.push(
-        "client N, server N-1 negotiates N-1 and records it in the \
-         initialize result: the supported-version path is correct"
-            .to_string(),
-    );
-    Ok(CaseReport::pass(
-        CASE,
-        serde_json::json!({"offered": "2025-06-18", "negotiated": "2025-06-18"}),
-        evidence,
-    ))
-}
-
-/// A1: garbage ("banana") and future ("2999-99-99") versions both
-/// silently negotiate to the NEWEST supported version — no typed
-/// error, no fail-closed. The server cannot distinguish a future
-/// version from garbage, and a client implementing only an older
-/// version is told the server speaks the newest.
-fn case_garbage_and_future_silently_upgrade() -> Result<CaseReport, DriverError> {
-    const CASE: &str = "garbage_and_future_silently_upgrade";
+/// V1: `initialize` at legacy versions is refused with the typed
+/// -32022 error naming the requested version and the one
+/// supported version — the fail-closed answer to the banked
+/// product decision.
+fn case_legacy_initialize_refused_typed() -> Result<CaseReport, DriverError> {
+    const CASE: &str = "legacy_initialize_refused_typed";
     let mut evidence = Vec::new();
     let mut metrics = serde_json::Map::new();
-    for offered in ["banana", "2999-99-99"] {
-        let mut server = McpServer::new(FakeRuntime::ok());
-        let reply = initialize_reply(&mut server, offered)?;
-        match negotiated_or_code(&reply) {
-            Ok(negotiated) => {
+    for offered in ["2025-06-18", "2025-11-25"] {
+        let action = classify_value(&initialize_frame(offered))?;
+        match refusal_parts(&action) {
+            Some((code, requested, supported)) => {
                 evidence.push(format!(
-                    "offered {offered:?}, negotiated {negotiated} (no error)"
+                    "initialize {offered} refused: code {code}, requested {requested}, supported {supported}"
                 ));
-                if negotiated != NEWEST {
+                if code != UNSUPPORTED
+                    || requested != serde_json::json!(offered)
+                    || supported != serde_json::json!([MODERN])
+                {
                     return Ok(CaseReport::fail(
                         CASE,
-                        format!("{offered:?} negotiated to {negotiated}, not {NEWEST}"),
+                        format!(
+                            "initialize {offered} refused with the wrong shape: code {code}, requested {requested}, supported {supported}"
+                        ),
                         evidence,
                     ));
                 }
-                metrics.insert(offered.to_string(), serde_json::json!(negotiated));
+                metrics.insert(offered.to_string(), serde_json::json!(code));
             }
-            Err(code) => {
+            None => {
                 return Ok(CaseReport::fail(
                     CASE,
-                    format!("{offered:?} was rejected with code {code} — typed rejection exists?"),
+                    format!("initialize {offered} was not refused at the guard: {action:?}"),
                     evidence,
                 ));
             }
         }
     }
     evidence.push(
-        "garbage and future versions are indistinguishable to the \
-         server: both silently 'negotiate' the newest version. The \
-         design's typed `version_negotiation_failed` does not exist, \
-         and a future version unlocks the newest behavior for a client \
-         that may not implement it"
+        "legacy initialize fails closed with a typed refusal: the \
+         banked product decision is answered — there is no silent \
+         negotiation to any version"
             .to_string(),
     );
     Ok(CaseReport::pass(
@@ -322,89 +280,157 @@ fn case_garbage_and_future_silently_upgrade() -> Result<CaseReport, DriverError>
     ))
 }
 
-/// A2: a mid-session version change does not invalidate the session.
-/// After initialize("2025-06-18") + notifications/initialized, a
-/// second initialize("2025-11-25") is rejected ("Already
-/// initialized", -32600) but the session continues on the old
-/// version — ping still succeeds.
-fn case_mid_session_change_not_invalidated() -> Result<CaseReport, DriverError> {
-    const CASE: &str = "mid_session_change_not_invalidated";
+/// V2: modern frames are admitted verbatim — discover, list, and
+/// call all forward to the SDK service.
+fn case_modern_discover_admitted() -> Result<CaseReport, DriverError> {
+    const CASE: &str = "modern_discover_admitted";
     let mut evidence = Vec::new();
-    let mut server = McpServer::new(FakeRuntime::ok());
-    let reply = initialize_reply(&mut server, "2025-06-18")?;
-    if negotiated_or_code(&reply) != Ok("2025-06-18".to_string()) {
-        return Ok(CaseReport::fail(
-            CASE,
-            format!("setup initialize failed: {reply}"),
-            evidence,
-        ));
-    }
-    let notified = server.reply(br#"{"jsonrpc": "2.0", "method": "notifications/initialized"}"#);
-    if notified.is_some() {
-        return Ok(CaseReport::fail(
-            CASE,
-            "notifications/initialized unexpectedly produced a reply".to_string(),
-            evidence,
-        ));
-    }
-    if !server.is_ready() {
-        return Ok(CaseReport::fail(
-            CASE,
-            "server not ready after the handshake".to_string(),
-            evidence,
-        ));
-    }
-    evidence.push("session established at 2025-06-18, ready".to_string());
-    // Mid-session version change attempt.
-    let reply2 = initialize_reply(&mut server, "2025-11-25")?;
-    match negotiated_or_code(&reply2) {
-        Err(code) => {
-            evidence.push(format!("second initialize rejected with code {code}"));
-            if code != -32600 {
+    let mut forwarded = 0;
+    for method in ["server/discover", "tools/list", "tools/call"] {
+        let action = classify_value(&modern_frame(method))?;
+        match action {
+            GuardAction::Forward(_) => {
+                forwarded += 1;
+                evidence.push(format!("{method} with modern _meta forwarded"));
+            }
+            other => {
                 return Ok(CaseReport::fail(
                     CASE,
-                    format!("second initialize rejected with {code}, not -32600"),
+                    format!("{method} with modern _meta was not admitted: {other:?}"),
                     evidence,
                 ));
             }
         }
-        Ok(negotiated) => {
-            return Ok(CaseReport::fail(
-                CASE,
-                format!("second initialize unexpectedly negotiated {negotiated}"),
-                evidence,
-            ));
-        }
-    }
-    // The session is NOT invalidated: it continues on the old version.
-    if !server.is_ready() {
-        return Ok(CaseReport::fail(
-            CASE,
-            "session was invalidated by the second initialize".to_string(),
-            evidence,
-        ));
-    }
-    let ping = server
-        .reply(br#"{"jsonrpc": "2.0", "id": 9, "method": "ping"}"#)
-        .ok_or_else(|| fixture_error("ping", "no reply after the version-change attempt"))?;
-    let ping_text =
-        String::from_utf8(ping).map_err(|e| fixture_error("ping", format!("not utf-8: {e}")))?;
-    if !ping_text.contains("\"result\"") {
-        return Ok(CaseReport::fail(
-            CASE,
-            format!("ping failed after the version-change attempt: {ping_text}"),
-            evidence,
-        ));
     }
     evidence.push(
-        "the version-change attempt is rejected but the session \
-         survives on the old version: the design's invalidation does \
-         not happen"
+        "the modern era needs no handshake: discover and tool \
+         frames are admitted statelessly, each carrying its own \
+         version in _meta"
             .to_string(),
     );
     Ok(CaseReport::pass(
         CASE,
-        serde_json::json!({"second_initialize_code": -32600, "session_invalidated": false}),
+        serde_json::json!({"forwarded": forwarded}),
+        evidence,
+    ))
+}
+
+/// A1: garbage ("banana") and future ("2999-99-99") versions are
+/// refused identically — same code, same shape — while the
+/// refusal's `requested` field keeps them distinguishable by
+/// name. Neither unlocks anything.
+fn case_garbage_and_future_refused_identically() -> Result<CaseReport, DriverError> {
+    const CASE: &str = "garbage_and_future_refused_identically";
+    let mut evidence = Vec::new();
+    let mut metrics = serde_json::Map::new();
+    for offered in ["banana", "2999-99-99"] {
+        let action = classify_value(&initialize_frame(offered))?;
+        match refusal_parts(&action) {
+            Some((code, requested, supported)) => {
+                evidence.push(format!(
+                    "offered {offered:?} refused: code {code}, requested {requested}"
+                ));
+                if code != UNSUPPORTED
+                    || requested != serde_json::json!(offered)
+                    || supported != serde_json::json!([MODERN])
+                {
+                    return Ok(CaseReport::fail(
+                        CASE,
+                        format!(
+                            "{offered:?} refused with a divergent shape: code {code}, requested {requested}, supported {supported}"
+                        ),
+                        evidence,
+                    ));
+                }
+                metrics.insert(offered.to_string(), serde_json::json!(code));
+            }
+            None => {
+                return Ok(CaseReport::fail(
+                    CASE,
+                    format!("{offered:?} was not refused at the guard: {action:?}"),
+                    evidence,
+                ));
+            }
+        }
+    }
+    evidence.push(
+        "garbage and future versions are indistinguishable in \
+         outcome (both fail closed, typed) and distinguishable in \
+         the record (the refusal names what was asked): the \
+         design's typed version_negotiation_failed exists, as \
+         -32022 with requested/supported data"
+            .to_string(),
+    );
+    Ok(CaseReport::pass(
+        CASE,
+        serde_json::Value::Object(metrics),
+        evidence,
+    ))
+}
+
+/// A2: an `initialize` arriving after modern traffic is refused
+/// exactly like one arriving first — and the modern traffic
+/// around it is unaffected. There is no session to invalidate:
+/// the design's mid-session-change hazard does not exist in a
+/// stateless era.
+fn case_mid_session_initialize_still_refused() -> Result<CaseReport, DriverError> {
+    const CASE: &str = "mid_session_initialize_still_refused";
+    let mut evidence = Vec::new();
+    // Modern traffic first: the "session" is just prior frames.
+    match classify_value(&modern_frame("tools/call"))? {
+        GuardAction::Forward(_) => evidence.push("modern tools/call forwarded".to_string()),
+        other => {
+            return Ok(CaseReport::fail(
+                CASE,
+                format!("setup modern frame was not admitted: {other:?}"),
+                evidence,
+            ));
+        }
+    }
+    // The mid-session version-change attempt.
+    let action = classify_value(&initialize_frame("2025-11-25"))?;
+    let code = match refusal_parts(&action) {
+        Some((code, _, _)) => {
+            evidence.push(format!("mid-session initialize refused with code {code}"));
+            code
+        }
+        None => {
+            return Ok(CaseReport::fail(
+                CASE,
+                format!("mid-session initialize was not refused: {action:?}"),
+                evidence,
+            ));
+        }
+    };
+    if code != UNSUPPORTED {
+        return Ok(CaseReport::fail(
+            CASE,
+            format!("mid-session initialize refused with {code}, not {UNSUPPORTED}"),
+            evidence,
+        ));
+    }
+    // Nothing was invalidated: modern traffic still forwards.
+    match classify_value(&modern_frame("tools/call"))? {
+        GuardAction::Forward(_) => {
+            evidence.push("modern tools/call still forwarded after the refusal".to_string());
+        }
+        other => {
+            return Ok(CaseReport::fail(
+                CASE,
+                format!("modern traffic broke after the refusal: {other:?}"),
+                evidence,
+            ));
+        }
+    }
+    evidence.push(
+        "the version-change attempt is refused and nothing else \
+         changes: no session exists to invalidate, so the \
+         design's invalidation requirement is met by construction"
+            .to_string(),
+    );
+    Ok(CaseReport::pass(
+        CASE,
+        serde_json::json!({"initialize_code": code, "session_invalidated": false}),
         evidence,
     ))
 }
@@ -412,10 +438,10 @@ fn case_mid_session_change_not_invalidated() -> Result<CaseReport, DriverError> 
 /// Run one case by name.
 pub fn run_case(case: &'static str) -> Result<CaseReport, DriverError> {
     match case {
-        "matching_versions_negotiate" => case_matching_versions_negotiate(),
-        "skew_negotiates_older" => case_skew_negotiates_older(),
-        "garbage_and_future_silently_upgrade" => case_garbage_and_future_silently_upgrade(),
-        "mid_session_change_not_invalidated" => case_mid_session_change_not_invalidated(),
+        "legacy_initialize_refused_typed" => case_legacy_initialize_refused_typed(),
+        "modern_discover_admitted" => case_modern_discover_admitted(),
+        "garbage_and_future_refused_identically" => case_garbage_and_future_refused_identically(),
+        "mid_session_initialize_still_refused" => case_mid_session_initialize_still_refused(),
         _ => Err(DriverError::Fixture {
             what: "case".to_string(),
             detail: format!("unknown case '{case}'"),
@@ -435,8 +461,12 @@ struct TaskFailure {
 
 fn run_inner() -> Result<Vec<String>, TaskFailure> {
     let mut evidence = vec![
-        "seam: phlow-mcp's McpServer::initialize — the real server-side \
-         version negotiation (crates/phlow-mcp/src/server.rs)"
+        "seam: phlow-mcp's era guard, phlow_mcp::classify \
+         (crates/phlow-mcp/src/guard.rs) — the byte-level admission \
+         in front of the rmcp service, since the fleet \
+         standardization (D-113/D-200) made the server modern-only \
+         and deleted the initialize negotiation this task \
+         originally probed"
             .to_string(),
     ];
     for case in CASES {
@@ -459,16 +489,17 @@ fn run_inner() -> Result<Vec<String>, TaskFailure> {
         }
     }
     evidence.push(
-        "finding: known-version negotiation is correct, but unknown \
-         versions silently upgrade and mid-session changes do not \
-         invalidate — the skew discipline the design asks for is absent"
+        "finding: the skew discipline holds at the modern seam — \
+         every non-modern version contact fails closed with the \
+         typed -32022 refusal (requested + supported named), \
+         modern frames are admitted statelessly, and mid-session \
+         version changes are impossible by construction. The \
+         pre-migration finding (silent upgrade to newest; \
+         re-initialize without invalidation) is closed by the \
+         rmcp migration, Stage C2"
             .to_string(),
     );
-    Err(TaskFailure {
-        where_: "seam".to_string(),
-        how: "seam cannot meet the criteria: phlow-mcp's McpServer::initialize (crates/phlow-mcp/src/server.rs) negotiates known versions correctly — \"2025-11-25\" -> \"2025-11-25\", \"2025-06-18\" -> \"2025-06-18\" — but unknown versions are mishandled: garbage (\"banana\") and a future version (\"2999-99-99\") both silently negotiate to the NEWEST supported version (\"2025-11-25\") with no typed error, so the server cannot distinguish a future version from garbage and a client implementing only an older version is told the server speaks the newest; and a mid-session version change (second initialize) is rejected with -32600 \"Already initialized\" but the session is NOT invalidated — it continues on the old version (ping still succeeds). Diver-owned side note, flagged: diver's ai.mcp.client sends protocolVersion='2024-11-05' (older than every version phlow-mcp supports) and discards the initialize result, so the negotiated version never reaches any feature gate — skew is silently accepted on both ends. Product decisions banked for Matt (phlow-owned, not implemented on gauntlet authority): whether unknown versions should fail closed with a typed version_negotiation_failed instead of silently upgrading to newest, and whether a mid-session re-initialize should invalidate the session.".to_string(),
-        evidence,
-    })
+    Ok(evidence)
 }
 
 /// Attempt the task.

@@ -19,10 +19,13 @@ The closest scheduler-shaped API is `phlow-experiment::Scheduler`
 — but it is an *admission* scheduler (it decides which
 experiment nodes may run, topologically), not an *executing*
 scheduler; it never runs tasks, so it cannot be fair or unfair
-to them. The only async task machinery in the tree is the
-msgpack transport's single current-thread worker — one thread,
-not a pool, so the fairness question does not arise there. The
-design's bully job has no scheduler to bully.
+to them. The only async machinery in the tree is transport-class:
+the msgpack transport's single current-thread worker, and —
+since the rmcp migration (fleet standardization Stage C2,
+2026-10-28) — phlow-mcp's protocol framing, where private tokio
+runtimes wrap a mutex-serialized dispatch. Neither executes
+agent tasks as a pool, so the fairness question does not arise
+there. The design's bully job has no scheduler to bully.
 
 ## What this task attempts
 
@@ -61,11 +64,11 @@ There is no scheduler to be fair:
   `quantum` hits are all cryptography (post-quantum signatures/
   KEX), classified line by line.
 - `no_worker_pool_to_schedule` (V): zero worker-pool tokens;
-  the only real `tokio` code use is the msgpack transport's
-  single current-thread worker (the task-25 channel) — one
-  thread, not a pool, so no fairness question arises. Every
-  other `tokio` mention is doc prose explicitly saying async is
-  future work.
+  the real `tokio` code use is transport-class — the msgpack
+  transport's single current-thread worker (the task-25 channel)
+  and phlow-mcp's rmcp framing (classified hit by hit in the
+  case evidence) — not a pool, so no fairness question arises.
+  Every other `tokio` mention is doc prose.
 - `runaway_never_yields_has_no_target` (A): with no preemption,
   no quanta, and no pool, there is no scheduler to starve and no
   mechanism whose fairness could be measured. The case documents
