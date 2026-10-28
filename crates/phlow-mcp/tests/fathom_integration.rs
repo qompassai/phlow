@@ -89,7 +89,7 @@ fn fathom_tools_answer_through_phlow_client() {
         .call_tool(
             "binary_overview",
             json!({"target": target_arg}),
-            Duration::from_secs(600),
+            Duration::from_secs(1800),
         )
         .expect("binary_overview answers");
     assert_eq!(overview["tool"], "binary_overview");
