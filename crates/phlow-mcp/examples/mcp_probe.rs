@@ -18,8 +18,14 @@ use serde_json::json;
 
 fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
-    let split = argv.iter().position(|arg| arg == "--").unwrap_or(0);
-    let mut server_args: Vec<String> = argv.iter().skip(split + 1).cloned().collect();
+    // cargo run consumes the first `--` itself; a literal one only
+    // survives in direct-binary invocation. Skip past it if present.
+    let skip = argv
+        .iter()
+        .position(|arg| arg == "--")
+        .map(|pos| pos + 1)
+        .unwrap_or(0);
+    let mut server_args: Vec<String> = argv.iter().skip(skip).cloned().collect();
     let mut call: Option<(String, serde_json::Value)> = None;
     if let Some(pos) = server_args.iter().position(|arg| arg == "--call") {
         let tool = server_args
