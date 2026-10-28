@@ -219,21 +219,17 @@ fn finish_report(mut runtime: wiring::ProductionRuntime, result: &Value) -> Resu
     Ok(code)
 }
 
-/// Newline-framed MCP over stdio. stdout carries protocol JSON exclusively;
-/// `serve` flushes every frame. The server closes the runtime on every exit
-/// path, mirroring Python's `finally`.
+/// Newline-framed MCP over stdio, modern era only. stdout carries
+/// protocol JSON exclusively. `serve_stdio` closes the runtime on
+/// every exit path, mirroring Python's `finally`.
 fn serve(runtime: wiring::ProductionRuntime) -> Result<i32, String> {
     let board = runtime.attention_board();
     let mut server = McpServer::new(CliRuntime::new(runtime));
     if let Some(board) = board {
         server.set_attention_board(board);
     }
-    let stdin = io::stdin();
-    let stdout = io::stdout();
-    let mut input = stdin.lock();
-    let mut output = stdout.lock();
-    match server.serve(&mut input, &mut output) {
-        Ok(_) => Ok(0),
+    match phlow_mcp::serve_stdio(server) {
+        Ok(()) => Ok(0),
         Err(error) => Err(error.to_string()),
     }
 }

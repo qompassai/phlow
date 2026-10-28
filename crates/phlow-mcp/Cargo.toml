@@ -22,6 +22,16 @@ serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision
 # ryu: shortest-round-trip float formatting, post-processed to Python repr
 # exponent style (e+16 / e-07) in json_ascii.
 ryu = "1"
+# rmcp: the fleet-standard MCP SDK (pinned like every migrated
+# estate server). The hand-rolled dual-era framing this crate used
+# to carry is replaced by the SDK plus the admission guard in
+# src/guard.rs; phlow keeps the domain dispatch, the schema
+# dialect, and the canonical result-text spelling.
+rmcp = { version = "=3.8.0", features = ["server", "client", "transport-io", "transport-child-process"] }
+# tokio: rmcp is async; phlow's runtime is synchronous. The
+# handler and the client each own a private runtime and cross the
+# boundary in exactly one place (serve_stdio / McpClient).
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "io-std", "sync", "time"] }
 # toml: the MCP client profile format (the same crate phlow-config
 # uses for the operator config). Only toml::Value is used; profile
 # validation is explicit control flow in client::parse_profile.

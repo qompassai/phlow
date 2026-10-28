@@ -1,14 +1,13 @@
 //! Bounded MCP client for stdio servers (the outbound mirror of
-//! [`crate::server`]).
+//! the server side: [`crate::guard`] + [`crate::handler`]).
 //!
 //! phlow has always been an MCP *server*; this module is the
-//! client half. It spawns a configured server process, speaks
-//! newline-delimited JSON-RPC (the same framing the server side
-//! uses), performs the legacy `initialize` handshake, and offers
-//! `tools/list` / `tools/call` with hard bounds on frame size,
-//! wait time, and profile shape. Everything synchronous: one
+//! client half. It spawns a configured server process and offers
+//! `tools/list` / `tools/call` with hard bounds on wait time and
+//! profile shape. Everything synchronous at this surface (one
 //! request in flight at a time, exactly like the runtime behind
-//! the server loop.
+//! the server loop); the async rmcp client runs on a private
+//! runtime inside.
 //!
 //! Server registration is config-driven: a profile TOML file
 //! lists `[[servers]]` entries (name, command, args, env). The
@@ -17,34 +16,40 @@
 //! posture. Nothing here reads phlow's live operator config; a
 //! profile is whatever file the caller names.
 //!
-//! Protocol posture: the client offers
-//! [`crate::protocol::PROTOCOL_VERSION`] and accepts any answer
-//! in [`crate::protocol::SUPPORTED_PROTOCOL_VERSIONS`], recording
-//! the negotiated version for the caller to inspect. A server
-//! answering outside the supported set is a negotiation error,
-//! never a silent downgrade.
+//! Protocol posture (fleet standardization, D-113/GAP-4): the
+//! client speaks the modern era only, on rmcp's client —
+//! `server/discover` at connect, per-request `_meta` after. There
+//! is no legacy `initialize` mode: a server that cannot discover
+//! at 2026-07-28 is a negotiation error, never a silent downgrade
+//! (the fleet's servers are all modern-only; fathom, this
+//! client's named consumer target, migrated first).
 
 use std::fmt;
-use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc;
 use std::time::Duration;
 
+use rmcp::RoleClient;
+use rmcp::model::{
+    CallToolRequest, CallToolRequestParams, ClientCapabilities, ClientConfig, ClientRequest,
+    CustomRequest, Implementation, ListToolsRequest, ProtocolVersion,
+};
+use rmcp::service::{ClientInitializeError, PeerRequestOptions, RunningService, ServiceError};
+use rmcp::transport::TokioChildProcess;
 use serde_json::{Value, json};
 
-use crate::protocol::{PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS};
+use crate::protocol::MODERN_PROTOCOL_VERSION;
 
-/// Largest single frame the client will read (fathom caps its
-/// own tool output at 8 MiB; this leaves headroom, not infinity).
+/// Largest single result the client will hand back, serialized
+/// (fathom caps its own tool output at 8 MiB; this leaves
+/// headroom, not infinity). The hand-rolled client enforced this
+/// on raw frames; the SDK transport owns frame bounds now, so
+/// the bound is enforced here, on the values this surface
+/// returns.
 pub const FRAME_BYTES_MAX: usize = 16 * 1024 * 1024;
 /// Servers a single profile may register.
 pub const PROFILE_SERVERS_MAX: usize = 32;
 /// Arguments a single server entry may carry.
 pub const SERVER_ARGS_MAX: usize = 64;
-/// Notifications/interleaved frames skipped while awaiting one
-/// response before the wait is declared off the rails.
-pub const SKIPPED_FRAMES_MAX: usize = 1024;
 /// Default per-request wait. Callers driving slow tools (a
 /// Ghidra-backed fathom call can legitimately take minutes) pass
 /// a larger bound per call.
@@ -76,8 +81,8 @@ pub enum ClientError {
     Profile(String),
     /// The server process could not be spawned or died.
     Spawn(String),
-    /// The negotiated protocol version is outside the supported
-    /// set (client offered, server answered, both recorded).
+    /// The server does not speak the modern era (client offered,
+    /// server answered, both recorded).
     Negotiation {
         /// Version the client offered.
         offered: String,
@@ -254,117 +259,162 @@ fn required_string<'a>(
         .ok_or_else(|| ClientError::Profile(format!("{where_}.{key} must be a string")))
 }
 
+/// Map an rmcp service error onto the client's error surface,
+/// preserving the distinctions callers could see before the
+/// migration: RPC errors keep code+message, timeouts keep the
+/// bound, a dead transport is a spawn-class failure.
+fn service_error(error: ServiceError, bound: Duration) -> ClientError {
+    match error {
+        ServiceError::McpError(error) => ClientError::Rpc {
+            code: i64::from(error.code.0),
+            message: error.message.into_owned(),
+        },
+        ServiceError::Timeout { .. } => ClientError::Timeout(bound),
+        ServiceError::TransportClosed | ServiceError::TransportSend(_) => {
+            ClientError::Spawn(format!("server transport failed: {error}"))
+        }
+        other => ClientError::Protocol(other.to_string()),
+    }
+}
+
+/// Enforce [`FRAME_BYTES_MAX`] on a value this surface hands back.
+fn check_result_size(value: &Value) -> Result<(), ClientError> {
+    let size = serde_json::to_string(value)
+        .map(|text| text.len())
+        .unwrap_or(0);
+    if size > FRAME_BYTES_MAX {
+        return Err(ClientError::Protocol(format!(
+            "result exceeds the {FRAME_BYTES_MAX}-byte bound"
+        )));
+    }
+    Ok(())
+}
+
 /// A live stdio session with one MCP server.
 pub struct McpClient {
-    child: Child,
-    lines: mpsc::Receiver<std::io::Result<String>>,
-    next_id: u64,
-    /// The protocol version in force (the server's answer to
-    /// `initialize`, validated against the supported set).
+    runtime: Option<tokio::runtime::Runtime>,
+    service: Option<RunningService<RoleClient, ClientConfig>>,
+    /// The protocol version in force (the modern era this client
+    /// discovered the server at).
     pub negotiated_version: String,
-    /// `serverInfo.name` from the initialize result, if reported.
+    /// `serverInfo.name` from the discover result, if reported.
     pub server_name: Option<String>,
-    stdin: ChildStdin,
 }
 
 impl McpClient {
-    /// Spawn the server and complete the `initialize` handshake.
+    /// Spawn the server and discover it at the modern era.
     pub fn connect(config: &McpServerConfig, client_name: &str) -> Result<McpClient, ClientError> {
-        let mut command = Command::new(&config.command);
-        command
-            .args(&config.args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+        let mut command = tokio::process::Command::new(&config.command);
+        command.args(&config.args);
         for (key, value) in &config.env {
             command.env(key, value);
         }
-        let mut child = command
-            .spawn()
-            .map_err(|e| ClientError::Spawn(format!("{}: {e}", config.command)))?;
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| ClientError::Spawn("child stdin was not piped".to_string()))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| ClientError::Spawn("child stdout was not piped".to_string()))?;
-        let (sender, lines) = mpsc::channel::<std::io::Result<String>>();
-        std::thread::spawn(move || {
-            let mut reader = BufReader::new(stdout);
-            loop {
-                let mut line = String::new();
-                match reader.read_line(&mut line) {
-                    Ok(0) => break,
-                    Ok(_) => {
-                        if sender.send(Ok(line)).is_err() {
-                            break;
-                        }
-                    }
-                    Err(error) => {
-                        let _ = sender.send(Err(error));
-                        break;
-                    }
-                }
-            }
-        });
-        let mut client = McpClient {
-            child,
-            lines,
-            next_id: 1,
-            negotiated_version: String::new(),
-            server_name: None,
-            stdin,
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| ClientError::Spawn(format!("client runtime: {e}")))?;
+        // Spawning a tokio child process needs the reactor: enter
+        // the runtime for the spawn (the runtime itself lives in
+        // the returned client, keeping the child driver alive).
+        let (transport, _stderr) = {
+            let _enter = runtime.enter();
+            TokioChildProcess::builder(command)
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .map_err(|e| ClientError::Spawn(format!("{}: {e}", config.command)))?
         };
-        let result = client.request(
-            "initialize",
-            json!({
-                "capabilities": {},
-                "clientInfo": {"name": client_name, "version": env!("CARGO_PKG_VERSION")},
-                "protocolVersion": PROTOCOL_VERSION,
-            }),
-            RESPONSE_TIMEOUT_DEFAULT,
-        )?;
-        let answered = result
-            .get("protocolVersion")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                ClientError::Protocol("initialize result carries no protocolVersion".to_string())
-            })?
-            .to_string();
-        if !SUPPORTED_PROTOCOL_VERSIONS.contains(&answered.as_str()) {
-            return Err(ClientError::Negotiation {
-                offered: PROTOCOL_VERSION.to_string(),
-                answered,
-            });
-        }
-        client.negotiated_version = answered;
-        client.server_name = result
-            .get("serverInfo")
-            .and_then(|info| info.get("name"))
-            .and_then(Value::as_str)
-            .map(str::to_string);
-        client.notify("notifications/initialized", json!({}))?;
-        Ok(client)
+        let handler = ClientConfig::new(
+            ClientCapabilities::default(),
+            Implementation::new(client_name, env!("CARGO_PKG_VERSION")),
+        );
+        let service = runtime.block_on(async {
+            use rmcp::service::ClientServiceExt;
+            let connect = handler.serve_with_lifecycle(
+                transport,
+                rmcp::service::ClientLifecycleMode::Discover {
+                    preferred_versions: vec![ProtocolVersion::V_2026_07_28],
+                },
+            );
+            match tokio::time::timeout(RESPONSE_TIMEOUT_DEFAULT, connect).await {
+                Ok(result) => result.map_err(|e| {
+                    use ClientInitializeError as InitError;
+                    match e {
+                        // The server named its versions and none
+                        // is the modern era: a negotiation failure
+                        // with both sides recorded.
+                        InitError::NoCompatibleProtocolVersion {
+                            server_supported, ..
+                        } => ClientError::Negotiation {
+                            offered: MODERN_PROTOCOL_VERSION.to_string(),
+                            answered: server_supported
+                                .iter()
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                        },
+                        // Discover itself was refused (a legacy
+                        // server's method-not-found is the common
+                        // case): also a negotiation failure — the
+                        // refusal is the server's answer.
+                        InitError::JsonRpcError(error) => ClientError::Negotiation {
+                            offered: MODERN_PROTOCOL_VERSION.to_string(),
+                            answered: format!(
+                                "server/discover refused: {} {}",
+                                error.code.0, error.message
+                            ),
+                        },
+                        InitError::TransportError { .. } => {
+                            ClientError::Spawn("server transport failed during connect".to_string())
+                        }
+                        other => ClientError::Protocol(format!("connect failed: {other}")),
+                    }
+                }),
+                Err(_) => Err(ClientError::Timeout(RESPONSE_TIMEOUT_DEFAULT)),
+            }
+        })?;
+        let info = service.peer().peer_info();
+        let (negotiated_version, server_name) = match info.as_deref() {
+            Some(info) => {
+                let version = info.protocol_version.to_string();
+                if version != MODERN_PROTOCOL_VERSION {
+                    return Err(ClientError::Negotiation {
+                        offered: MODERN_PROTOCOL_VERSION.to_string(),
+                        answered: version,
+                    });
+                }
+                (
+                    version,
+                    info.server_info.as_ref().map(|info| info.name.clone()),
+                )
+            }
+            None => (MODERN_PROTOCOL_VERSION.to_string(), None),
+        };
+        Ok(McpClient {
+            runtime: Some(runtime),
+            service: Some(service),
+            negotiated_version,
+            server_name,
+        })
     }
 
     /// Names of the tools the server offers.
     pub fn list_tools(&mut self) -> Result<Vec<String>, ClientError> {
-        let result = self.request("tools/list", json!({}), RESPONSE_TIMEOUT_DEFAULT)?;
-        let tools = result
-            .get("tools")
-            .and_then(Value::as_array)
-            .ok_or_else(|| {
-                ClientError::Protocol("tools/list result has no tools array".to_string())
-            })?;
+        let result = self.send(
+            ClientRequest::ListToolsRequest(ListToolsRequest {
+                method: Default::default(),
+                params: None,
+                extensions: Default::default(),
+            }),
+            RESPONSE_TIMEOUT_DEFAULT,
+        )?;
+        let rmcp::model::ServerResult::ListToolsResult(result) = result else {
+            return Err(ClientError::Protocol(
+                "tools/list answered with an unexpected result type".to_string(),
+            ));
+        };
         let mut names = Vec::new();
-        for tool in tools {
-            let name = tool
-                .get("name")
-                .and_then(Value::as_str)
-                .ok_or_else(|| ClientError::Protocol("tool entry has no name".to_string()))?;
-            names.push(name.to_string());
+        for tool in &result.tools {
+            names.push(tool.name.clone().into_owned());
         }
         Ok(names)
     }
@@ -379,119 +429,108 @@ impl McpClient {
         arguments: Value,
         timeout: Duration,
     ) -> Result<Value, ClientError> {
-        let result = self.request(
-            "tools/call",
-            json!({"arguments": arguments, "name": name}),
+        let arguments = match arguments {
+            Value::Object(map) => Some(map),
+            Value::Null => None,
+            _ => {
+                return Err(ClientError::Protocol(
+                    "tool arguments must be a JSON object".to_string(),
+                ));
+            }
+        };
+        let mut params = CallToolRequestParams::new(name.to_string());
+        if let Some(arguments) = arguments {
+            params = params.with_arguments(arguments);
+        }
+        let result = self.send(
+            ClientRequest::CallToolRequest(CallToolRequest::new(params)),
             timeout,
         )?;
-        let is_error = result
-            .get("isError")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
+        let rmcp::model::ServerResult::CallToolResult(result) = result else {
+            return Err(ClientError::Protocol(format!(
+                "tool '{name}' answered with an unexpected result type"
+            )));
+        };
+        let is_error = result.is_error.unwrap_or(false);
         let text = result
-            .get("content")
-            .and_then(Value::as_array)
-            .and_then(|content| content.first())
-            .and_then(|item| item.get("text"))
-            .and_then(Value::as_str)
+            .content
+            .first()
+            .and_then(|item| item.as_text())
+            .map(|text| text.text.as_str())
             .ok_or_else(|| {
                 ClientError::Protocol(format!("tool '{name}' result has no text content"))
             })?;
         if is_error {
             return Err(ClientError::Tool(text.to_string()));
         }
-        match serde_json::from_str::<Value>(text) {
-            Ok(value) => Ok(value),
-            Err(_) => Ok(json!({"text": text})),
-        }
+        let value = match serde_json::from_str::<Value>(text) {
+            Ok(value) => value,
+            Err(_) => json!({"text": text}),
+        };
+        check_result_size(&value)?;
+        Ok(value)
     }
 
-    /// One request/response round trip, bounded by `timeout`.
+    /// One request/response round trip, bounded by `timeout`, for
+    /// methods outside the typed tools surface. Returns the raw
+    /// `result` value.
     pub fn request(
         &mut self,
         method: &str,
         params: Value,
         timeout: Duration,
     ) -> Result<Value, ClientError> {
-        let id = self.next_id;
-        self.next_id += 1;
-        let frame = json!({
-            "id": id,
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params,
-        });
-        self.send_frame(&frame)?;
-        let mut skipped = 0_usize;
-        loop {
-            let line = match self.lines.recv_timeout(timeout) {
-                Ok(Ok(line)) => line,
-                Ok(Err(error)) => {
-                    return Err(ClientError::Spawn(format!("server stdout failed: {error}")));
-                }
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    return Err(ClientError::Timeout(timeout));
-                }
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    return Err(ClientError::Spawn("server closed its stdout".to_string()));
-                }
-            };
-            if line.len() > FRAME_BYTES_MAX {
-                return Err(ClientError::Protocol(format!(
-                    "frame exceeds the {FRAME_BYTES_MAX}-byte bound"
-                )));
-            }
-            let message: Value = serde_json::from_str(&line)
-                .map_err(|e| ClientError::Protocol(format!("frame is not valid JSON: {e}")))?;
-            if message.get("id").and_then(Value::as_u64) != Some(id) {
-                // A notification or an interleaved frame: bounded
-                // skipping, never an unbounded wait.
-                skipped += 1;
-                if skipped > SKIPPED_FRAMES_MAX {
-                    return Err(ClientError::Protocol(format!(
-                        "more than {SKIPPED_FRAMES_MAX} frames skipped awaiting id {id}"
-                    )));
-                }
-                continue;
-            }
-            if let Some(error) = message.get("error") {
-                let code = error.get("code").and_then(Value::as_i64).unwrap_or(-1);
-                let message_text = error
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .unwrap_or("no message")
-                    .to_string();
-                return Err(ClientError::Rpc {
-                    code,
-                    message: message_text,
-                });
-            }
-            return Ok(message.get("result").cloned().unwrap_or(Value::Null));
-        }
+        let result = self.send(
+            ClientRequest::CustomRequest(CustomRequest::new(method, Some(params))),
+            timeout,
+        )?;
+        let value = match result {
+            rmcp::model::ServerResult::CustomResult(custom) => custom.0,
+            other => serde_json::to_value(&other).unwrap_or(Value::Null),
+        };
+        check_result_size(&value)?;
+        Ok(value)
     }
 
-    fn notify(&mut self, method: &str, params: Value) -> Result<(), ClientError> {
-        let frame = json!({"jsonrpc": "2.0", "method": method, "params": params});
-        self.send_frame(&frame)
-    }
-
-    fn send_frame(&mut self, frame: &Value) -> Result<(), ClientError> {
-        let mut text = serde_json::to_string(frame)
-            .map_err(|e| ClientError::Protocol(format!("frame does not serialize: {e}")))?;
-        text.push('\n');
-        self.stdin
-            .write_all(text.as_bytes())
-            .and_then(|()| self.stdin.flush())
-            .map_err(|e| ClientError::Spawn(format!("server stdin failed: {e}")))?;
-        Ok(())
+    /// Send one typed request through the running service.
+    fn send(
+        &mut self,
+        request: ClientRequest,
+        timeout: Duration,
+    ) -> Result<rmcp::model::ServerResult, ClientError> {
+        let runtime = self
+            .runtime
+            .as_ref()
+            .ok_or_else(|| ClientError::Spawn("client session is closed".to_string()))?;
+        let service = self
+            .service
+            .as_ref()
+            .ok_or_else(|| ClientError::Spawn("client session is closed".to_string()))?;
+        let peer = service.peer().clone();
+        runtime.block_on(async move {
+            let handle = peer
+                .send_request_with_option(request, PeerRequestOptions::with_timeout(timeout))
+                .await
+                .map_err(|e| service_error(e, timeout))?;
+            handle
+                .await_response()
+                .await
+                .map_err(|e| service_error(e, timeout))
+        })
     }
 }
 
 impl Drop for McpClient {
     fn drop(&mut self) {
-        // The session is over; the child must not outlive it.
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        // The session is over; the child must not outlive it. The
+        // transport's own cleanup kills the child process when the
+        // service drops; closing first gives it the chance to end
+        // cleanly.
+        if let (Some(runtime), Some(mut service)) = (self.runtime.take(), self.service.take()) {
+            runtime.block_on(async move {
+                let _ = service.close().await;
+            });
+        }
     }
 }
 
@@ -535,8 +574,9 @@ command = "other-server"
     }
 
     /// A scripted fake MCP server (python3, present wherever the
-    /// workspace tests run) answering the legacy handshake for
-    /// protocol 2025-06-18 — the version fathom negotiates.
+    /// workspace tests run) speaking the modern era: it answers
+    /// `server/discover` at 2026-07-28 and serves tools/list +
+    /// tools/call statelessly, the way migrated fleet servers do.
     fn fake_server_config(dir: &Path) -> McpServerConfig {
         let script = dir.join("fake_mcp.py");
         std::fs::write(
@@ -546,16 +586,28 @@ import json, sys
 for line in sys.stdin:
     req = json.loads(line)
     method = req.get("method")
-    if method == "initialize":
-        result = {"protocolVersion": "2025-06-18",
-                  "capabilities": {},
-                  "serverInfo": {"name": "fake", "version": "0"}}
+    if "id" not in req:
+        continue
+    if method == "server/discover":
+        result = {"resultType": "complete",
+                  "supportedVersions": ["2026-07-28"],
+                  "capabilities": {"tools": {}},
+                  "instructions": "fake",
+                  "ttlMs": 3600000, "cacheScope": "public",
+                  "_meta": {"io.modelcontextprotocol/serverInfo":
+                            {"name": "fake", "version": "0"}}}
     elif method == "tools/list":
-        result = {"tools": [{"name": "fake_tool"}]}
+        result = {"resultType": "complete",
+                  "tools": [{"name": "fake_tool", "description": "fake",
+                             "inputSchema": {"type": "object"}}]}
     elif method == "tools/call":
-        result = {"content": [{"type": "text", "text": "{\"ok\": true}"}],
+        result = {"resultType": "complete",
+                  "content": [{"type": "text", "text": "{\"ok\": true}"}],
                   "isError": False}
     else:
+        sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": req["id"],
+            "error": {"code": -32601, "message": "Method not found"}}) + "\n")
+        sys.stdout.flush()
         continue
     sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": req["id"],
                                  "result": result}) + "\n")
@@ -572,18 +624,63 @@ for line in sys.stdin:
     }
 
     #[test]
-    fn validation_client_negotiates_and_calls() {
+    fn validation_client_discovers_and_calls() {
         let dir = std::env::temp_dir().join(format!("phlow-mcp-client-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let config = fake_server_config(&dir);
         let mut client = McpClient::connect(&config, "phlow-test").unwrap();
-        assert_eq!(client.negotiated_version, "2025-06-18");
+        assert_eq!(client.negotiated_version, "2026-07-28");
         assert_eq!(client.server_name.as_deref(), Some("fake"));
         assert_eq!(client.list_tools().unwrap(), vec!["fake_tool".to_string()]);
         let value = client
             .call_tool("fake_tool", json!({}), Duration::from_secs(10))
             .unwrap();
         assert_eq!(value, json!({"ok": true}));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A legacy-only server (it knows `initialize`, nothing else)
+    /// must be refused at connect: the modern-only client has no
+    /// downgrade path (GAP-4).
+    #[test]
+    fn adversarial_client_refuses_a_legacy_only_server() {
+        let dir =
+            std::env::temp_dir().join(format!("phlow-mcp-client-legacy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("legacy_mcp.py");
+        std::fs::write(
+            &script,
+            r#"
+import json, sys
+for line in sys.stdin:
+    req = json.loads(line)
+    if "id" not in req:
+        continue
+    if req.get("method") == "initialize":
+        result = {"protocolVersion": "2025-06-18", "capabilities": {},
+                  "serverInfo": {"name": "legacy", "version": "0"}}
+        sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": req["id"],
+                                     "result": result}) + "\n")
+    else:
+        sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": req["id"],
+            "error": {"code": -32601, "message": "Method not found"}}) + "\n")
+    sys.stdout.flush()
+"#,
+        )
+        .unwrap();
+        let config = McpServerConfig {
+            name: "legacy".to_string(),
+            command: "python3".to_string(),
+            args: vec![script.to_string_lossy().into_owned()],
+            env: Vec::new(),
+        };
+        match McpClient::connect(&config, "phlow-test") {
+            Err(ClientError::Negotiation { offered, .. }) => {
+                assert_eq!(offered, "2026-07-28");
+            }
+            Err(other) => panic!("expected a negotiation refusal, got: {other}"),
+            Ok(_) => panic!("a legacy-only server must not connect"),
+        }
         std::fs::remove_dir_all(&dir).ok();
     }
 }

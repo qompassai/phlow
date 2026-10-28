@@ -67,11 +67,11 @@ fn fathom_tools_answer_through_phlow_client() {
         .collect();
 
     let mut client =
-        McpClient::connect(&server, "phlow-integration-test").expect("fathom handshake succeeds");
-    // Fathom speaks the classic initialize handshake at
-    // 2025-06-18, inside phlow's supported set: negotiation must
-    // land there, not on phlow's newer offer.
-    assert_eq!(client.negotiated_version, "2025-06-18");
+        McpClient::connect(&server, "phlow-integration-test").expect("fathom discovery succeeds");
+    // Fathom migrated to the modern era first (fleet
+    // standardization, D-113): discovery must land at 2026-07-28 —
+    // the only version the modern-only client offers (GAP-4).
+    assert_eq!(client.negotiated_version, "2026-07-28");
     assert_eq!(client.server_name.as_deref(), Some("fathom"));
 
     let tools = client.list_tools().expect("tools/list answers");

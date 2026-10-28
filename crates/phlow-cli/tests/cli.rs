@@ -347,20 +347,40 @@ fn serve_session(frames: &[&str]) -> std::process::Output {
     child.wait_with_output().expect("reap phlow serve")
 }
 
-/// The MCP initialize handshake: `initialize` (responded) then the
-/// `notifications/initialized` notification (unanswered) flips the server
-/// to ready, mirroring the Python server's lifecycle gate. `initialize`
-/// requires a nonempty `protocolVersion`, like the real MCP handshake.
-fn handshake() -> [&'static str; 2] {
-    [
-        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}"#,
-        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
-    ]
+/// The modern era has no handshake (fleet standardization,
+/// D-113): every request carries its `_meta` — protocol version,
+/// clientInfo, clientCapabilities — and is served statelessly.
+/// Build one modern request frame with that `_meta` in its params.
+fn modern_frame(id: u64, method: &str, extra_params: Value) -> String {
+    let mut params = serde_json::json!({
+        "_meta": {
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientInfo": {"name": "t", "version": "1"},
+            "io.modelcontextprotocol/clientCapabilities": {},
+        },
+    });
+    if let (Some(target), Some(extra)) = (params.as_object_mut(), extra_params.as_object()) {
+        for (key, value) in extra {
+            target.insert(key.clone(), value.clone());
+        }
+    }
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": method,
+        "params": params,
+    })
+    .to_string()
 }
 
 #[test]
-fn serve_answers_initialize_and_closes_on_eof() {
-    let output = serve_session(&handshake()[..1]);
+fn serve_refuses_initialize_and_closes_on_eof() {
+    // The legacy handshake is refused by design: -32022 naming the
+    // supported versions, the connection stays up, and EOF still
+    // closes the session (and the runtime) cleanly.
+    let output = serve_session(&[
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}"#,
+    ]);
     assert_eq!(
         output.status.code(),
         Some(0),
@@ -371,21 +391,22 @@ fn serve_answers_initialize_and_closes_on_eof() {
     assert_eq!(lines.len(), 1, "one response frame, got: {lines:?}");
     let response: Value = serde_json::from_str(&lines[0]).expect("response is JSON");
     assert_eq!(response["id"], 1);
-    assert!(response.get("result").is_some(), "response: {response}");
+    assert_eq!(response["error"]["code"], -32022, "response: {response}");
+    assert_eq!(
+        response["error"]["data"]["supported"],
+        serde_json::json!(["2026-07-28"]),
+        "response: {response}"
+    );
 }
 
 #[test]
 fn serve_tools_list_exposes_flow_run() {
-    let output = serve_session(&[
-        handshake()[0],
-        handshake()[1],
-        r#"{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}"#,
-    ]);
+    let frame = modern_frame(2, "tools/list", serde_json::json!({}));
+    let output = serve_session(&[&frame]);
     assert_eq!(output.status.code(), Some(0));
     let lines = stdout_lines(&output);
-    // initialize answered; the notification is silent; tools/list answered.
-    assert_eq!(lines.len(), 2, "frames: {lines:?}");
-    let response: Value = serde_json::from_str(&lines[1]).expect("response is JSON");
+    assert_eq!(lines.len(), 1, "frames: {lines:?}");
+    let response: Value = serde_json::from_str(&lines[0]).expect("response is JSON");
     let tools = response["result"]["tools"].as_array().expect("tools array");
     let names: Vec<&str> = tools
         .iter()
@@ -397,9 +418,9 @@ fn serve_tools_list_exposes_flow_run() {
 }
 
 #[test]
-fn serve_rejects_calls_before_the_handshake() {
-    // The lifecycle gate, mirroring Python: tools are unavailable until
-    // initialize + notifications/initialized.
+fn serve_rejects_calls_without_modern_meta() {
+    // The era gate that replaced the lifecycle gate: a request
+    // without the modern `_meta` is refused, never served.
     let output = serve_session(&[r#"{"jsonrpc":"2.0","id":9,"method":"tools/list","params":{}}"#]);
     assert_eq!(output.status.code(), Some(0));
     let lines = stdout_lines(&output);
@@ -409,14 +430,15 @@ fn serve_rejects_calls_before_the_handshake() {
 
 #[test]
 fn serve_tools_call_status_needs_no_model() {
-    let output = serve_session(&[
-        handshake()[0],
-        handshake()[1],
-        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"flow_status","arguments":{}}}"#,
-    ]);
+    let frame = modern_frame(
+        3,
+        "tools/call",
+        serde_json::json!({"name": "flow_status", "arguments": {}}),
+    );
+    let output = serve_session(&[&frame]);
     assert_eq!(output.status.code(), Some(0));
     let lines = stdout_lines(&output);
-    let response: Value = serde_json::from_str(&lines[1]).expect("response is JSON");
+    let response: Value = serde_json::from_str(&lines[0]).expect("response is JSON");
     assert!(response.get("result").is_some(), "response: {response}");
 }
 
