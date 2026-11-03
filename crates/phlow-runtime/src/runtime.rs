@@ -361,6 +361,10 @@ pub struct Runtime<L: LlmTransport, E: EditorTransport> {
     /// server) installed one. Consulted only when the operator config
     /// enables `[attention]`; see [`crate::attention`].
     attention_gate: Option<crate::attention::AttentionGate>,
+    /// The most recent intake approval and admission, held for resume
+    /// revalidation. Set by `intake_task`; see [`crate::intake`].
+    intake_approval: Option<crate::intake::Approval>,
+    intake_admission: Option<crate::intake::Admission>,
 }
 
 impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
@@ -398,6 +402,8 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
             check_pins,
             served_models: ServedModels::Unprobed,
             attention_gate: None,
+            intake_approval: None,
+            intake_admission: None,
         })
     }
 
@@ -1822,6 +1828,216 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
         backend
             .list_models()
             .map_err(|error| RuntimeError::Backend(error.to_string()))
+    }
+
+    /// The host limits the Mandate judges against, derived from the
+    /// live config, workspace, and tool schemas — the same state a run
+    /// would meet, snapshotted at call time.
+    fn host_limits(&self) -> crate::intake::HostLimits {
+        let agent = self.config.agent();
+        let mut tool_universe: BTreeSet<String> = crate::tools::file_schemas()
+            .iter()
+            .filter_map(|schema| schema["function"]["name"].as_str().map(str::to_owned))
+            .collect();
+        for name in phlow_editor::contract::EDITOR_TOOLS {
+            tool_universe.insert(name.to_owned());
+        }
+        let write_tools: BTreeSet<String> =
+            ["editor_check", "editor_lint", "file_write", "flow_check"]
+                .iter()
+                .map(|name| (*name).to_owned())
+                .collect();
+        let workspace_root = std::fs::canonicalize(self.workspace.root())
+            .unwrap_or_else(|_| crate::intake::normalize_lexical(self.workspace.root()));
+        crate::intake::HostLimits {
+            bounds_ceiling: crate::intake::TaskBounds {
+                max_iterations: agent.max_iterations(),
+                max_cycles: agent.max_cycles(),
+                max_tool_calls: agent.max_tool_calls(),
+                max_context_chars: agent.max_context_chars(),
+            },
+            max_task_chars: agent.max_task_chars(),
+            workspace_root,
+            tool_universe,
+            write_tools,
+            configured_checks: self.config.checks().keys().cloned().collect(),
+            trusted: self.config.trusted(),
+        }
+    }
+
+    /// The most recent intake approval held by this runtime, if any.
+    pub fn last_approval(&self) -> Option<&crate::intake::Approval> {
+        self.intake_approval.as_ref()
+    }
+
+    /// The most recent intake admission held by this runtime, if any.
+    pub fn last_admission(&self) -> Option<&crate::intake::Admission> {
+        self.intake_admission.as_ref()
+    }
+
+    /// Run task intake for `spec`: the Mandate first, then — only on
+    /// approval — one tool-less Eval call and admission. See
+    /// [`crate::intake`] for the layer contract.
+    ///
+    /// The report's `status` is one of `"admitted"`, `"rejected"`,
+    /// `"refused"` (the Eval tried to widen the approved bounds), or
+    /// `"eval_failed"` (the assessment call or its reply failed; the
+    /// Mandate approval is still stored). A rejected task never reaches
+    /// the model: no Eval call is made. On admission, the approval and
+    /// admission are stored for [`Runtime::resume_task`].
+    pub fn intake_task(&mut self, spec: &crate::intake::TaskSpec) -> Value {
+        if self.closed {
+            return error_report("Runtime closed");
+        }
+        let writer = self.writer.clone();
+        let _guard = match writer.try_lock() {
+            Ok(guard) => guard,
+            Err(_) => return error_report("Runtime busy: single writer"),
+        };
+        let limits = self.host_limits();
+        let approval = match crate::intake::evaluate_mandate(spec, &limits) {
+            crate::intake::MandateVerdict::Approved(approval) => approval,
+            rejected => {
+                let mut report = Map::new();
+                report.insert("status".to_owned(), Value::String("rejected".to_owned()));
+                report.insert("verified".to_owned(), Value::Bool(false));
+                report.insert("task_id".to_owned(), Value::String(spec.id.clone()));
+                report.insert("mandate".to_owned(), rejected.to_value());
+                return Value::Object(report);
+            }
+        };
+        self.intake_approval = Some(approval.clone());
+        self.run_eval(spec, approval)
+    }
+
+    /// The Eval half of [`Runtime::intake_task`]: one bounded,
+    /// tool-less model call (the planner's model), parse, admit.
+    fn run_eval(
+        &mut self,
+        spec: &crate::intake::TaskSpec,
+        approval: crate::intake::Approval,
+    ) -> Value {
+        let configured = self.config.model_for(ModelRole::Planner).to_owned();
+        let (model, _) = self.effective_model(ModelRole::Planner, &configured);
+        let messages = vec![
+            serde_json::json!({"role": "system", "content": crate::intake::EVAL_SYSTEM_PROMPT}),
+            serde_json::json!({"role": "user", "content": crate::intake::eval_prompt(spec, &approval)}),
+        ];
+        let (content, _calls) = match self.chat(&messages, &[], &model) {
+            Ok(pair) => pair,
+            Err(error) => return self.eval_failed_report(spec, &approval, &error.to_string()),
+        };
+        let eval = match crate::intake::parse_eval_report(&content) {
+            Ok(eval) => eval,
+            Err(error) => return self.eval_failed_report(spec, &approval, &error.to_string()),
+        };
+        match crate::intake::admit(approval, eval) {
+            Ok(admission) => {
+                let mut report = Map::new();
+                report.insert("status".to_owned(), Value::String("admitted".to_owned()));
+                report.insert("task_id".to_owned(), Value::String(spec.id.clone()));
+                report.insert("admission".to_owned(), admission.to_value());
+                self.intake_admission = Some(admission);
+                Value::Object(report)
+            }
+            Err(error) => {
+                let mut report = Map::new();
+                report.insert("status".to_owned(), Value::String("refused".to_owned()));
+                report.insert("verified".to_owned(), Value::Bool(false));
+                report.insert("task_id".to_owned(), Value::String(spec.id.clone()));
+                report.insert("error".to_owned(), Value::String(error.to_string()));
+                Value::Object(report)
+            }
+        }
+    }
+
+    /// The `"eval_failed"` intake report: the Mandate approved, the
+    /// Eval layer could not produce an admissible report.
+    fn eval_failed_report(
+        &self,
+        spec: &crate::intake::TaskSpec,
+        approval: &crate::intake::Approval,
+        detail: &str,
+    ) -> Value {
+        let mut report = Map::new();
+        report.insert("status".to_owned(), Value::String("eval_failed".to_owned()));
+        report.insert("verified".to_owned(), Value::Bool(false));
+        report.insert("task_id".to_owned(), Value::String(spec.id.clone()));
+        report.insert(
+            "spec_fingerprint".to_owned(),
+            Value::String(approval.spec_fingerprint.clone()),
+        );
+        report.insert("error".to_owned(), Value::String(detail.to_owned()));
+        Value::Object(report)
+    }
+
+    /// Revalidate the stored approval for a resume of `spec`. With no
+    /// stored approval the resume halts — there is nothing to carry.
+    pub fn resume_task(&mut self, spec: &crate::intake::TaskSpec) -> Value {
+        match self.intake_approval.clone() {
+            Some(approval) => self.resume_with(&approval, spec),
+            None => {
+                let mut report = Map::new();
+                report.insert("status".to_owned(), Value::String("halted".to_owned()));
+                report.insert("verified".to_owned(), Value::Bool(false));
+                report.insert("task_id".to_owned(), Value::String(spec.id.clone()));
+                report.insert(
+                    "error".to_owned(),
+                    Value::String("no stored approval to revalidate".to_owned()),
+                );
+                Value::Object(report)
+            }
+        }
+    }
+
+    /// Revalidate a caller-held approval record against this runtime's
+    /// current limits and tree state — the cross-session resume path,
+    /// where an earlier process persisted the record. On success the
+    /// fresh approval replaces the stored one and the report's
+    /// `limits_changed` says whether the host state moved since the
+    /// original approval. On any failure the resume halts: the stored
+    /// approval is left untouched and the report carries the failure.
+    pub fn resume_with(
+        &mut self,
+        approval: &crate::intake::Approval,
+        spec: &crate::intake::TaskSpec,
+    ) -> Value {
+        if self.closed {
+            return error_report("Runtime closed");
+        }
+        let limits = self.host_limits();
+        match crate::intake::revalidate(approval, spec, &limits) {
+            Ok(fresh) => {
+                let limits_changed = fresh.limits_fingerprint != approval.limits_fingerprint;
+                if let Some(admission) = &mut self.intake_admission
+                    && admission.approval.spec_fingerprint == fresh.spec_fingerprint
+                {
+                    admission.approval = fresh.clone();
+                }
+                let mut report = Map::new();
+                report.insert("status".to_owned(), Value::String("resumed".to_owned()));
+                report.insert("task_id".to_owned(), Value::String(spec.id.clone()));
+                report.insert("limits_changed".to_owned(), Value::Bool(limits_changed));
+                report.insert(
+                    "spec_fingerprint".to_owned(),
+                    Value::String(fresh.spec_fingerprint.clone()),
+                );
+                report.insert(
+                    "limits_fingerprint".to_owned(),
+                    Value::String(fresh.limits_fingerprint.clone()),
+                );
+                self.intake_approval = Some(fresh);
+                Value::Object(report)
+            }
+            Err(failure) => {
+                let mut report = Map::new();
+                report.insert("status".to_owned(), Value::String("halted".to_owned()));
+                report.insert("verified".to_owned(), Value::Bool(false));
+                report.insert("task_id".to_owned(), Value::String(spec.id.clone()));
+                report.insert("revalidation".to_owned(), failure.to_value());
+                Value::Object(report)
+            }
+        }
     }
 
     /// Run the named checks (or all), mirroring `Runtime.check`.

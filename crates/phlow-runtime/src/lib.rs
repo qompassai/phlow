@@ -28,6 +28,7 @@
 
 pub mod attention;
 pub mod error;
+pub mod intake;
 pub mod multiagent;
 pub mod prompt;
 pub mod report;
@@ -36,6 +37,10 @@ pub mod tools;
 pub mod transport;
 
 pub use error::RuntimeError;
+pub use intake::{
+    Admission, Approval, HostLimits, IntakeError, MandateVerdict, Rejection, TaskBounds, TaskScope,
+    TaskSpec, evaluate_mandate, revalidate,
+};
 pub use prompt::{
     VENDORED_SYSTEM_PROMPT, has_error_diagnostics, normalize_tool_calls, reviewer_verdict,
     reviewer_verdict_normalized, strip_verdict_code_block, system_prompt_for_role,
