@@ -73,6 +73,38 @@ pub const AGENT_MAX_CONTEXT_CHARS_MAX: u32 = 1_000_000;
 pub const AGENT_MAX_TASK_CHARS_MIN: u32 = 1;
 pub const AGENT_MAX_TASK_CHARS_MAX: u32 = 100_000;
 
+/// Utility pre-gate bounds (`[pregate]` section). Scores are integers,
+/// never floats, so routing decisions carry no float-tolerance question.
+pub const PREGATE_HIGH_THRESHOLD_DEFAULT: u32 = 70;
+/// Default low threshold: at or below, the task returns to the queue.
+pub const PREGATE_LOW_THRESHOLD_DEFAULT: u32 = 30;
+/// Maximum length, in characters, of a pre-gate model name
+/// (`scorer_model` / `cheap_model`).
+pub const PREGATE_MODEL_CHARS_MAX: usize = 128;
+/// Highest score the scorer may report.
+pub const PREGATE_SCORE_MAX: u32 = 100;
+/// Default scorer-call deadline, in milliseconds.
+pub const PREGATE_TIMEOUT_MS_DEFAULT: u64 = 10_000;
+/// Maximum scorer-call deadline, in milliseconds.
+pub const PREGATE_TIMEOUT_MS_MAX: u64 = 60_000;
+/// Minimum scorer-call deadline, in milliseconds.
+pub const PREGATE_TIMEOUT_MS_MIN: u64 = 100;
+
+const _: () = assert!(
+    PREGATE_LOW_THRESHOLD_DEFAULT < PREGATE_HIGH_THRESHOLD_DEFAULT
+        && PREGATE_HIGH_THRESHOLD_DEFAULT <= PREGATE_SCORE_MAX,
+    "pregate default thresholds out of order"
+);
+const _: () = assert!(
+    0 < PREGATE_MODEL_CHARS_MAX && PREGATE_MODEL_CHARS_MAX <= 1024,
+    "PREGATE_MODEL_CHARS_MAX out of range"
+);
+const _: () = assert!(
+    PREGATE_TIMEOUT_MS_MIN <= PREGATE_TIMEOUT_MS_DEFAULT
+        && PREGATE_TIMEOUT_MS_DEFAULT <= PREGATE_TIMEOUT_MS_MAX,
+    "PREGATE_TIMEOUT_MS_DEFAULT outside [MIN, MAX]"
+);
+
 /// Maximum length, in characters, of a specialist's `source_dir` path.
 /// A local model directory path is short; the cap exists so a malformed
 /// config cannot smuggle an unbounded string into the validated model.
@@ -501,6 +533,131 @@ impl AttentionConfig {
     }
 }
 
+/// Utility pre-gate settings (`[pregate]` section).
+///
+/// When enabled, the runtime scores each task with a cheap local model
+/// (`scorer_model`) before dispatching it to the configured models:
+/// a score at or above `high_threshold` dispatches as planned, a mid
+/// score downgrades (to `cheap_model` when one is named, otherwise to
+/// the planned models with the cycle budget narrowed to
+/// `narrow_max_cycles`), and a score at or below `low_threshold`
+/// returns the task to the caller's queue with the reasons recorded.
+///
+/// The gate only advises dispatch routing. It holds no permission
+/// surface: it cannot allow, deny, or widen any action, and the
+/// permission gates stay upstream and unchanged. Disabled by default:
+/// a gate that can reroute dispatch changes runtime behaviour and
+/// stays opt-in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreGateConfig {
+    enabled: bool,
+    scorer_model: String,
+    cheap_model: String,
+    high_threshold: u32,
+    low_threshold: u32,
+    narrow_max_cycles: u32,
+    timeout_ms: u64,
+}
+
+impl Default for PreGateConfig {
+    fn default() -> PreGateConfig {
+        PreGateConfig {
+            enabled: false,
+            scorer_model: String::new(),
+            cheap_model: String::new(),
+            high_threshold: PREGATE_HIGH_THRESHOLD_DEFAULT,
+            low_threshold: PREGATE_LOW_THRESHOLD_DEFAULT,
+            narrow_max_cycles: 1,
+            timeout_ms: PREGATE_TIMEOUT_MS_DEFAULT,
+        }
+    }
+}
+
+impl PreGateConfig {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn validated(
+        enabled: bool,
+        scorer_model: String,
+        cheap_model: String,
+        high_threshold: u32,
+        low_threshold: u32,
+        narrow_max_cycles: u32,
+        timeout_ms: u64,
+    ) -> PreGateConfig {
+        assert!(
+            !scorer_model.is_empty() || !enabled,
+            "pregate.scorer_model must be set when pregate is enabled"
+        );
+        assert!(
+            scorer_model.chars().count() <= PREGATE_MODEL_CHARS_MAX,
+            "pregate.scorer_model too long"
+        );
+        assert!(
+            cheap_model.chars().count() <= PREGATE_MODEL_CHARS_MAX,
+            "pregate.cheap_model too long"
+        );
+        assert!(
+            (1..=PREGATE_SCORE_MAX).contains(&high_threshold),
+            "pregate.high_threshold out of range"
+        );
+        assert!(
+            low_threshold < high_threshold,
+            "pregate.low_threshold must be below pregate.high_threshold"
+        );
+        assert!(
+            (AGENT_MAX_CYCLES_MIN..=AGENT_MAX_CYCLES_MAX).contains(&narrow_max_cycles),
+            "pregate.narrow_max_cycles out of range"
+        );
+        assert!(
+            (PREGATE_TIMEOUT_MS_MIN..=PREGATE_TIMEOUT_MS_MAX).contains(&timeout_ms),
+            "pregate.timeout_ms out of range"
+        );
+        PreGateConfig {
+            enabled,
+            scorer_model,
+            cheap_model,
+            high_threshold,
+            low_threshold,
+            narrow_max_cycles,
+            timeout_ms,
+        }
+    }
+
+    /// Whether the utility pre-gate is active.
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+    /// The cheap local model that scores tasks before dispatch.
+    /// Nonempty whenever the gate is enabled (validated at load).
+    pub fn scorer_model(&self) -> &str {
+        &self.scorer_model
+    }
+    /// The cheaper model mid-scoring runs are downgraded to; empty
+    /// means mid runs keep the planned models and narrow cycles.
+    pub fn cheap_model(&self) -> &str {
+        &self.cheap_model
+    }
+    /// Score at or above which a task dispatches as planned, 1–100.
+    pub fn high_threshold(&self) -> u32 {
+        self.high_threshold
+    }
+    /// Score at or below which a task returns to the queue, 0–99 and
+    /// always below `high_threshold`.
+    pub fn low_threshold(&self) -> u32 {
+        self.low_threshold
+    }
+    /// Cycle cap for mid-scoring runs that keep the planned models.
+    pub fn narrow_max_cycles(&self) -> u32 {
+        self.narrow_max_cycles
+    }
+    /// Deadline for one scorer call, in milliseconds. The scorer is a
+    /// pre-dispatch courtesy, never a chokepoint: the runtime fails
+    /// open (dispatches as planned) when the deadline expires.
+    pub fn timeout_ms(&self) -> u64 {
+        self.timeout_ms
+    }
+}
+
 /// Agent roles that can carry a model override.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelRole {
@@ -521,6 +678,7 @@ pub struct FlowConfig {
     specialists: SpecialistsConfig,
     agent: AgentConfig,
     attention: AttentionConfig,
+    pregate: PreGateConfig,
     checks: BTreeMap<String, CheckConfig>,
     workspace_dir: PathBuf,
     trusted: bool,
@@ -536,6 +694,7 @@ impl FlowConfig {
         specialists: SpecialistsConfig,
         agent: AgentConfig,
         attention: AttentionConfig,
+        pregate: PreGateConfig,
         checks: BTreeMap<String, CheckConfig>,
         workspace_dir: PathBuf,
         trusted: bool,
@@ -553,6 +712,7 @@ impl FlowConfig {
             specialists,
             agent,
             attention,
+            pregate,
             checks,
             workspace_dir,
             trusted,
@@ -588,6 +748,10 @@ impl FlowConfig {
     /// Joint-attention coordination settings.
     pub fn attention(&self) -> &AttentionConfig {
         &self.attention
+    }
+    /// Utility pre-gate settings.
+    pub fn pregate(&self) -> &PreGateConfig {
+        &self.pregate
     }
     /// Named checks, sorted by name for deterministic iteration.
     pub fn checks(&self) -> &BTreeMap<String, CheckConfig> {
@@ -660,6 +824,7 @@ mod tests {
             SpecialistsConfig::default(),
             AgentConfig::default(),
             AttentionConfig::default(),
+            PreGateConfig::default(),
             BTreeMap::new(),
             PathBuf::from("/tmp"),
             false,
@@ -714,5 +879,17 @@ mod tests {
         assert_eq!(models.planner(), "");
         assert_eq!(models.coder(), "");
         assert_eq!(models.reviewer(), "");
+    }
+
+    #[test]
+    fn pregate_defaults_are_off_with_sane_thresholds() {
+        let pregate = PreGateConfig::default();
+        assert!(!pregate.enabled(), "pregate defaults to off");
+        assert_eq!(pregate.scorer_model(), "");
+        assert_eq!(pregate.cheap_model(), "");
+        assert_eq!(pregate.high_threshold(), PREGATE_HIGH_THRESHOLD_DEFAULT);
+        assert_eq!(pregate.low_threshold(), PREGATE_LOW_THRESHOLD_DEFAULT);
+        assert_eq!(pregate.narrow_max_cycles(), 1);
+        assert_eq!(pregate.timeout_ms(), PREGATE_TIMEOUT_MS_DEFAULT);
     }
 }

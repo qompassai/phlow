@@ -73,8 +73,22 @@ impl<T: LlmTransport> OllamaBackend<T> {
         tools: &[Value],
         model: Option<&str>,
     ) -> Result<Value, LlmError> {
-        let payload = crate::payload::build_chat_payload(&self.cfg, messages, tools, model)?;
         let timeout = Duration::from_secs_f64(self.cfg.timeout_secs());
+        self.chat_with_timeout(messages, tools, model, timeout)
+    }
+
+    /// One chat completion under a caller-set deadline, for callers
+    /// whose budget is tighter than the backend timeout (the runtime's
+    /// utility pre-gate scorer). The transport enforces the deadline;
+    /// expiry surfaces as an [`LlmError::Transport`], never a hang.
+    pub fn chat_with_timeout(
+        &mut self,
+        messages: &[Value],
+        tools: &[Value],
+        model: Option<&str>,
+        timeout: Duration,
+    ) -> Result<Value, LlmError> {
+        let payload = crate::payload::build_chat_payload(&self.cfg, messages, tools, model)?;
         self.transport.post_chat(&self.base_url, &payload, timeout)
     }
 
