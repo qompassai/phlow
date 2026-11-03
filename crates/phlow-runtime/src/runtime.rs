@@ -361,6 +361,14 @@ pub struct Runtime<L: LlmTransport, E: EditorTransport> {
     /// server) installed one. Consulted only when the operator config
     /// enables `[attention]`; see [`crate::attention`].
     attention_gate: Option<crate::attention::AttentionGate>,
+    /// Run-scoped model override from the utility pre-gate (mid route
+    /// with a cheap model configured): every role uses this model for
+    /// the current run. Set and cleared inside `run_inner`; it never
+    /// persists across runs and never mutates the operator config.
+    run_model_override: Option<String>,
+    /// Run-scoped cycle cap from the utility pre-gate (mid route
+    /// without a cheap model). Same lifetime as `run_model_override`.
+    run_max_cycles: Option<u32>,
 }
 
 impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
@@ -398,6 +406,8 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
             check_pins,
             served_models: ServedModels::Unprobed,
             attention_gate: None,
+            run_model_override: None,
+            run_max_cycles: None,
         })
     }
 
@@ -416,6 +426,27 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
         &self,
     ) -> Option<std::sync::Arc<std::sync::Mutex<phlow_attention::FocusBoard>>> {
         self.attention_gate.as_ref().map(|gate| gate.board())
+    }
+
+    /// Consult the utility pre-gate for `task` (called only when
+    /// `[pregate]` is enabled). Borrows the backend for one bounded
+    /// scorer call; a missing backend fails open like any other scorer
+    /// failure. The verdict only routes dispatch — see
+    /// [`crate::pregate`] for the boundary contract.
+    fn consult_pregate(&mut self, task: &str) -> crate::pregate::PreGateVerdict {
+        let config = self.config.pregate().clone();
+        let signals = crate::pregate::TaskSignals::gather(task, &self.workspace);
+        let Some(backend) = self.backend.as_mut() else {
+            let mut unavailable =
+                crate::pregate::UnavailableScorer::new("model backend unavailable");
+            return crate::pregate::consult(&mut unavailable, &config, task, &signals);
+        };
+        let mut scorer = crate::pregate::ModelScorer::new(
+            backend,
+            config.scorer_model(),
+            Duration::from_millis(config.timeout_ms()),
+        );
+        crate::pregate::consult(&mut scorer, &config, task, &signals)
     }
 
     /// True while a `run`/`check` holds the single-writer lock.
@@ -768,7 +799,10 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
             "reviewer" => ModelRole::Reviewer,
             _ => ModelRole::Coder,
         };
-        let configured = self.config.model_for(model_role).to_owned();
+        let configured = match &self.run_model_override {
+            Some(model) => model.clone(),
+            None => self.config.model_for(model_role).to_owned(),
+        };
         let (model, fell_back) = self.effective_model(model_role, &configured);
         let user_content = must_dumps(&serde_json::json!({"task": task, "context": context}));
         let mut messages = vec![
@@ -1568,6 +1602,37 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
         }
         self.workspace.assert_current()?;
         self.run_changed.clear();
+        self.run_model_override = None;
+        self.run_max_cycles = None;
+        // Utility pre-gate: with `[pregate]` enabled, a cheap model
+        // scores the task before the first dispatch and advises the
+        // route (as planned, downgraded, or queued). The gate cannot
+        // allow, deny, or widen anything — permission gates are
+        // upstream and untouched — and it fails open: any scorer
+        // failure dispatches as planned with the failure recorded.
+        if self.config.pregate().enabled() {
+            let verdict = self.consult_pregate(task);
+            report_mut::set(report, "utility_pregate", verdict.record);
+            match verdict.route {
+                crate::pregate::PreGateRoute::AsPlanned => {}
+                crate::pregate::PreGateRoute::Downgraded { model, max_cycles } => {
+                    self.run_model_override = model;
+                    self.run_max_cycles = max_cycles;
+                }
+                crate::pregate::PreGateRoute::Queued => {
+                    report_mut::set(report, "status", Value::String("queued".to_owned()));
+                    report_mut::set(
+                        report,
+                        "error",
+                        Value::String(
+                            "Utility pre-gate queued this task: expected utility at or below the configured low threshold"
+                                .to_owned(),
+                        ),
+                    );
+                    return Ok(());
+                }
+            }
+        }
         let planner = self.role("planner", task, &Value::Object(Map::new()), report)?;
         if planner.get("status") != Some(&Value::String("ok".to_owned())) {
             report_mut::set(report, "status", planner["status"].clone());
@@ -1617,7 +1682,10 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
         }
         let mut context = Map::new();
         context.insert("plan".to_owned(), planner["summary"].clone());
-        let max_cycles = self.config.agent().max_cycles();
+        let max_cycles = match self.run_max_cycles {
+            Some(cap) => cap.min(self.config.agent().max_cycles()),
+            None => self.config.agent().max_cycles(),
+        };
         for _ in 0..max_cycles {
             report_mut::add(report, "cycles", 1);
             let (coder, reviewer, verification) =

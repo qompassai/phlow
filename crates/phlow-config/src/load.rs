@@ -31,8 +31,9 @@ use crate::model::{
     CHECK_TIMEOUT_MS_DEFAULT, CHECK_TIMEOUT_MS_MAX, CHECK_TIMEOUT_MS_MIN, CHECKS_MAX, CheckConfig,
     CheckKind, FlowConfig, ModelsConfig, OLLAMA_CONTEXT_LENGTH_MAX, OLLAMA_CONTEXT_LENGTH_MIN,
     OLLAMA_TEMPERATURE_MAX, OLLAMA_TEMPERATURE_MIN, OLLAMA_TIMEOUT_SECS_MAX,
-    OLLAMA_TIMEOUT_SECS_MIN, OllamaConfig, SPECIALIST_SOURCE_DIR_CHARS_MAX, SpecialistConfig,
-    SpecialistsConfig,
+    OLLAMA_TIMEOUT_SECS_MIN, OllamaConfig, PREGATE_MODEL_CHARS_MAX, PREGATE_SCORE_MAX,
+    PREGATE_TIMEOUT_MS_MAX, PREGATE_TIMEOUT_MS_MIN, PreGateConfig, SPECIALIST_SOURCE_DIR_CHARS_MAX,
+    SpecialistConfig, SpecialistsConfig,
 };
 
 /// Largest config file accepted, in bytes.
@@ -50,6 +51,7 @@ const ROOT_KEYS: &[&str] = &[
     "specialists",
     "agent",
     "attention",
+    "pregate",
     "checks",
 ];
 
@@ -114,6 +116,7 @@ pub fn load_config(options: &LoadOptions) -> Result<FlowConfig, ConfigError> {
     let specialists = parse_specialists(table_section(&raw, "specialists")?)?;
     let agent = parse_agent(table_section(&raw, "agent")?)?;
     let attention = parse_attention(table_section(&raw, "attention")?)?;
+    let pregate = parse_pregate(table_section(&raw, "pregate")?)?;
     let checks = parse_checks(table_section(&raw, "checks")?)?;
 
     // 5. Workspace anchoring: config-relative when the TOML names it,
@@ -201,6 +204,7 @@ pub fn load_config(options: &LoadOptions) -> Result<FlowConfig, ConfigError> {
         specialists,
         agent,
         attention,
+        pregate,
         checks,
         workspace_dir,
         options.trusted,
@@ -672,6 +676,115 @@ fn parse_attention(
     Ok(AttentionConfig::validated(enabled))
 }
 
+/// Parse a pre-gate model name: a string of at most
+/// [`PREGATE_MODEL_CHARS_MAX`] characters. Empty is allowed here; the
+/// enabled-requires-scorer rule is cross-field and checked by the
+/// caller once every field is known.
+fn parse_pregate_model(value: &toml::Value, field: &str) -> Result<String, ConfigError> {
+    let text = parse_string(value, field)?;
+    if text.chars().count() > PREGATE_MODEL_CHARS_MAX {
+        return Err(invalid_value(
+            field,
+            format!("must be at most {PREGATE_MODEL_CHARS_MAX} characters"),
+        ));
+    }
+    Ok(text)
+}
+
+/// Parse the optional `[pregate]` section (utility pre-gate routing).
+/// Thresholds and deadlines are configuration, never constants buried
+/// in the runtime: every routing number lives here, bounded, with the
+/// cross-field rules (low below high; an enabled gate names its
+/// scorer) enforced at load so an invalid gate can never reach a run.
+fn parse_pregate(
+    table: Option<&toml::map::Map<String, toml::Value>>,
+) -> Result<PreGateConfig, ConfigError> {
+    const KNOWN: &[&str] = &[
+        "cheap_model",
+        "enabled",
+        "high_threshold",
+        "low_threshold",
+        "narrow_max_cycles",
+        "scorer_model",
+        "timeout_ms",
+    ];
+    let defaults = PreGateConfig::default();
+    let Some(table) = table else {
+        return Ok(defaults);
+    };
+    reject_unknown_keys(table, KNOWN, "pregate")?;
+    let enabled = match table.get("enabled") {
+        Some(value) => parse_bool(value, "pregate.enabled")?,
+        None => defaults.enabled(),
+    };
+    let scorer_model = match table.get("scorer_model") {
+        Some(value) => parse_pregate_model(value, "pregate.scorer_model")?,
+        None => defaults.scorer_model().to_owned(),
+    };
+    let cheap_model = match table.get("cheap_model") {
+        Some(value) => parse_pregate_model(value, "pregate.cheap_model")?,
+        None => defaults.cheap_model().to_owned(),
+    };
+    let high_threshold = match table.get("high_threshold") {
+        Some(value) => parse_bounded_u32(value, "pregate.high_threshold", 1, PREGATE_SCORE_MAX)?,
+        None => defaults.high_threshold(),
+    };
+    let low_threshold = match table.get("low_threshold") {
+        Some(value) => parse_bounded_u32(value, "pregate.low_threshold", 0, PREGATE_SCORE_MAX - 1)?,
+        None => defaults.low_threshold(),
+    };
+    let narrow_max_cycles = match table.get("narrow_max_cycles") {
+        Some(value) => parse_bounded_u32(
+            value,
+            "pregate.narrow_max_cycles",
+            AGENT_MAX_CYCLES_MIN,
+            AGENT_MAX_CYCLES_MAX,
+        )?,
+        None => defaults.narrow_max_cycles(),
+    };
+    let timeout_ms = match table.get("timeout_ms") {
+        Some(value) => {
+            // Same one-message discipline as `parse_timeout_ms`, with
+            // the pre-gate's own bounds.
+            let range = format!(
+                "must be an integer between {PREGATE_TIMEOUT_MS_MIN} and {PREGATE_TIMEOUT_MS_MAX}"
+            );
+            match value {
+                toml::Value::Integer(int) => {
+                    if *int < PREGATE_TIMEOUT_MS_MIN as i64 || *int > PREGATE_TIMEOUT_MS_MAX as i64
+                    {
+                        return Err(invalid_value("pregate.timeout_ms", range));
+                    }
+                    *int as u64
+                }
+                _ => return Err(invalid_value("pregate.timeout_ms", range)),
+            }
+        }
+        None => defaults.timeout_ms(),
+    };
+    if enabled && scorer_model.is_empty() {
+        return Err(invalid_value(
+            "pregate.scorer_model",
+            "must name the cheap scoring model when pregate is enabled",
+        ));
+    }
+    if low_threshold >= high_threshold {
+        return Err(invalid_value(
+            "pregate.low_threshold",
+            "must be below pregate.high_threshold",
+        ));
+    }
+    Ok(PreGateConfig::validated(
+        enabled,
+        scorer_model,
+        cheap_model,
+        high_threshold,
+        low_threshold,
+        narrow_max_cycles,
+        timeout_ms,
+    ))
+}
+
 fn parse_checks(
     table: Option<&toml::map::Map<String, toml::Value>>,
 ) -> Result<BTreeMap<String, CheckConfig>, ConfigError> {
@@ -1072,6 +1185,77 @@ mod tests {
         assert!(format!("{err}").contains("attention"), "got: {err}");
         let dir = test_dir("attention-nonbool");
         assert!(load_text(&dir, "[attention]\nenabled = \"yes\"\n").is_err());
+    }
+
+    #[test]
+    fn pregate_defaults_to_off() {
+        let dir = test_dir("pregate-absent");
+        let cfg = load_ok(&dir, "");
+        let pregate = cfg.pregate();
+        assert!(!pregate.enabled(), "pregate defaults to off");
+        assert_eq!(pregate.high_threshold(), 70);
+        assert_eq!(pregate.low_threshold(), 30);
+        assert_eq!(pregate.timeout_ms(), 10_000);
+    }
+
+    #[test]
+    fn pregate_section_parses_every_field() {
+        let dir = test_dir("pregate-full");
+        let cfg = load_ok(
+            &dir,
+            "[pregate]\nenabled = true\nscorer_model = \"rose-small\"\ncheap_model = \"rose-mid\"\nhigh_threshold = 80\nlow_threshold = 20\nnarrow_max_cycles = 2\ntimeout_ms = 5000\n",
+        );
+        let pregate = cfg.pregate();
+        assert!(pregate.enabled());
+        assert_eq!(pregate.scorer_model(), "rose-small");
+        assert_eq!(pregate.cheap_model(), "rose-mid");
+        assert_eq!(pregate.high_threshold(), 80);
+        assert_eq!(pregate.low_threshold(), 20);
+        assert_eq!(pregate.narrow_max_cycles(), 2);
+        assert_eq!(pregate.timeout_ms(), 5000);
+    }
+
+    #[test]
+    fn pregate_enabled_without_a_scorer_model_fails() {
+        let dir = test_dir("pregate-no-scorer");
+        let err = load_text(&dir, "[pregate]\nenabled = true\n")
+            .expect_err("an enabled gate must name its scorer");
+        assert!(
+            format!("{err}").contains("pregate.scorer_model"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn pregate_rejects_inverted_thresholds_and_unknown_keys() {
+        let dir = test_dir("pregate-inverted");
+        let err = load_text(
+            &dir,
+            "[pregate]\nenabled = true\nscorer_model = \"s\"\nhigh_threshold = 40\nlow_threshold = 40\n",
+        )
+        .expect_err("low must be below high");
+        assert!(
+            format!("{err}").contains("pregate.low_threshold"),
+            "got: {err}"
+        );
+        let dir = test_dir("pregate-unknown");
+        assert!(load_text(&dir, "[pregate]\nstrictness = 3\n").is_err());
+        let dir = test_dir("pregate-range");
+        assert!(
+            load_text(
+                &dir,
+                "[pregate]\nenabled = true\nscorer_model = \"s\"\nhigh_threshold = 101\n"
+            )
+            .is_err()
+        );
+        let dir = test_dir("pregate-timeout-range");
+        assert!(
+            load_text(
+                &dir,
+                "[pregate]\nenabled = true\nscorer_model = \"s\"\ntimeout_ms = 50\n"
+            )
+            .is_err()
+        );
     }
 
     #[test]
