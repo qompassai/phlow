@@ -534,7 +534,7 @@ fn push_reason(reasons: &mut Vec<Rejection>, reason: Rejection) {
 
 /// Run the Mandate: judge `spec` against `limits`, deterministically.
 ///
-/// Checks, in order: identity and prompt shape; scope cardinality and
+/// Checks, in order: identity and prompt shape; scope size and
 /// path containment; tool existence and write coherence against host
 /// trust; bounds against the ceiling; required checks against the
 /// operator configuration. The function reads the filesystem only to
@@ -1146,7 +1146,7 @@ pub fn eval_prompt(spec: &TaskSpec, approval: &Approval) -> String {
 }
 
 /// Parse a model reply into an [`EvalReport`]. The reply may carry prose
-/// or code fences around the JSON object; the first `{` to the last `}`
+/// or a markdown code block around the JSON object; the first `{` to the last `}`
 /// is taken. Unknown enum names, missing fields, and oversized replies
 /// are [`IntakeError::EvalMalformed`], never defaulted. Risk notes are
 /// bounded by truncation (count and bytes), since dropping an excess
