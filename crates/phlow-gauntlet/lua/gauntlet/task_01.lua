@@ -22,6 +22,10 @@ local POLL_STEP_MS = 25
 local EVIDENCE_LINES_MAX = 64
 local ADAPTER_NAME = 'gauntlet'
 local TASK_ID = 'task-01'
+---Workflow label registered for the fan-out specs. Diver's registry name
+---pattern is ^[a-z][a-z0-9_]*$ (no dashes), so the label is snake_case;
+---the run spec and the registration must use this exact string.
+local WORKFLOW_NAME = 'gauntlet_task_01'
 
 ---Fake-adapter shared state: the id of the run whose start() raised, so the
 ---driver can finish that run as failed instead of losing it in 'queued'.
@@ -153,13 +157,13 @@ local function fan_out(harness, sup, work_dir, plan)
     for i, item in ipairs(plan) do
         local spec = {
             adapter = ADAPTER_NAME,
-            workflow = 'gauntlet-task-01',
+            workflow = WORKFLOW_NAME,
             goal = 'task-01 worker ' .. i .. ': ' .. item.purpose,
             workspace = work_dir,
             timeout_ms = RUN_TIMEOUT_MS,
             extensions = { gauntlet = { behavior = item.behavior } },
         }
-        local ok_run, id_or_err = pcall(harness.run, spec)
+        local ok_run, id_or_err, run_err = pcall(harness.run, spec)
         if ok_run and type(id_or_err) == 'string' then
             runs[#runs + 1] = { id = id_or_err, behavior = item.behavior }
         elseif not ok_run then
@@ -181,7 +185,7 @@ local function fan_out(harness, sup, work_dir, plan)
                 raised = tostring(id_or_err),
             }
         else
-            return nil, 'fan-out: run ' .. i .. ' failed to launch: ' .. tostring(id_or_err)
+            return nil, 'fan-out: run ' .. i .. ' failed to launch: ' .. tostring(run_err)
         end
     end
     return runs
@@ -312,6 +316,16 @@ local function run_attempt()
         registry.register_adapter(harness._state.registry, ADAPTER_NAME, fake_adapter())
     if not ok_reg then
         return 'fail', 'setup', 'fake adapter registration failed: ' .. tostring(reg_err), {}
+    end
+    -- Diver's supervisor.create resolves spec.workflow in the registry and
+    -- fails closed on unknown names; register the label before fan-out.
+    local ok_wf, wf_err = registry.register_workflow(
+        harness._state.registry,
+        WORKFLOW_NAME,
+        { adapter = ADAPTER_NAME }
+    )
+    if not ok_wf then
+        return 'fail', 'setup', 'workflow registration failed: ' .. tostring(wf_err), {}
     end
     local plan, plan_err = scenario_plan(env.scenario)
     if plan == nil then
