@@ -8,14 +8,20 @@
 -- in the session record.
 --
 -- Seam mapping (verified, not invented): diver's `ai.mcp.client`
--- (`lua/ai/mcp/client.lua`) owns the initialize handshake. Its
--- `run_handshake` sends `protocolVersion = '2024-11-05'` with
--- `capabilities = {}` and DISCARDS the initialize result
--- (`function(err, _result)`): the server's advertised capabilities
--- are never read, never verified, never recorded. `M.request`
+-- (`lua/ai/mcp/client.lua`) is a discover-first modern client: it
+-- opens with `server/discover` and falls back to the legacy
+-- `initialize` identification ONLY when discover answers -32601
+-- (method not found). This mock speaks only the legacy era — it
+-- answers discover with -32601 — so the client takes its designed
+-- legacy fallback, which is the handshake this driver audits. On
+-- that path the client advertises a fixed empty capabilities object
+-- (`capabilities = vim.empty_dict()`, encoded `{}` on the wire) and
+-- stores the initialize result's capabilities in its internal
+-- session state — but the module exports no capability/negotiation
+-- introspection, never verifies advertisement vs behavior, and
+-- never records the negotiation anywhere readable. `M.request`
 -- sends any method for any ready session — there is no gating on
--- negotiated capabilities, no `capability_mismatch` typed error,
--- and no session record of what was negotiated.
+-- negotiated capabilities and no `capability_mismatch` typed error.
 --
 -- This driver plays the REAL client against a scripted python3 mock
 -- MCP stdio server (written into GAUNTLET_WORK_DIR at bootstrap):
@@ -25,8 +31,8 @@
 --   record         V: documents the absent negotiation record — the
 --                    client module exposes no capability/session
 --                    introspection, and the wire log shows the client
---                    advertised `"capabilities":[]` (empty Lua table
---                    encodes as a JSON array; the task-08 interop gap).
+--                    advertised `"capabilities":{}` (a fixed empty
+--                    object; vim.empty_dict on the legacy path).
 --   lie            A: server advertises `tools` but tools/list
 --                    errors -32602 — the client surfaces a plain
 --                    string error; no typed `capability_mismatch`.
@@ -119,9 +125,20 @@ def error(mid, code, message):
 def log_wire(method, params):
     if not WIRE_LOG:
         return
+    entry = {"method": method, "params": params}
+    if method == "initialize" and isinstance(params, dict):
+        # Preserve the wire FORM of the advertised capabilities: a
+        # JSON object decodes to a dict here, a JSON array to a list —
+        # after a JSON round-trip the Lua side cannot tell {} from [].
+        caps = params.get("capabilities")
+        entry["caps_wire_form"] = (
+            "object" if isinstance(caps, dict)
+            else "array" if isinstance(caps, list)
+            else "absent"
+        )
     try:
         with open(WIRE_LOG, "a") as fh:
-            fh.write(json.dumps({"method": method, "params": params}) + "\n")
+            fh.write(json.dumps(entry) + "\n")
     except OSError:
         pass
 
@@ -166,6 +183,12 @@ def main():
                              "isError": False})
             else:
                 error(mid, -32602, "Unknown tool: %r" % (name,))
+        elif method == "server/discover":
+            # The modern-era client discovers first. This mock speaks
+            # only the legacy era: -32601 (method not found) is the one
+            # answer that makes the client take its designed
+            # legacy-identification fallback (initialize).
+            error(mid, -32601, "method not found: server/discover")
         elif mid is not None:
             # Unknown methods (e.g. resources/list in no-resources mode)
             # are answered so the wire log proves the client sent them.
@@ -410,7 +433,7 @@ end
 
 ---Scenario "record" (V): the negotiation record does not exist. The
 ---client module exposes no capability/session introspection, and the
----wire log shows the client advertised `"capabilities":[]`.
+---wire log shows the client advertised `"capabilities":{}`.
 ---@param handles table
 ---@return table verdict
 local function scenario_record(handles)
@@ -431,24 +454,24 @@ local function scenario_record(handles)
         end
     end
     ev('no capability/negotiation introspection in the client API')
-    local advertised = nil
+    local caps_form = nil
     for _, entry in ipairs(read_wire_log(handles)) do
-        if entry.method == 'initialize' and type(entry.params) == 'table' then
-            advertised = entry.params.capabilities
+        if entry.method == 'initialize' then
+            caps_form = entry.caps_wire_form
         end
     end
-    -- An empty Lua table encodes as a JSON array: the client advertises
-    -- "capabilities":[] — the task-08 interop gap, observed on the wire.
-    local advertised_is_array = type(advertised) == 'table' and #advertised == 0
-        and next(advertised) == nil
-    ev('client advertised capabilities on the wire: ' .. vim.json.encode(advertised))
-    if not advertised_is_array then
-        return fail('record', 'expected the client to advertise "capabilities":[]')
+    -- The legacy path advertises `capabilities = vim.empty_dict()`:
+    -- a fixed empty OBJECT on the wire ("capabilities":{}), recorded
+    -- by the mock in caps_wire_form because a JSON round-trip cannot
+    -- distinguish {} from [] on the Lua side.
+    ev('client advertised capabilities on the wire as: ' .. tostring(caps_form))
+    if caps_form ~= 'object' then
+        return fail('record', 'expected the client to advertise "capabilities":{}')
     end
     handles.client.stop(SERVER)
     local trace = {
         scenario = 'record',
-        client_advertised_caps = '[]',
+        client_advertised_caps = '{}',
         server_advertised_caps = { 'tools' },
         negotiated_record = false,
     }

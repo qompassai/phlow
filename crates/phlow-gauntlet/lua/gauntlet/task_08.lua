@@ -9,14 +9,15 @@
 --
 -- Server choice per scenario:
 --   default      FIRST probes the REAL phlow MCP server (phlow serve):
---                NDJSON JSON-RPC 2.0 over stdio. The probe is expected to
---                fail the initialize handshake: diver's ai.mcp.client sends
---                "capabilities":[] (empty Lua table -> JSON array) while
---                phlow-mcp strictly requires a capabilities object per the
---                MCP spec, and rejects with -32602. That pinned interop gap
---                is asserted as evidence, then the scenario falls back to
---                the mock server for the tools/list -> tools/call round
---                trip with valid args (gauntlet_add{40,2} -> "42"), whose
+--                NDJSON JSON-RPC 2.0 over stdio. The probe originally
+--                pinned an initialize interop gap (the legacy client sent
+--                "capabilities":[] and phlow-mcp rejected it); that gap
+--                is CLOSED — diver's client is discover-first modern and
+--                phlow-mcp serves the modern era, so the probe now
+--                expects the real-server run to COMPLETE, and asserts
+--                that as evidence. The scenario then uses the mock
+--                server for the tools/list -> tools/call round trip
+--                with valid args (gauntlet_add{40,2} -> "42"), whose
 --                result flows back into the run as a diagnostic event.
 --   bad-args     a purpose-built python3 mock MCP server (written into
 --                GAUNTLET_WORK_DIR at bootstrap) with strict schema
@@ -30,7 +31,7 @@
 --                the frame must be dropped, the pending request must time
 --                out (typed error), and the session must stay usable.
 --
--- Tool-call confirmation: ai.mcp.tools.call consults ai.security, which
+-- Tool-call confirmation: ai.mcp.tools.call consults security, which
 -- default-denies headless. The driver pre-approves the exact
 -- (server, tool) pairs through the real persistent allowlist mechanism
 -- (allowlist_add), with XDG_DATA_HOME pointed at GAUNTLET_WORK_DIR by the
@@ -256,10 +257,31 @@ local function bootstrap()
     assert(diver_lua_dir ~= nil and work_dir ~= nil and phlow_bin ~= nil)
     vim.opt.runtimepath:append(diver_lua_dir)
     local harness = require('ai.harness')
+
+-- Diver's harness registry contract (current diver): harness.run fails
+-- closed with 'unknown workflow' for any workflow name that was never
+-- registered. Registration is an existence entry only (adapter
+-- selection still comes from the run spec). Names must match
+-- ^[a-z][a-z0-9_]*$ (snake_case, no dashes). Idempotent: a name that is
+-- already registered is left as-is.
+local function ensure_workflows(registry, names, adapter)
+    local registry_mod = require('ai.harness.registry')
+    for _, name in ipairs(names) do
+        if registry_mod.get_workflow(registry, name) == nil then
+            local ok, err = registry_mod.register_workflow(registry, name, {
+                adapter = adapter,
+                description = 'gauntlet probe workflow (registration existence entry)',
+            })
+            assert(ok, 'register_workflow(' .. name .. ') failed: ' .. tostring(err))
+        end
+    end
+end
+
     local ok, err = harness.setup({})
     if not ok then
         return nil, 'harness.setup failed: ' .. tostring(err)
     end
+    ensure_workflows(harness._state.registry, { 'gauntlet_mcp_bridge' }, 'mcp')
     local st = harness._state
     if st == nil then
         return nil, 'harness internal state unavailable after setup'
@@ -271,7 +293,7 @@ local function bootstrap()
         return nil, mock_err
     end
     ev('mock server written: ' .. mock_path)
-    local security = require('ai.security')
+    local security = require('security')
     local approvals = {
         { SERVER_REAL, 'flow_status' },
         { SERVER_MOCK, 'gauntlet_echo' },
@@ -368,7 +390,7 @@ end
 ---@return string? err
 local function start_mcp_run(handles, server_name)
     local spec = {
-        workflow = 'gauntlet-mcp-bridge',
+        workflow = 'gauntlet_mcp_bridge',
         goal = 'MCP stdio tool bridging probe for ' .. server_name,
         workspace = handles.work_dir,
         adapter = 'mcp',
@@ -518,45 +540,36 @@ local function empty_args()
     return vim.empty_dict()
 end
 
----Default: probe the real phlow server (pins the known initialize
----handshake interop gap as evidence), then run the list -> call round
----trip against the mock server and record the result into the run.
+---Default: probe the real phlow server (the initialize interop gap
+---is closed; the probe asserts the run now completes), then run the
+---list -> call round trip against the mock server and record the
+---result into the run.
 local function scenario_default(handles)
     local reg_err = register_server(handles, SERVER_REAL, handles.phlow_bin, { 'serve' })
     if reg_err ~= nil then
         return fail('register', reg_err)
     end
-    -- Step 1: the real-server probe. diver's ai.mcp.client encodes the
-    -- empty capabilities table as a JSON array ("capabilities":[]);
-    -- phlow-mcp requires a capabilities object (MCP spec) and rejects the
-    -- handshake with -32602. The adapter surfaces that as a failed run
-    -- with the typed error in the model.completed payload.
+    -- Step 1: the real-server probe. The initialize interop gap this
+    -- probe originally pinned (legacy client advertising
+    -- "capabilities":[] as a JSON array, phlow-mcp rejecting it) is
+    -- closed: diver's client is discover-first modern (its legacy
+    -- fallback advertises an empty object) and phlow-mcp serves the
+    -- modern era. The probe now asserts the run COMPLETES against
+    -- the real server; a regression to a failed handshake fails here.
     local real_run_id, real_run_err = start_mcp_run(handles, SERVER_REAL)
     if real_run_id == nil then
         return fail('run-start', 'harness.run failed: ' .. tostring(real_run_err))
     end
-    local reached, state = wait_state(handles, real_run_id, 'failed', COMPLETE_WAIT_MS)
+    local reached, state = wait_state(handles, real_run_id, 'completed', COMPLETE_WAIT_MS)
     if not reached then
         return fail(
             'real-server-probe',
-            'expected the real-server run to fail the handshake, state=' .. state
+            'expected the real-server run to complete (interop gap closed), state=' .. state
         )
     end
-    local probe_err = nil
-    for _, event in ipairs(handles.sink:events(real_run_id)) do
-        if event.kind == 'model.completed' and event.payload.outcome == 'failed' then
-            probe_err = event.payload.error
-        end
-    end
-    ev('real-server probe: run failed as expected, error=' .. tostring(probe_err))
-    if probe_err == nil or probe_err:find('Initialize requires capabilities and clientInfo', 1, true) == nil then
-        return fail(
-            'real-server-probe',
-            'expected the capabilities-object rejection, got: ' .. tostring(probe_err)
-        )
-    end
-    ev('interop gap pinned: diver sends "capabilities":[] (empty Lua table -> JSON array);'
-        .. ' phlow-mcp requires an object per MCP spec (server.rs initialize)')
+    ev('real-server probe: run completed against the real phlow server')
+    ev('interop gap closed: diver ai.mcp.client is discover-first modern;'
+        .. ' phlow-mcp serves the modern era (no legacy initialize rejection)')
     -- Step 2: the round trip, against the mock (behavior-neutral here).
     steer_mock('default')
     reg_err = register_server(handles, SERVER_MOCK, PYTHON_BIN, { handles.mock_path })

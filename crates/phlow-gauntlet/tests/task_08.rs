@@ -73,21 +73,22 @@ fn pass_evidence(outcome: TaskOutcome, scenario: &str) -> Vec<String> {
 
 // --- validation ---
 
-/// V: the real-server probe pins the initialize interop gap, then the mock
-/// server answers tools/list with its three tools and tools/call
-/// gauntlet_add returns "42" through the real adapter.
+/// V: the real-server probe asserts the closed interop gap (the run
+/// completes against the real server), then the mock server answers
+/// tools/list with its three tools and tools/call gauntlet_add returns
+/// "42" through the real adapter.
 #[test]
 fn default_real_server_round_trip() {
     let ctx = ctx_for("default", 120);
     let evidence = pass_evidence(task_08::run_scenario(&ctx, "default"), "default");
     let joined = evidence.join("\n");
     assert!(
-        joined.contains("real-server probe: run failed as expected"),
+        joined.contains("real-server probe: run completed against the real phlow server"),
         "expected the real-server probe in evidence, got:\n{joined}"
     );
     assert!(
-        joined.contains("Initialize requires capabilities and clientInfo"),
-        "expected the pinned interop error in evidence, got:\n{joined}"
+        joined.contains("interop gap closed"),
+        "expected the closed-gap evidence, got:\n{joined}"
     );
     assert!(
         joined.contains("names=gauntlet_add,gauntlet_blob,gauntlet_echo"),

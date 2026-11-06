@@ -4,13 +4,14 @@
 //! against an MCP stdio server and proves the `tools/list` → `tools/call`
 //! round trip end to end (see `lua/gauntlet/task_08.lua`). The default
 //! scenario first probes the real phlow MCP server (`phlow serve`, NDJSON
-//! JSON-RPC 2.0 over stdio): the probe is expected to fail the `initialize`
-//! handshake because diver's `ai.mcp.client` encodes the empty capabilities
-//! table as a JSON array (`"capabilities":[]`) while `phlow-mcp` strictly
-//! requires a capabilities object per the MCP spec — that interop gap is
-//! asserted as evidence. The round trip itself then runs against a
-//! purpose-built python3 mock server (written into the work dir by the
-//! driver). The adversarial scenarios steer the same mock:
+//! JSON-RPC 2.0 over stdio): the probe originally pinned an `initialize`
+//! interop gap (the legacy client advertised `"capabilities":[]` and
+//! `phlow-mcp` rejected it); that gap is closed — diver's client is
+//! discover-first modern and `phlow-mcp` serves the modern era — so the
+//! probe now asserts the real-server run completes. The round trip itself
+//! then runs against a purpose-built python3 mock server (written into
+//! the work dir by the driver). The adversarial scenarios steer the
+//! same mock:
 //! `"bad-args"` (schema violations → typed `-32602` errors),
 //! `"server-dies"` (mid-call `exit(1)` → typed process-exit error, no
 //! hang), `"oversize"` (a ~10 MiB single-line response past the client's
@@ -18,7 +19,7 @@
 //!
 //! Environment contract: `XDG_DATA_HOME` is pointed at
 //! `<work_dir>/task-08/xdg` so the security allowlist the driver writes
-//! (via the real `ai.security` allowlist mechanism) stays inside the task
+//! (via the real `security` allowlist mechanism) stays inside the task
 //! scratch directory. `GAUNTLET_PHLOW_BIN` locates the `phlow` binary,
 //! falling back to the repo's debug build; a missing binary fails closed.
 

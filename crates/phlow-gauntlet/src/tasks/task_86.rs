@@ -8,14 +8,19 @@
 //! in the session record.
 //!
 //! Seam mapping (verified, not invented): diver's `ai.mcp.client`
-//! (`lua/ai/mcp/client.lua`) owns the initialize handshake. Its
-//! `run_handshake` sends `protocolVersion = '2024-11-05'` with
-//! `capabilities = {}` and DISCARDS the initialize result
-//! (`function(err, _result)`): the server's advertised capabilities
-//! are never read, never verified, never recorded. `M.request`
-//! sends any method for any ready session — no gating on negotiated
-//! capabilities, no `capability_mismatch` typed error, no session
-//! record of what was negotiated.
+//! (`lua/ai/mcp/client.lua`) is a discover-first modern client: it
+//! opens with `server/discover` and falls back to the legacy
+//! `initialize` identification only when discover answers -32601.
+//! The driver's mock speaks only the legacy era (it answers discover
+//! with -32601), so the client takes its designed legacy fallback.
+//! On that path the client advertises a fixed empty capabilities
+//! object (`vim.empty_dict()`, `{}` on the wire) and stores the
+//! initialize result's capabilities in its internal session state —
+//! but the module exports no capability/negotiation introspection,
+//! never verifies advertisement vs behavior, and records the
+//! negotiation nowhere readable. `M.request` sends any method for
+//! any ready session — no gating on negotiated capabilities, no
+//! `capability_mismatch` typed error.
 //!
 //! Four cases: two validation (driver probes against the REAL
 //! module), two adversarial (harness probes over the driver's
@@ -338,7 +343,7 @@ fn case_negotiation_unrecorded(ctx: &Ctx) -> Result<CaseReport, DriverError> {
     evidence.push(format!(
         "trace client_advertised_caps={client_caps:?} negotiated_record={negotiated_record:?}"
     ));
-    if client_caps != "[]" {
+    if client_caps != "{}" {
         return Ok(CaseReport::fail(
             CASE,
             format!("client advertised {client_caps:?}, not the fixed empty set"),
@@ -361,7 +366,7 @@ fn case_negotiation_unrecorded(ctx: &Ctx) -> Result<CaseReport, DriverError> {
     );
     Ok(CaseReport::pass(
         CASE,
-        serde_json::json!({"client_advertised_caps": "[]", "negotiated_record": false}),
+        serde_json::json!({"client_advertised_caps": "{}", "negotiated_record": false}),
         evidence,
     ))
 }
@@ -456,11 +461,12 @@ struct TaskFailure {
 
 fn run_inner(ctx: &Ctx) -> Result<Vec<String>, TaskFailure> {
     let mut evidence = vec![
-        "seam: diver's ai.mcp.client — the real initialize handshake, but \
-         with no negotiation integrity: run_handshake sends \
-         protocolVersion='2024-11-05' with capabilities={} and discards \
-         the initialize result; M.request sends any method for any ready \
-         session with no gating on negotiated capabilities"
+        "seam: diver's ai.mcp.client — the real handshake (discover-first, \
+         legacy initialize fallback), but with no negotiation integrity: \
+         the legacy path advertises a fixed empty capabilities object and \
+         keeps the result's capabilities in internal session state only; \
+         M.request sends any method for any ready session with no gating \
+         on negotiated capabilities"
             .to_string(),
     ];
     for case in CASES {
@@ -491,7 +497,7 @@ fn run_inner(ctx: &Ctx) -> Result<Vec<String>, TaskFailure> {
     );
     Err(TaskFailure {
         where_: "seam".to_string(),
-        how: "seam cannot meet the criteria: diver's ai.mcp.client (lua/ai/mcp/client.lua) is the real MCP handshake, but it has no negotiation integrity. Driver probes against the REAL module confirm it: matching capabilities round-trip (handshake + tools/list + tools/call echo all succeed); the initialize result is discarded — the client module exposes no capability/negotiation introspection, and the wire log shows the client advertised `\"capabilities\":[]` (empty Lua table encodes as a JSON array, the task-08 interop gap); a server advertising `tools` whose tools/list errors -32602 surfaces only a bare string error — no typed `capability_mismatch` names the capability; and with the server advertising only `tools`, a driver-issued `resources/list` call went out on the wire — M.request gates nothing on negotiated capabilities. Diver-owned: flagged, never fixed on gauntlet authority — whether the client should verify advertisement-vs-behavior, gate requests on negotiated capabilities, and record the negotiation is Matt's call.".to_string(),
+        how: "seam cannot meet the criteria: diver's ai.mcp.client (lua/ai/mcp/client.lua) is the real MCP handshake, but it has no negotiation integrity. Driver probes against the REAL module confirm it: matching capabilities round-trip (handshake + tools/list + tools/call echo all succeed); the legacy-fallback handshake keeps the result's capabilities in internal session state only — the client module exposes no capability/negotiation introspection, and the wire log shows the client advertised `\"capabilities\":{}` (a fixed empty object); a server advertising `tools` whose tools/list errors -32602 surfaces only a bare string error — no typed `capability_mismatch` names the capability; and with the server advertising only `tools`, a driver-issued `resources/list` call went out on the wire — M.request gates nothing on negotiated capabilities. Diver-owned: flagged, never fixed on gauntlet authority — whether the client should verify advertisement-vs-behavior, gate requests on negotiated capabilities, and record the negotiation is Matt's call.".to_string(),
         evidence,
     })
 }

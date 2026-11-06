@@ -1,9 +1,11 @@
 //! Integration tests for task-86 (MCP capability negotiation mismatch).
 //!
 //! The seam is REAL but incapable: diver's `ai.mcp.client`
-//! sends `capabilities = {}` in `initialize` and discards the
-//! server's advertised capabilities — it never records or gates on
-//! negotiated capabilities, so any method is sent on any ready
+//! advertises a fixed empty capabilities object in the legacy
+//! `initialize` fallback and keeps the server's advertised
+//! capabilities in internal session state only — it never exposes,
+//! records or gates on negotiated capabilities, so any method is
+//! sent on any ready
 //! session. Each test drives the `task_86.lua` probe in headless
 //! Neovim against the REAL client and a scripted Python MCP stdio
 //! server, and asserts the honest `fail` at `"seam"`: 2 validation,
@@ -157,7 +159,7 @@ fn negotiation_is_never_recorded() {
         "negotiation-unrecorded case must hold: {}",
         report.failures.join("; ")
     );
-    assert_eq!(report.metrics["client_advertised_caps"], "[]");
+    assert_eq!(report.metrics["client_advertised_caps"], "{}");
     assert_eq!(report.metrics["negotiated_record"], false);
     let joined = report.evidence.join("\n");
     assert!(
