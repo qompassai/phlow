@@ -345,7 +345,10 @@ fn cfg_test_line(text: &str) -> Option<usize> {
 /// remaining trainlab spawns sit inside `#[cfg(test)]` modules
 /// (verified mechanically by line position); the trainer-mojo GPU
 /// residency probe is the same class (one fixed-argv `nvidia-smi`
-/// child per check, captured synchronously). No other acquisition
+/// child per check, captured synchronously); the phlow-mcp client
+/// connect spawn is the transport class (one configured server child
+/// per client connection, spawned under the client's own runtime —
+/// a client transport, not a fan-out). No other acquisition
 /// path may exist — a new spawn site fails this case.
 fn case_spawn_paths_go_through_limiter() -> Result<CaseReport, DriverError> {
     const CASE: &str = "spawn_paths_go_through_limiter";
@@ -533,6 +536,37 @@ fn case_spawn_paths_go_through_limiter() -> Result<CaseReport, DriverError> {
                         .to_string(),
                 );
             }
+        } else if site.contains("phlow-mcp/src/client.rs") {
+            // MCP client transport spawn: `McpClient::connect` spawns
+            // the one configured server process for this client under
+            // a tokio runtime the client owns — one child per
+            // connection, driven synchronously by the caller, no
+            // queue and no fan-out (the transport class, classified
+            // by inspection like the checks spawn). Anchors: the
+            // spawn builds its command from the server config and
+            // enters the client runtime around the child transport.
+            let (path, lineno) = parse_site(site)?;
+            let text = std::fs::read_to_string(&path)
+                .map_err(|e| fixture_error("mcp client source", format!("{path}: {e}")))?;
+            let from_config = text.contains("Command::new(&config.command)");
+            let runtime_entered = text.contains("runtime.enter()");
+            evidence.push(format!(
+                "phlow-mcp client.rs:{lineno}: configured-server command present={from_config}, client runtime entered for the spawn={runtime_entered}"
+            ));
+            if !from_config || !runtime_entered {
+                return Ok(CaseReport::fail(
+                    CASE,
+                    format!(
+                        "mcp client spawn at {site} lost its transport anchors (from_config={from_config}, runtime_entered={runtime_entered})"
+                    ),
+                    evidence,
+                ));
+            }
+            synchronous_single += 1;
+            evidence.push(
+                "phlow-mcp client.rs: connect spawns ONE configured MCP server child per client connection under the client's own tokio runtime — a client transport, sequential per connection, nothing to limit"
+                    .to_string(),
+            );
         } else if site.contains("phlow-cli/src/lib.rs") {
             // Verify test-only-ness mechanically: the enclosing fn must
             // carry #[test]. Walk up from the hit line to the nearest
@@ -590,7 +624,7 @@ fn case_spawn_paths_go_through_limiter() -> Result<CaseReport, DriverError> {
         ));
     }
     evidence.push(
-        "every acquisition path is accounted for: the fan-out path is semaphore-gated (queue slot + run permit precede spawn; excess recorded as dropped); the other production spawners are sequential single-child (checks runner, trainlab reward executor, trainer-mojo GPU residency probe); the remaining sites are test-only".to_string(),
+        "every acquisition path is accounted for: the fan-out path is semaphore-gated (queue slot + run permit precede spawn; excess recorded as dropped); the other production spawners are sequential single-child (checks runner, trainlab reward executor, trainer-mojo GPU residency probe, phlow-mcp client transport); the remaining sites are test-only".to_string(),
     );
     Ok(CaseReport::pass(
         CASE,

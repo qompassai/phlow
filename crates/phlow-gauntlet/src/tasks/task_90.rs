@@ -366,12 +366,14 @@ fn case_adapters_disjoint(ctx: &Ctx) -> Result<CaseReport, DriverError> {
     ))
 }
 
-/// V2: there is no namespace entry point. Over the driver's
-/// trace: `dispatch_entry` is false and `colon_names_rejected` is
-/// true — `ai.harness` exposes only setup/run/cancel/resume/version,
-/// the registry only adapter/tool/workflow registration, and
-/// `register_tool` REJECTS `mcp:summarize` on the name pattern. The
-/// design's `proto:name` addressing is inexpressible.
+/// V2: there is no NAMESPACE entry point. Over the driver's
+/// trace: `dispatch_entry` (the namespace entry) is false and
+/// `colon_names_rejected` is true — `ai.harness` exposes
+/// setup/run/cancel/resume/version plus `dispatch_tool`, a bare-name
+/// dispatch over registered names only; the registry only
+/// adapter/tool/workflow registration; and `register_tool` REJECTS
+/// `mcp:summarize` on the name pattern. The design's `proto:name`
+/// addressing is inexpressible.
 fn case_no_namespace_entry(ctx: &Ctx) -> Result<CaseReport, DriverError> {
     const CASE: &str = "no_namespace_entry";
     let mut evidence = Vec::new();
@@ -413,9 +415,10 @@ fn case_no_namespace_entry(ctx: &Ctx) -> Result<CaseReport, DriverError> {
         ));
     }
     evidence.push(
-        "there is no dispatch/namespace entry point and \
-         `proto:name` addressing is rejected by the registry name \
-         pattern: the namespaced dispatcher is absent as designed"
+        "there is no NAMESPACE dispatch entry point (dispatch_tool \
+         dispatches bare registered names only) and `proto:name` \
+         addressing is rejected by the registry name pattern: the \
+         namespaced dispatcher is absent as designed"
             .to_string(),
     );
     Ok(CaseReport::pass(

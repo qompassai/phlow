@@ -57,6 +57,18 @@ fn write_seed_config(dir: &std::path::Path) -> Result<PathBuf, TaskDriverError> 
     Ok(path)
 }
 
+/// The seed config for the `run` schema target: the shared checks
+/// seed plus a backend pinned to a dead loopback port (nothing
+/// listens on port 9), so `run` takes its connection-refused error
+/// path deterministically in any environment.
+fn write_run_seed_config(dir: &std::path::Path) -> Result<PathBuf, TaskDriverError> {
+    let path = dir.join("phlow-run.toml");
+    let text = format!("{SEED_CONFIG}[ollama]\nbase_url = \"http://127.0.0.1:9\"\n");
+    std::fs::write(&path, text)
+        .map_err(|e| fixture("seed", format!("cannot write run seed config: {e}")))?;
+    Ok(path)
+}
+
 /// Flag-position parity: `--json` before the subcommand must behave
 /// the same as after it, like the other global flags.
 fn check_flag_parity(
@@ -285,6 +297,8 @@ fn case_schema_snapshots() -> Result<CaseReport, TaskDriverError> {
     let dir = cli_harness::case_temp_dir("198-v3");
     let cfg = write_seed_config(&dir)?;
     let cfg_arg = cfg.to_string_lossy().to_string();
+    let run_cfg = write_run_seed_config(&dir)?;
+    let run_cfg_arg = run_cfg.to_string_lossy().to_string();
     let targets: Vec<(&str, Vec<String>)> = vec![
         (
             "status",
@@ -304,11 +318,21 @@ fn case_schema_snapshots() -> Result<CaseReport, TaskDriverError> {
                 "--json".into(),
             ],
         ),
-        // `run` without a backend errors fast (connection refused);
-        // the error report has the same stable shape as a success.
+        // `run` against an unreachable backend errors fast
+        // (connection refused); the error report has the same stable
+        // shape as a success. The run config pins the backend to a
+        // dead loopback port so the error path is deterministic even
+        // on a machine where a real backend is serving — the shape
+        // must not depend on ambient services.
         (
             "run",
-            vec!["run".into(), "--json".into(), "wave32-probe".into()],
+            vec![
+                "-c".into(),
+                run_cfg_arg.clone(),
+                "run".into(),
+                "--json".into(),
+                "wave32-probe".into(),
+            ],
         ),
     ];
     let mut failures = Vec::new();

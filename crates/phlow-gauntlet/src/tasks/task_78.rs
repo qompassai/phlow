@@ -337,9 +337,13 @@ fn case_no_snapshot_revision_cache() -> Result<CaseReport, DriverError> {
     // nvidia-smi memory observation — not model data), attention
     // snapshot frames (the phlow-attention common-ground frame
     // for joint-attention alignment, with its phlow-mcp tool
-    // surface and phlow-config vocabulary — not model data) —
-    // plus the gauntlet harness's own probe vocabulary.
-    const CLASSIFIED_CRATES: [&str; 13] = [
+    // surface and phlow-config vocabulary — not model data),
+    // flowguard label snapshots (a LabelSnapshot is a trajectory's
+    // label value captured at a handoff boundary — policy data, not
+    // model data), a2a task snapshots (the A2A protocol's Task state
+    // returned by a peer — protocol data, not model data) — plus the
+    // gauntlet harness's own probe vocabulary.
+    const CLASSIFIED_CRATES: [&str; 15] = [
         "phlow-workspace",
         "phlow-editor",
         "phlow-runtime",
@@ -353,6 +357,8 @@ fn case_no_snapshot_revision_cache() -> Result<CaseReport, DriverError> {
         "phlow-attention",
         "phlow-config",
         "phlow-mcp",
+        "phlow-flowguard",
+        "phlow-a2a",
     ];
     let root = workspace_root()?;
     let hits = scan_sources(&root, &["snapshot", "blob", "revision"])?;

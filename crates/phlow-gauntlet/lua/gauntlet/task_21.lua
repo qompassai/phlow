@@ -209,7 +209,6 @@ local function scenario_no_executor(handles)
         { mod = handles.harness, name = 'saga' },
         { mod = handles.registry_mod, name = 'run_workflow' },
         { mod = handles.registry_mod, name = 'execute_workflow' },
-        { mod = handles.registry_mod, name = 'list_workflows' },
         { mod = handles.supervisor, name = 'run_workflow' },
     }
     for _, probe in ipairs(probes) do
@@ -241,7 +240,7 @@ local function scenario_no_executor(handles)
     fh:close()
     table.sort(names)
     ev('registry.lua workflow-related definitions: ' .. table.concat(names, ', '))
-    local want = { 'get_workflow', 'register_workflow' }
+    local want = { 'get_workflow', 'list_workflows', 'register_workflow' }
     if #names ~= #want then
         return driver_fail(
             'source-scan',
@@ -254,10 +253,10 @@ local function scenario_no_executor(handles)
         end
     end
     ev('file evidence: ' .. reg_path)
-    ev('the complete workflow surface is {register_workflow, get_workflow}: naming only, no runner')
+    ev('the complete workflow surface is {register_workflow, get_workflow, list_workflows}: naming only, no runner')
     return seam_absent(
         'seam absent: no run_workflow/execute_workflow/saga entry point on any harness module; '
-            .. 'registry.lua defines only register_workflow + get_workflow (file evidence above)'
+            .. 'registry.lua defines only register_workflow + get_workflow + list_workflows (file evidence above)'
     )
 end
 

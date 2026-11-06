@@ -263,17 +263,21 @@ local function main()
     if reg_src == nil then
         return fail('lua-driver', 'could not read ' .. reg_path)
     end
+    -- Count IDENTIFIERS, not substrings: a naive substring scan for
+    -- 'pin' false-positives on prose words like "mapping" in doc
+    -- comments. An identifier counts when it starts with 'pin' (pin,
+    -- pinned, pinning, pin_source...), carries a '_pin' segment, or is
+    -- exactly 'trusted' / 'verify_path' / 'source_path'.
     local pin_hits = 0
     local lower = reg_src:lower()
-    for _, token in ipairs({ 'pin', 'trusted', 'verify_path', 'source_path' }) do
-        local from = 1
-        while true do
-            local s = lower:find(token, from, true)
-            if s == nil then
-                break
-            end
+    for ident in lower:gmatch('[%w_]+') do
+        if ident:sub(1, 3) == 'pin'
+            or ident:find('_pin', 1, true) ~= nil
+            or ident == 'trusted'
+            or ident == 'verify_path'
+            or ident == 'source_path'
+        then
             pin_hits = pin_hits + 1
-            from = s + 1
         end
     end
     ev('pin/trust tokens in registry.lua: ' .. pin_hits)

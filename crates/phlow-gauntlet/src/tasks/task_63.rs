@@ -389,7 +389,13 @@ fn case_decompose_vocabulary_absent() -> Result<CaseReport, DriverError> {
 /// appears without them in the runtime codebase), or it is the
 /// autoresearch proposer binding — the experimental crate's consumer
 /// of the planner specialist, classified by its `Proposer` binding.
-/// And no planner-hit file contains any real decomposition-token hit
+/// The flowguard policy docs use `agent:planner` as an illustrative
+/// audience-label example (a label vocabulary mention, not a role and
+/// not a routine), and the runtime multiagent session loop describes
+/// its SessionAgent implementations as planner-driven (the planner
+/// role driving an agent's step choices inside a session the
+/// orchestrator owns — no subgoal decomposition). And no planner-hit
+/// file contains any real decomposition-token hit
 /// (no planner-decomposer coupling). A file failing every check is an
 /// unclassified routine hit.
 fn case_planner_is_role_not_routine() -> Result<CaseReport, DriverError> {
@@ -433,7 +439,25 @@ fn case_planner_is_role_not_routine() -> Result<CaseReport, DriverError> {
         // revokes it).
         let is_proposer_binding =
             file.contains("phlow-autoresearch/src/") && text.contains("Proposer");
-        if is_proposer_binding && !has_decompose {
+        // The flowguard policy docs name `agent:planner` only as an
+        // example audience label — vocabulary, not a role binding.
+        let is_label_example =
+            file.contains("phlow-flowguard/src/") && text.contains("agent:planner");
+        // The runtime multiagent session loop: the planner ROLE drives
+        // a SessionAgent's step choices ("planner-driven in
+        // production"); the orchestrator owns the loop and no subgoal
+        // decomposition vocabulary appears.
+        let is_multiagent_driver = file.contains("phlow-runtime/src/multiagent.rs")
+            && text.contains("planner-driven in production");
+        if is_label_example && !has_decompose {
+            evidence.push(format!(
+                "classified label example (the planner token is an illustrative audience label in the flowguard policy docs — not a role, not a routine; no decomposition vocabulary): {file}"
+            ));
+        } else if is_multiagent_driver && !has_decompose {
+            evidence.push(format!(
+                "classified role driver (the planner role drives SessionAgent step choices in the runtime multiagent session loop; the orchestrator owns the loop, no decomposition vocabulary): {file}"
+            ));
+        } else if is_proposer_binding && !has_decompose {
             evidence.push(format!(
                 "classified role consumer (autoresearch proposer binding surface of the \
                  planner specialist — the experimental crate's Proposer seam, live \

@@ -27,8 +27,10 @@
 --                   registrations with protocol-pure start paths;
 --                   an mcp run completes against the mock with only
 --                   mcp-sourced events — no cross traffic.
---   no-namespace  V: no dispatch entry point exists — the harness
---                   surface is setup/run/cancel/resume/version, and
+--   no-namespace  V: no NAMESPACE dispatch entry point exists —
+--                   ai.harness now also exposes dispatch_tool, a
+--                   bare-name, policy-gated dispatch over registered
+--                   names only; nothing parses a protocol prefix, and
 --                   register_tool rejects 'mcp:summarize' (colon
 --                   violates the name pattern).
 --   spoof         A: the mock advertises a tool literally named
@@ -64,6 +66,23 @@ local CALL_WAIT_MS = 15000
 
 local evidence = {}
 
+---Register workflow names so supervisor.create resolves them: diver's
+---registry contract now fails closed on unregistered workflows, and
+---registry names must match ^[a-z][a-z0-9_]*$. Registration is an
+---existence entry only -- adapter selection still comes from the run
+---spec. Idempotent: safe to call on every bootstrap.
+---@param registry table
+---@param names string[]
+---@param adapter string
+local function ensure_workflows(registry, names, adapter)
+    local registry_mod = require('ai.harness.registry')
+    for _, name in ipairs(names) do
+        if registry_mod.get_workflow(registry, name) == nil then
+            local ok, err = registry_mod.register_workflow(registry, name, { adapter = adapter })
+            assert(ok, 'register workflow ' .. name .. ': ' .. tostring(err))
+        end
+    end
+end
 local function ev(line)
     if #evidence < EVIDENCE_MAX then
         evidence[#evidence + 1] = tostring(line)
@@ -221,6 +240,7 @@ local function bootstrap()
     if st == nil then
         return nil, 'harness internal state unavailable after setup'
     end
+    ensure_workflows(st.registry, { 'gauntlet_dispatch' }, 'mcp')
     local registry = require('ai.mcp.registry')
     registry._test_set_data_dir(work_dir .. '/mcp-registry')
     local mock_path, mock_err = write_mock_server(work_dir)
@@ -407,7 +427,7 @@ local function scenario_distinct(handles)
         return fail('adapters', 'a2a adapter is not the real ai.harness.adapters.a2a')
     end
     local run_id, run_err = handles.harness.run({
-        workflow = 'gauntlet-dispatch',
+        workflow = 'gauntlet_dispatch',
         goal = 'namespaced dispatch probe',
         workspace = handles.work_dir,
         adapter = 'mcp',
@@ -442,9 +462,10 @@ local function scenario_distinct(handles)
     return pass()
 end
 
----Scenario "no-namespace" (V): there is no dispatch entry point —
----the harness surface is setup/run/cancel/resume/version, and the
----registry rejects 'mcp:summarize' (the colon violates the
+---Scenario "no-namespace" (V): there is no NAMESPACE dispatch
+---entry point — ai.harness exposes setup/run/cancel/resume/version
+---plus dispatch_tool, a bare-name dispatch over registered names;
+---the registry rejects 'mcp:summarize' (the colon violates the
 ---`^[a-z][a-z0-9_]*$` name pattern), so `proto:name` addressing is
 ---inexpressible.
 ---@param handles table
@@ -454,13 +475,16 @@ local function scenario_no_namespace(handles)
     ev('ai.harness functions: ' .. table.concat(harness_fns, ', '))
     for _, name in ipairs(harness_fns) do
         local lower = name:lower()
-        if lower:find('dispatch', 1, true) ~= nil
-            or lower:find('namespace', 1, true) ~= nil
+        if lower:find('namespace', 1, true) ~= nil
             or lower:find('route', 1, true) ~= nil
         then
+            return fail('no-namespace', 'unexpected namespace entry point: ' .. name)
+        end
+        if lower:find('dispatch', 1, true) ~= nil and name ~= 'dispatch_tool' then
             return fail('no-namespace', 'unexpected dispatch entry point: ' .. name)
         end
     end
+    ev('bare-name dispatch entry present: dispatch_tool (registry-name lookup only; no namespace addressing)')
     local reg_fns = module_functions(handles.hregistry)
     ev('ai.harness.registry functions: ' .. table.concat(reg_fns, ', '))
     for _, name in ipairs(reg_fns) do
@@ -484,6 +508,7 @@ local function scenario_no_namespace(handles)
     local trace = {
         scenario = 'no-namespace',
         dispatch_entry = false,
+        bare_dispatch_entry = 'dispatch_tool',
         colon_names_rejected = true,
     }
     local werr = write_work_file(handles, 'dispatch-trace.json', vim.json.encode(trace))
@@ -566,7 +591,7 @@ local function scenario_ambiguous(handles)
     local ok, err = hreg.register_tool(
         handles.reg_state,
         'summarize',
-        { description = 'first registration' }
+        { description = 'first registration', run = function() end, input_schema = {} }
     )
     if not ok then
         return fail('ambiguous', 'first register_tool failed: ' .. tostring(err))
@@ -574,7 +599,7 @@ local function scenario_ambiguous(handles)
     local ok2, err2 = hreg.register_tool(
         handles.reg_state,
         'summarize',
-        { description = 'second registration' }
+        { description = 'second registration', run = function() end, input_schema = {} }
     )
     if ok2 then
         return fail('ambiguous', 'duplicate bare-name registration was accepted')

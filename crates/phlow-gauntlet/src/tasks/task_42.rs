@@ -347,7 +347,12 @@ fn case_no_integrity_tokens_in_sources() -> Result<CaseReport, DriverError> {
 /// `ApprovalQueue.records` (phlow-approval/src/queue.rs) is a bounded
 /// in-memory `Vec<Record>` — "append-only" only as a doc note that a
 /// full queue rejects new requests rather than evicting old decisions;
-/// no persistence, no linking, no sealing key, no verifier.
+/// no persistence, no linking, no sealing key, no verifier. The
+/// flowguard trajectory log (phlow-flowguard/src/event.rs, lib.rs,
+/// trajectory.rs) is the same class: an in-memory append-only event
+/// list whose label is a fold of the log — the digests in it bind
+/// single-use approvals to the one action they approve, they do not
+/// link or seal log entries; no persistence, no verifier.
 fn case_grow_only_stores_lack_verification() -> Result<CaseReport, DriverError> {
     const CASE: &str = "grow_only_stores_lack_verification";
     let mut evidence = Vec::new();
@@ -374,6 +379,12 @@ fn case_grow_only_stores_lack_verification() -> Result<CaseReport, DriverError> 
             || hit.contains("queue.rs")
             || hit.contains("task_36.rs")
         {
+            continue;
+        }
+        if hit.contains("crates/phlow-flowguard/") {
+            evidence.push(format!(
+                "classified (flowguard trajectory log — an in-memory append-only event list whose label is a fold; approval digests bind single-use approvals to actions, not log entries; no entry linking, no sealing, no verifier): {hit}"
+            ));
             continue;
         }
         if hit.contains("crates/phlow-autoresearch/") {
@@ -432,7 +443,7 @@ fn case_grow_only_stores_lack_verification() -> Result<CaseReport, DriverError> 
         ));
     }
     evidence.push(
-        "both grow-only structures lack entry linking, sealing keys, and a verifier — adjacent, not the seam"
+        "the classified grow-only structures lack entry linking, sealing keys, and a verifier — adjacent, not the seam"
             .to_string(),
     );
     Ok(CaseReport::pass(
@@ -558,7 +569,7 @@ struct TaskFailure {
 fn run_inner(_ctx: &Ctx) -> Result<Vec<String>, TaskFailure> {
     let mut evidence = vec![
         "recon: integrity-mechanism vocabulary scan over every crates/*/src — zero hits in the runtime/approval path (entry linking, sealing keys, tamper-evidence journaling all absent there); the only hits are the sanctioned experimental exception (the phlow-autoresearch ledger, Matt's 2026-10-08 ruling)".to_string(),
-        "recon: the three grow-only structures that exist in the runtime are not the seam — ConsumedApprovals (phlow-experiment/src/promotion.rs) is replay protection with expiring entries; FusionReceipt.log (phlow-tools/src/solpi/action_fusion.rs) is an in-memory Vec<String>; ApprovalQueue.records (phlow-approval/src/queue.rs) is a bounded in-memory Vec<Record>".to_string(),
+        "recon: the grow-only structures that exist in the runtime are not the seam — ConsumedApprovals (phlow-experiment/src/promotion.rs) is replay protection with expiring entries; FusionReceipt.log (phlow-tools/src/solpi/action_fusion.rs) is an in-memory Vec<String>; ApprovalQueue.records (phlow-approval/src/queue.rs) is a bounded in-memory Vec<Record>; the flowguard trajectory log is an in-memory append-only event list whose digests bind single-use approvals, not log entries".to_string(),
     ];
     for case in CASES {
         let report = run_case(case).map_err(|e| TaskFailure {

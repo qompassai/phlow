@@ -96,6 +96,7 @@ local TEXT_NEEDLES = {
 local UNRELATED_HITS = {
     { 'store.lua', 'fallback', 'hash-prefix label for the content store, not an approver fallback' },
     { 'adapter.lua', 'delegat', 'comment: start() delegates to a verified native call, not approval delegation' },
+    { 'supervisor.lua', 'rout', 'comments: the tool-dispatch route from a registered name to its run function, and approval routing belonging to run-scoped callers — not approver escalation routing' },
 }
 
 local SCAN_FILES_MAX = 64
