@@ -37,6 +37,23 @@ local EVIDENCE_MAX = 64
 
 local evidence = {}
 
+---Register workflow names so supervisor.create resolves them: diver's
+---registry contract now fails closed on unregistered workflows, and
+---registry names must match ^[a-z][a-z0-9_]*$. Registration is an
+---existence entry only -- adapter selection still comes from the run
+---spec. Idempotent: safe to call on every bootstrap.
+---@param registry table
+---@param names string[]
+---@param adapter string
+local function ensure_workflows(registry, names, adapter)
+    local registry_mod = require('ai.harness.registry')
+    for _, name in ipairs(names) do
+        if registry_mod.get_workflow(registry, name) == nil then
+            local ok, err = registry_mod.register_workflow(registry, name, { adapter = adapter })
+            assert(ok, 'register workflow ' .. name .. ': ' .. tostring(err))
+        end
+    end
+end
 local function ev(line)
     if #evidence < EVIDENCE_MAX then
         evidence[#evidence + 1] = tostring(line)
@@ -111,7 +128,12 @@ end
 local function new_supervisor(mods)
     local sink = mods.events.new_sink()
     local reg = mods.registry.new()
-    return mods.supervisor.new({ registry = reg, sink = sink })
+    local sup, err = mods.supervisor.new({ registry = reg, sink = sink })
+    if sup == nil then
+        return nil, err
+    end
+    ensure_workflows(reg, { 'gauntlet_41' }, 'gauntlet')
+    return sup, nil
 end
 
 ---@param mods table
@@ -138,7 +160,7 @@ local function main()
     -- V1 (default scenario): delegation works — parent -> child ->
     -- grandchild, parent_id linked at each depth.
     local parent, perr = create_run(mods, sup, {
-        workflow = 'gauntlet-41',
+        workflow = 'gauntlet_41',
         goal = 'probe authority attenuation',
         workspace = '/tmp/gauntlet-41',
     })
@@ -146,7 +168,7 @@ local function main()
         return fail('lua-driver', 'parent run create failed: ' .. tostring(perr))
     end
     local child, cerr = mods.supervisor.spawn_child(sup, parent.id, {
-        workflow = 'gauntlet-41',
+        workflow = 'gauntlet_41',
         goal = 'probe authority attenuation',
         workspace = '/tmp/gauntlet-41',
     })
@@ -154,7 +176,7 @@ local function main()
         return fail('lua-driver', 'child spawn failed: ' .. tostring(cerr))
     end
     local grandchild, gerr = mods.supervisor.spawn_child(sup, child.id, {
-        workflow = 'gauntlet-41',
+        workflow = 'gauntlet_41',
         goal = 'probe authority attenuation',
         workspace = '/tmp/gauntlet-41',
     })

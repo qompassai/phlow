@@ -29,6 +29,23 @@ local TIMEOUT_MS = 60000
 local evidence = {} ---@type string[]
 
 ---@param fmt string
+---Register workflow names so supervisor.create resolves them: diver's
+---registry contract now fails closed on unregistered workflows, and
+---registry names must match ^[a-z][a-z0-9_]*$. Registration is an
+---existence entry only -- adapter selection still comes from the run
+---spec. Idempotent: safe to call on every bootstrap.
+---@param registry table
+---@param names string[]
+---@param adapter string
+local function ensure_workflows(registry, names, adapter)
+    local registry_mod = require('ai.harness.registry')
+    for _, name in ipairs(names) do
+        if registry_mod.get_workflow(registry, name) == nil then
+            local ok, err = registry_mod.register_workflow(registry, name, { adapter = adapter })
+            assert(ok, 'register workflow ' .. name .. ': ' .. tostring(err))
+        end
+    end
+end
 local function note(fmt, ...)
     if #evidence < EVIDENCE_MAX then
         evidence[#evidence + 1] = string.format(fmt, ...)
@@ -90,6 +107,7 @@ local function new_test_supervisor()
     if not ok then
         return nil, nil, 'register gauntlet_null: ' .. tostring(reg_err)
     end
+    ensure_workflows(reg, { 'gauntlet_budget' }, 'gauntlet_null')
     local sup, sup_err = supervisor.new({
         registry = reg,
         sink = sink,
@@ -110,7 +128,7 @@ end
 local function start_budget_run(sup, work_dir)
     local supervisor = require('ai.harness.supervisor')
     local run, err = supervisor.create(sup, {
-        workflow = 'gauntlet-budget',
+        workflow = 'gauntlet_budget',
         goal = 'budget exhaustion fails closed',
         workspace = work_dir,
         adapter = 'gauntlet_null',
@@ -233,8 +251,9 @@ local function scenario_zero_budget(work_dir)
     if not ok then
         return false, 'setup', 'harness.setup failed: ' .. tostring(serr)
     end
+    ensure_workflows(harness._state.registry, { 'gauntlet_budget' }, 'gauntlet_null')
     local run_id, err = harness.run({
-        workflow = 'gauntlet-budget',
+        workflow = 'gauntlet_budget',
         goal = 'zero budget rejected at creation',
         workspace = work_dir,
         adapter = 'gauntlet_null',

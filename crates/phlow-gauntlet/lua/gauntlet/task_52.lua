@@ -48,6 +48,23 @@ local SLOW_FACTOR = 10
 
 local evidence = {}
 
+---Register workflow names so supervisor.create resolves them: diver's
+---registry contract now fails closed on unregistered workflows, and
+---registry names must match ^[a-z][a-z0-9_]*$. Registration is an
+---existence entry only -- adapter selection still comes from the run
+---spec. Idempotent: safe to call on every bootstrap.
+---@param registry table
+---@param names string[]
+---@param adapter string
+local function ensure_workflows(registry, names, adapter)
+    local registry_mod = require('ai.harness.registry')
+    for _, name in ipairs(names) do
+        if registry_mod.get_workflow(registry, name) == nil then
+            local ok, err = registry_mod.register_workflow(registry, name, { adapter = adapter })
+            assert(ok, 'register workflow ' .. name .. ': ' .. tostring(err))
+        end
+    end
+end
 local function ev(line)
     if #evidence < EVIDENCE_MAX then
         evidence[#evidence + 1] = tostring(line)
@@ -118,6 +135,7 @@ local function new_harness(mods)
     if not ok then
         return nil, 'adapter registration failed: ' .. tostring(reg_err)
     end
+    ensure_workflows(reg, { 'gauntlet_straggler' }, ADAPTER_NAME)
     local sink = mods.events.new_sink()
     local sup, sup_err = mods.supervisor.new({ registry = reg, sink = sink })
     if sup == nil then
@@ -133,7 +151,7 @@ end
 ---@return string? err
 local function create_run(mods, ctx, tag)
     local run, err = mods.supervisor.create(ctx.sup, {
-        workflow = 'gauntlet-straggler',
+        workflow = 'gauntlet_straggler',
         goal = 'prove the straggler behavior: ' .. tag,
         workspace = mods.work_dir,
         adapter = ADAPTER_NAME,

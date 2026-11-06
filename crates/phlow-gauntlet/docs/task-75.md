@@ -19,7 +19,7 @@ Honest FAIL at `where = "seam"`, first attempt — the gap IS the finding, exact
 
 - **V1:** a linear chain of 5 works; the gauntlet's O(depth) ancestry walk yields depths 0..4 with no false positives. The walk is sound — but it is the GAUNTLET's walk, not the supervisor's: no spawn ever checks membership in the requester's ancestry set.
 - **V2:** the walk is validated on a branching tree (root, 2 children, 3 grandchildren): all 6 ancestry sets exact. The check the design demands is demonstrated correct under live nvim — and still never run by the supervisor.
-- **A1:** the escalation loop is accepted: B (child of A) delegates back up to its ANCESTOR A under workflow "totally-different-workflow" — accepted silently. No `delegation_cycle` error, no ancestry-membership check, no identity-based detection.
+- **A1:** the escalation loop is accepted: B (child of A) delegates back up to its ANCESTOR A under workflow "totally_different_workflow" — accepted silently. No `delegation_cycle` error, no ancestry-membership check, no identity-based detection.
 - **A2:** the spawn path contains no cycle machinery at all — the only "cycle" substring is inside "lifecycle" (header comment), no `delegation_cycle` string — and the ancestry set is never consulted: a spawn naming an unrelated live run as parent_id is accepted. Strict cycles are structurally unrepresentable (fresh ids), but that is construction, not a check — and the design's upward/escalation cases ARE representable and unrejected.
 
 ## Full technical depth

@@ -63,6 +63,23 @@ local TASK_ID = 'task-73'
 
 local evidence = {}
 
+---Register workflow names so supervisor.create resolves them: diver's
+---registry contract now fails closed on unregistered workflows, and
+---registry names must match ^[a-z][a-z0-9_]*$. Registration is an
+---existence entry only -- adapter selection still comes from the run
+---spec. Idempotent: safe to call on every bootstrap.
+---@param registry table
+---@param names string[]
+---@param adapter string
+local function ensure_workflows(registry, names, adapter)
+    local registry_mod = require('ai.harness.registry')
+    for _, name in ipairs(names) do
+        if registry_mod.get_workflow(registry, name) == nil then
+            local ok, err = registry_mod.register_workflow(registry, name, { adapter = adapter })
+            assert(ok, 'register workflow ' .. name .. ': ' .. tostring(err))
+        end
+    end
+end
 local function ev(line)
     if #evidence < EVIDENCE_MAX then
         evidence[#evidence + 1] = tostring(line)
@@ -177,6 +194,7 @@ local function bootstrap()
     if sup == nil then
         return nil, 'supervisor.new failed: ' .. tostring(serr)
     end
+    ensure_workflows(reg, { 'gauntlet_contain' }, 'gauntlet_holding')
     return { sup = sup, supervisor = supervisor, types = types, sink = sink }
 end
 
@@ -188,7 +206,7 @@ end
 ---@return string? err
 local function start_run(handles, goal, adapter, timeout_ms)
     local run, err = handles.supervisor.create(handles.sup, {
-        workflow = 'gauntlet-contain',
+        workflow = 'gauntlet_contain',
         goal = goal,
         workspace = vim.env.GAUNTLET_WORK_DIR,
         adapter = adapter,
@@ -213,7 +231,7 @@ end
 ---@return string? err
 local function start_child(handles, parent_id, goal, adapter, timeout_ms)
     local child, err = handles.supervisor.spawn_child(handles.sup, parent_id, {
-        workflow = 'gauntlet-contain',
+        workflow = 'gauntlet_contain',
         goal = goal,
         workspace = vim.env.GAUNTLET_WORK_DIR,
         adapter = adapter,

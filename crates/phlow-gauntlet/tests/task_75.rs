@@ -179,7 +179,7 @@ fn escalation_loop_is_accepted_silently() {
     assert_eq!(where_, "seam", "task-75 must fail at the absent seam");
     let joined = evidence.join("\n");
     assert!(
-        joined.contains("the ANCESTOR") && joined.contains("totally-different-workflow"),
+        joined.contains("the ANCESTOR") && joined.contains("totally_different_workflow"),
         "evidence must show the upward delegation under a different name:\n{joined}"
     );
     assert!(

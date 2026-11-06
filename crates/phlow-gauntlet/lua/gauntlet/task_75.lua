@@ -60,6 +60,23 @@ local TASK_ID = 'task-75'
 
 local evidence = {}
 
+---Register workflow names so supervisor.create resolves them: diver's
+---registry contract now fails closed on unregistered workflows, and
+---registry names must match ^[a-z][a-z0-9_]*$. Registration is an
+---existence entry only -- adapter selection still comes from the run
+---spec. Idempotent: safe to call on every bootstrap.
+---@param registry table
+---@param names string[]
+---@param adapter string
+local function ensure_workflows(registry, names, adapter)
+    local registry_mod = require('ai.harness.registry')
+    for _, name in ipairs(names) do
+        if registry_mod.get_workflow(registry, name) == nil then
+            local ok, err = registry_mod.register_workflow(registry, name, { adapter = adapter })
+            assert(ok, 'register workflow ' .. name .. ': ' .. tostring(err))
+        end
+    end
+end
 local function ev(line)
     if #evidence < EVIDENCE_MAX then
         evidence[#evidence + 1] = tostring(line)
@@ -99,6 +116,7 @@ local function bootstrap()
     if sup == nil then
         return nil, 'supervisor.new failed: ' .. tostring(err)
     end
+    ensure_workflows(sup.registry, { 'gauntlet_cycle', 'totally_different_workflow' }, 'gauntlet')
     return { sup = sup, supervisor = supervisor }
 end
 
@@ -107,7 +125,7 @@ end
 ---@return table spec
 local function base_spec(goal, workflow)
     return {
-        workflow = workflow or 'gauntlet-cycle',
+        workflow = workflow or 'gauntlet_cycle',
         goal = goal,
         workspace = vim.env.GAUNTLET_WORK_DIR,
         timeout_ms = 60000,
@@ -278,7 +296,7 @@ local function scenario_escalation_accepted(handles)
     -- B delegates back up to its ancestor A under a DIFFERENT task
     -- name. By identity this is an upward delegation loop; the design
     -- wants `delegation_cycle` naming the cycle.
-    local spec = base_spec('escalated task', 'totally-different-workflow')
+    local spec = base_spec('escalated task', 'totally_different_workflow')
     spec.parent_id = agent_a.id
     local agent_c, cerr = handles.supervisor.create(handles.sup, spec)
     if agent_c == nil then
@@ -293,7 +311,7 @@ local function scenario_escalation_accepted(handles)
         return fail('walk', 'walk failed: ' .. tostring(aerr2))
     end
     ev('B (child of A) delegated back up: new run ' .. agent_c.id .. ' has parent '
-        .. agent_a.id .. ' (the ANCESTOR) under workflow "totally-different-workflow"')
+        .. agent_a.id .. ' (the ANCESTOR) under workflow "totally_different_workflow"')
     ev('accepted silently: no delegation_cycle error, no ancestry-membership check — '
         .. 'identity-based detection does not exist')
     if not ancestors[agent_a.id] then

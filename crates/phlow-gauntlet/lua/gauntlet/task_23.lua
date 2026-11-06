@@ -34,6 +34,23 @@ local BRANCHING = 3
 
 local evidence = {}
 
+---Register workflow names so supervisor.create resolves them: diver's
+---registry contract now fails closed on unregistered workflows, and
+---registry names must match ^[a-z][a-z0-9_]*$. Registration is an
+---existence entry only -- adapter selection still comes from the run
+---spec. Idempotent: safe to call on every bootstrap.
+---@param registry table
+---@param names string[]
+---@param adapter string
+local function ensure_workflows(registry, names, adapter)
+    local registry_mod = require('ai.harness.registry')
+    for _, name in ipairs(names) do
+        if registry_mod.get_workflow(registry, name) == nil then
+            local ok, err = registry_mod.register_workflow(registry, name, { adapter = adapter })
+            assert(ok, 'register workflow ' .. name .. ': ' .. tostring(err))
+        end
+    end
+end
 local function ev(line)
     if #evidence < EVIDENCE_MAX then
         evidence[#evidence + 1] = tostring(line)
@@ -164,6 +181,7 @@ local function bootstrap()
     if not hold_ok then
         return nil, 'holding adapter registration failed: ' .. tostring(hold_err)
     end
+    ensure_workflows(st.registry, { 'gauntlet_fanout' }, 'gauntlet_instant')
     return {
         harness = harness,
         sup = st.supervisor,
@@ -178,7 +196,7 @@ end
 ---@return table spec
 local function child_spec(handles, parent_id)
     return {
-        workflow = 'gauntlet-fanout',
+        workflow = 'gauntlet_fanout',
         goal = 'fan-out probe child of ' .. parent_id,
         workspace = vim.env.GAUNTLET_WORK_DIR,
         adapter = 'gauntlet_instant',
@@ -194,7 +212,7 @@ local function start_parent(handles)
     -- spawn; the instant adapter would self-complete on the first tick,
     -- and create() rejects 'parent run is already terminal'.
     return handles.harness.run({
-        workflow = 'gauntlet-fanout',
+        workflow = 'gauntlet_fanout',
         goal = 'fan-out probe parent',
         workspace = vim.env.GAUNTLET_WORK_DIR,
         adapter = 'gauntlet_holding',

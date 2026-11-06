@@ -27,6 +27,23 @@ local evidence = {}
 ---Append one evidence line, newline-stripped, bounded.
 ---@param fmt string
 ---@param ... any
+---Register workflow names so supervisor.create resolves them: diver's
+---registry contract now fails closed on unregistered workflows, and
+---registry names must match ^[a-z][a-z0-9_]*$. Registration is an
+---existence entry only -- adapter selection still comes from the run
+---spec. Idempotent: safe to call on every bootstrap.
+---@param registry table
+---@param names string[]
+---@param adapter string
+local function ensure_workflows(registry, names, adapter)
+    local registry_mod = require('ai.harness.registry')
+    for _, name in ipairs(names) do
+        if registry_mod.get_workflow(registry, name) == nil then
+            local ok, err = registry_mod.register_workflow(registry, name, { adapter = adapter })
+            assert(ok, 'register workflow ' .. name .. ': ' .. tostring(err))
+        end
+    end
+end
 local function note(fmt, ...)
     if #evidence >= EVIDENCE_MAX then
         return
@@ -134,7 +151,7 @@ local function scenario_default(supervisor_mod, sup, sink)
     local run_id, run_err = require('ai.harness').run({
         adapter = SCENARIO_ADAPTERS['default'],
         goal = 'x',
-        workflow = 'task-04-probe',
+        workflow = 'task_04_probe',
         workspace = vim.env.GAUNTLET_WORK_DIR,
         timeout_ms = RUN_TIMEOUT_MS,
     })
@@ -159,7 +176,7 @@ local function scenario_path_traversal(supervisor_mod, sup, sink)
     local run_id, run_err = require('ai.harness').run({
         adapter = SCENARIO_ADAPTERS['path-traversal'],
         goal = 'x',
-        workflow = 'task-04-probe',
+        workflow = 'task_04_probe',
         workspace = vim.env.GAUNTLET_WORK_DIR,
         timeout_ms = RUN_TIMEOUT_MS,
     })
@@ -203,7 +220,7 @@ local function scenario_empty(supervisor_mod, sup)
     local run_id, run_err = require('ai.harness').run({
         adapter = '',
         goal = 'x',
-        workflow = 'task-04-probe',
+        workflow = 'task_04_probe',
         workspace = vim.env.GAUNTLET_WORK_DIR,
         timeout_ms = RUN_TIMEOUT_MS,
     })
@@ -235,7 +252,7 @@ local function scenario_phlow_stub(supervisor_mod, sup, sink)
     local run_id, run_err = require('ai.harness').run({
         adapter = 'phlow',
         goal = 'x',
-        workflow = 'task-04-probe',
+        workflow = 'task_04_probe',
         workspace = vim.env.GAUNTLET_WORK_DIR,
         timeout_ms = RUN_TIMEOUT_MS,
     })
@@ -291,6 +308,7 @@ local function main()
         return fail('setup', 'harness.setup failed: ' .. tostring(setup_err))
     end
     note('harness.setup ok')
+    ensure_workflows(harness._state.registry, { 'task_04_probe' }, 'gauntlet')
     local supervisor_mod = require('ai.harness.supervisor')
     local sup = harness._state.supervisor
     local sink = harness._state.sink

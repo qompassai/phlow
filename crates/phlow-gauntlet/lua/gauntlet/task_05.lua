@@ -34,6 +34,23 @@ local MIDFLIGHT_WAIT_MS = 1200
 
 local evidence = {}
 
+---Register workflow names so supervisor.create resolves them: diver's
+---registry contract now fails closed on unregistered workflows, and
+---registry names must match ^[a-z][a-z0-9_]*$. Registration is an
+---existence entry only -- adapter selection still comes from the run
+---spec. Idempotent: safe to call on every bootstrap.
+---@param registry table
+---@param names string[]
+---@param adapter string
+local function ensure_workflows(registry, names, adapter)
+    local registry_mod = require('ai.harness.registry')
+    for _, name in ipairs(names) do
+        if registry_mod.get_workflow(registry, name) == nil then
+            local ok, err = registry_mod.register_workflow(registry, name, { adapter = adapter })
+            assert(ok, 'register workflow ' .. name .. ': ' .. tostring(err))
+        end
+    end
+end
 local function ev(line)
     if #evidence < EVIDENCE_MAX then
         evidence[#evidence + 1] = tostring(line)
@@ -132,6 +149,7 @@ local function bootstrap()
     if not reg_ok then
         return nil, 'fake adapter registration failed: ' .. tostring(reg_err)
     end
+    ensure_workflows(st.registry, { 'gauntlet_cancel_resume' }, SLOW_ADAPTER)
     return {
         harness = harness,
         sup = st.supervisor,
@@ -193,7 +211,7 @@ end
 ---@return string? err
 local function start_run(handles, complete_on_attempt)
     local spec = {
-        workflow = 'gauntlet-cancel-resume',
+        workflow = 'gauntlet_cancel_resume',
         goal = 'lifecycle integrity probe: slow cancellable work',
         workspace = vim.env.GAUNTLET_WORK_DIR,
         adapter = SLOW_ADAPTER,
