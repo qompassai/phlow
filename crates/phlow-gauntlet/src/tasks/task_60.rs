@@ -20,7 +20,7 @@
 //! hit is `policy.lua`'s ANTI-bypass contract ("No adapter, provider,
 //! or MCP server may bypass this module") — the architecture's current
 //! stance, which a break-glass path would have to be reconciled with.
-//! The `ai/security` "override" hits are a control sample
+//! The `security` "override" hits are a control sample
 //! (prompt-injection/unicode-bidi scanner vocabulary, classified
 //! unrelated). The design's three required artifacts — justification
 //! record, single-use time-boxed grant, auto-expiry with incident

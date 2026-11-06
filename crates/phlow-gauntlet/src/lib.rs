@@ -284,6 +284,11 @@ fn diver_rtp_shim(ctx: &Ctx) -> Result<PathBuf, String> {
             .map_err(|e| format!("cannot symlink rtp lua dir: {e}"))?;
         std::os::unix::fs::symlink(ctx.diver_lua_dir.join("ai"), shim.join("ai"))
             .map_err(|e| format!("cannot symlink rtp ai dir: {e}"))?;
+        // The security tree moved out of ai/ to its own top-level tree
+        // (lua/security/*) in current diver; mirror it the same way so
+        // drivers can address pipeline sources by their real path.
+        std::os::unix::fs::symlink(ctx.diver_lua_dir.join("security"), shim.join("security"))
+            .map_err(|e| format!("cannot symlink rtp security dir: {e}"))?;
     }
     Ok(shim)
 }

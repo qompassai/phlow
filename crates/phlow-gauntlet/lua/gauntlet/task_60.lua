@@ -210,7 +210,7 @@ end
 ---Bounded source-text scan of the ai tree for break-glass vocabulary.
 ---Only the SPECIFIC needles count as machinery (fail-closed). The
 ---generic 'bypass'/'override' vocabulary is classified, never counted:
----the ai/security hits are a CONTROL SAMPLE (prompt-injection/
+---the security hits are a CONTROL SAMPLE (prompt-injection/
 ---unicode-bidi scanner vocabulary), and the rest are polysemous
 ---unrelated senses (config overrides, cache bypasses, error-path
 ---comments) — recorded with a bounded count and examples. Records
@@ -222,6 +222,21 @@ local function scan_ai_text(diver_lua_dir)
     local files = {}
     list_lua_files(ai_dir, files, { SCAN_FILES_MAX })
     ev('source scan: ' .. #files .. ' lua files under lua/ai')
+    -- Control sample: the security tree moved out of lua/ai to
+    -- lua/security; scan it as the classified control tree. The rtp
+    -- shim may be nested (this task builds its own), so the tree is
+    -- reached as lua/security or lua/lua/security depending on the
+    -- nesting depth; probe both, in that order.
+    local security_files = {}
+    for _, candidate in ipairs({ '/lua/security', '/lua/lua/security' }) do
+        if #security_files == 0 then
+            list_lua_files(diver_lua_dir .. candidate, security_files, { SCAN_FILES_MAX })
+        end
+    end
+    ev('source scan: ' .. #security_files .. ' lua files under lua/security (control)')
+    for _, path in ipairs(security_files) do
+        files[#files + 1] = path
+    end
     local hits = {}
     local generic_files = 0
     local generic_examples = {}
@@ -229,7 +244,7 @@ local function scan_ai_text(diver_lua_dir)
         local text = read_bounded(path)
         if text ~= nil then
             local lower = text:lower()
-            local in_security = path:find('/ai/security/', 1, true) ~= nil
+            local in_security = path:find('/security/', 1, true) ~= nil
             for _, needle in ipairs(TEXT_NEEDLES) do
                 if lower:find(needle, 1, true) then
                     hits[#hits + 1] = path .. ' ~' .. needle

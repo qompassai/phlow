@@ -124,12 +124,12 @@ local function bootstrap()
     if not ok then
         return nil, "require('ai.mcp.skills') failed: " .. tostring(skills)
     end
-    -- The skills module requires ai.security.annotations at tool_def
+    -- The skills module requires security.annotations at tool_def
     -- time; fail fast here so a missing module is a driver error, not a
     -- per-variant mystery.
-    local ann_ok, ann_mod = pcall(require, 'ai.security.annotations')
+    local ann_ok, ann_mod = pcall(require, 'security.annotations')
     if not ann_ok then
-        return nil, "require('ai.security.annotations') failed: " .. tostring(ann_mod)
+        return nil, "require('security.annotations') failed: " .. tostring(ann_mod)
     end
     assert(ann_mod ~= nil)
     vim.fn.mkdir(out_dir, 'p')

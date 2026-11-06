@@ -3,7 +3,7 @@
 -- A mock MCP stdio server advertises a tool whose DESCRIPTION (metadata,
 -- not output) contains an embedded instruction. The driver proves the
 -- description stays inert data through the real diver pipeline:
---   * ai.mcp.tools.list   (listing + ai.security.mcp_vet vetting)
+--   * ai.mcp.tools.list   (listing + security.mcp_vet vetting)
 --   * ai.mcp.tools.describe (display path: description returned as data)
 --   * ai.mcp.tools.call   (normal tools/call of a DIFFERENT benign tool)
 -- The mock server logs every tools/call it receives; the verdict asserts
@@ -291,7 +291,7 @@ local function bootstrap(script_path, tools_path)
     end
     local tools = require('ai.mcp.tools')
     local registry = require('ai.mcp.registry')
-    local security = require('ai.security')
+    local security = require('security')
     -- Idempotent registration: a previous driver run may have left the
     -- mock server (and its call log) in this work dir.
     pcall(registry.remove, SERVER_NAME)
@@ -558,7 +558,7 @@ local SCAN_FILES = {
     'ai/mcp/commands.lua',
     'ai/harness/adapters/mcp.lua',
     'ai/harness/context.lua',
-    'ai/security/init.lua',
+    'security/init.lua',
 }
 local SINK_TOKENS = { 'prompt', 'load(', 'dofile', 'loadstring' }
 

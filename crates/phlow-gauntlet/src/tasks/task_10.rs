@@ -5,7 +5,7 @@
 //! `lua/gauntlet/task_10.lua`). The mock advertises a tool whose
 //! DESCRIPTION contains an embedded instruction; the driver proves the
 //! description stays inert data through listing (with
-//! `ai.security.mcp_vet` vetting), display (`describe`), and a normal
+//! `security.mcp_vet` vetting), display (`describe`), and a normal
 //! `tools/call` of a different benign tool, and that the malicious tool
 //! is never invoked (the mock logs every call it receives).
 //!

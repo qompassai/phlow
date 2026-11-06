@@ -4,7 +4,7 @@
 //! path — the approval state machine exits only via
 //! `decide(approved|denied)` or `sweep_expired`, and `policy.lua`'s
 //! contract is explicitly anti-bypass ("No adapter, provider, or MCP
-//! server may bypass this module"). The `ai/security` "override" hits
+//! server may bypass this module"). The `security` "override" hits
 //! are a control sample (prompt-injection/unicode-bidi scanner
 //! vocabulary), classified unrelated. The design's question — "should
 //! a break-glass procedure exist?" — is the documented finding,
@@ -165,7 +165,7 @@ fn verdict_is_a_finding_not_a_probe_crash() {
     );
 }
 
-/// A: the control sample — the `ai/security` "override" hits are
+/// A: the control sample — the `security` "override" hits are
 /// classified UNRELATED (prompt-injection/unicode-bidi scanner
 /// vocabulary), never counted as break-glass machinery; the artifacts
 /// facet documents all three required artifacts absent.
