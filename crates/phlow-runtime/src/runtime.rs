@@ -40,6 +40,14 @@ use crate::tools::{schemas_for_role, tool_function};
 
 /// Model summary cap, in characters.
 pub const SUMMARY_CHARS_MAX: usize = 16_000;
+/// Maximum candidates in best-of-k mode, including the first sample.
+pub const BEST_OF_K_MAX: u32 = 8;
+/// Best-of-k workspace snapshot cap: files per snapshot.
+const SNAPSHOT_FILES_MAX: usize = 4_096;
+/// Best-of-k workspace snapshot cap: bytes per file.
+const SNAPSHOT_FILE_BYTES_MAX: u64 = 16 * 1024 * 1024;
+/// Best-of-k workspace snapshot cap: total bytes per snapshot.
+const SNAPSHOT_TOTAL_BYTES_MAX: u64 = 64 * 1024 * 1024;
 /// Tool result cap, in characters of Python-compatible JSON.
 pub const TOOL_RESULT_CHARS_MAX: usize = 40_000;
 /// Preview cap inside a truncated tool result, in characters.
@@ -237,6 +245,64 @@ fn check_evidence(checks: &[Value], language: &str, extension: &str) -> Vec<Stri
 
 /// Mark a verification object `"stale"`: drift was observed after the
 /// reviewer ran, so the evidence no longer describes the workspace.
+/// One best-of-k candidate: its cycle triple, the exact bytes it left
+/// in each changed file (`None` = absent after the candidate ran), and
+/// the fingerprint its verification evidence was computed against.
+struct CandidateOutcome {
+    /// Generation order, `0..k`.
+    index: u32,
+    /// The candidate's coder role result.
+    coder: Value,
+    /// The candidate's reviewer role result.
+    reviewer: Value,
+    /// The candidate's host verification evidence.
+    verification: Value,
+    /// Changed file contents, by relative path.
+    changed: std::collections::BTreeMap<String, Option<Vec<u8>>>,
+    /// `Runtime::fingerprint` of the candidate's changed files.
+    fingerprint: Map<String, Value>,
+}
+
+/// A bounded capture of the workspace tree for best-of-k restores.
+struct WorkspaceSnapshot {
+    /// File bytes by `/`-joined relative path.
+    files: std::collections::BTreeMap<String, Vec<u8>>,
+}
+
+/// The ordinary cycle-approval rule, shared by `run_inner` and the
+/// best-of-k early exit: coder ok, reviewer approves, host verified.
+fn cycle_approved(coder: &Value, reviewer: &Value, verification: &Value) -> bool {
+    coder.get("status") == Some(&Value::String("ok".to_owned()))
+        && reviewer.get("approved") == Some(&Value::Bool(true))
+        && reviewer.get("status") == Some(&Value::String("ok".to_owned()))
+        && verification.get("verified") == Some(&Value::Bool(true))
+}
+
+/// Selection rank for one best-of-k candidate. Verification evidence
+/// outranks the reviewer, which outranks coder self-report; this is
+/// selection by verification, never consensus among candidates.
+fn candidate_rank(candidate: &CandidateOutcome) -> (bool, bool, bool, bool) {
+    (
+        candidate.verification.get("verified") == Some(&Value::Bool(true)),
+        candidate.verification.get("status") == Some(&Value::String("ok".to_owned())),
+        candidate.reviewer.get("approved") == Some(&Value::Bool(true))
+            && candidate.reviewer.get("status") == Some(&Value::String("ok".to_owned())),
+        candidate.coder.get("status") == Some(&Value::String("ok".to_owned())),
+    )
+}
+
+/// The per-candidate record published in the report's `best_of_k` block.
+fn candidate_summary(candidate: &CandidateOutcome) -> Value {
+    serde_json::json!({
+        "index": candidate.index,
+        "coder_status": candidate.coder.get("status").cloned().unwrap_or(Value::Null),
+        "reviewer_approved": candidate.reviewer.get("approved").cloned().unwrap_or(Value::Null),
+        "verification_status": candidate.verification.get("status").cloned().unwrap_or(Value::Null),
+        "verified": candidate.verification.get("verified").cloned().unwrap_or(Value::Null),
+        "changed_files": candidate.changed.keys().cloned().collect::<Vec<_>>(),
+    })
+}
+
 fn mark_stale(verification: &mut Value, reason: &str) {
     let object = verification
         .as_object_mut()
@@ -373,6 +439,10 @@ pub struct Runtime<L: LlmTransport, E: EditorTransport> {
     /// Run-scoped cycle cap from the utility pre-gate (mid route
     /// without a cheap model). Same lifetime as `run_model_override`.
     run_max_cycles: Option<u32>,
+    /// Best-of-k candidate count for the first coder cycle, set by the
+    /// embedder via [`Runtime::set_best_of_k`]. `1` (the default) is the
+    /// current single-sample behaviour, byte-for-byte.
+    best_of_k: u32,
 }
 
 impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
@@ -414,7 +484,37 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
             intake_admission: None,
             run_model_override: None,
             run_max_cycles: None,
+            best_of_k: 1,
         })
+    }
+
+    /// Set the best-of-k candidate count for the first coder cycle of
+    /// each run. `k = 1` (the default) is the single-sample behaviour.
+    ///
+    /// With `k > 1` the first cycle is generated up to `k` times from the
+    /// same context, each candidate in the workspace restored to its
+    /// pre-cycle state first. The winner is selected by verification
+    /// (host checks first, reviewer second — never by consensus among
+    /// candidates), its changes are re-applied, and the run continues
+    /// from it as the first cycle's result. Generation stops early at
+    /// the first fully approved candidate. The mode requires a headless
+    /// workspace: a run with an editor bridge configured fails with a
+    /// typed error rather than desynchronising the editor.
+    ///
+    /// # Panics
+    /// Panics when `k` is outside `1..=BEST_OF_K_MAX`; the count is an
+    /// embedder contract, not external input.
+    pub fn set_best_of_k(&mut self, k: u32) {
+        assert!(
+            (1..=BEST_OF_K_MAX).contains(&k),
+            "best-of-k count must be in 1..=BEST_OF_K_MAX, got {k}"
+        );
+        self.best_of_k = k;
+    }
+
+    /// The configured best-of-k candidate count (`1` = single-sample).
+    pub fn best_of_k(&self) -> u32 {
+        self.best_of_k
     }
 
     /// Install the joint-attention dispatch gate. The gate is consulted
@@ -1692,10 +1792,20 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
             Some(cap) => cap.min(self.config.agent().max_cycles()),
             None => self.config.agent().max_cycles(),
         };
+        // Best-of-k: the first cycle's result may already be generated
+        // (up to k candidates, winner selected by verification). Later
+        // cycles are ordinary single-sample repair cycles.
+        let mut best_of_k_first: Option<(Value, Value, Value)> = if self.best_of_k > 1 {
+            Some(self.best_of_k_first_cycle(task, &Value::Object(context.clone()), report)?)
+        } else {
+            None
+        };
         for _ in 0..max_cycles {
             report_mut::add(report, "cycles", 1);
-            let (coder, reviewer, verification) =
-                self.cycle(task, &Value::Object(context.clone()), report)?;
+            let (coder, reviewer, verification) = match best_of_k_first.take() {
+                Some(first) => first,
+                None => self.cycle(task, &Value::Object(context.clone()), report)?,
+            };
             let approved = reviewer.get("approved") == Some(&Value::Bool(true))
                 && reviewer.get("status") == Some(&Value::String("ok".to_owned()))
                 && verification.get("verified") == Some(&Value::Bool(true));
@@ -1731,6 +1841,231 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
             context = next;
         }
         Ok(())
+    }
+
+    /// Generate the first cycle up to `best_of_k` times from `context`
+    /// and select the winner by verification.
+    ///
+    /// Every candidate starts from the identical workspace snapshot.
+    /// Selection rank, highest first: host verification `verified`,
+    /// host verification status `"ok"`, reviewer approval, coder status
+    /// `"ok"`; ties keep the earliest candidate. Consensus or voting
+    /// among candidates plays no part. Generation stops early at the
+    /// first candidate the ordinary cycle-approval rule accepts.
+    ///
+    /// The winner's changed files are re-applied to the restored
+    /// snapshot and the fingerprint is recomputed: a mismatch marks the
+    /// winner's verification `"stale"`, exactly as post-review drift
+    /// does, so the returned evidence never describes another state.
+    fn best_of_k_first_cycle(
+        &mut self,
+        task: &str,
+        context: &Value,
+        report: &mut Value,
+    ) -> Result<(Value, Value, Value), RuntimeError> {
+        if self.editor_configured {
+            return Err(RuntimeError::Invalid(
+                "best-of-k mode requires a headless workspace (no editor bridge)".to_owned(),
+            ));
+        }
+        let snapshot = self.snapshot_workspace()?;
+        let mut candidates: Vec<CandidateOutcome> = Vec::new();
+        for index in 0..self.best_of_k {
+            self.restore_workspace(&snapshot)?;
+            self.run_changed.clear();
+            let (coder, reviewer, verification) = self.cycle(task, context, report)?;
+            let fingerprint = self.fingerprint();
+            let mut changed = std::collections::BTreeMap::new();
+            for path in self.changed_files_sorted() {
+                let bytes = std::fs::read(self.workspace.root().join(&path)).ok();
+                changed.insert(path, bytes);
+            }
+            let approved = cycle_approved(&coder, &reviewer, &verification);
+            candidates.push(CandidateOutcome {
+                index,
+                coder,
+                reviewer,
+                verification,
+                changed,
+                fingerprint,
+            });
+            if approved {
+                break;
+            }
+        }
+        assert!(
+            !candidates.is_empty(),
+            "best-of-k generates at least one candidate"
+        );
+        let mut winner = 0usize;
+        for slot in 1..candidates.len() {
+            if candidate_rank(&candidates[slot]) > candidate_rank(&candidates[winner]) {
+                winner = slot;
+            }
+        }
+        let mut summaries = Vec::new();
+        for candidate in &candidates {
+            summaries.push(candidate_summary(candidate));
+        }
+        let outcome = candidates.swap_remove(winner);
+        self.restore_workspace(&snapshot)?;
+        self.run_changed.clear();
+        for (path, bytes) in &outcome.changed {
+            match bytes {
+                Some(bytes) => {
+                    let target = self.workspace.root().join(path);
+                    if let Some(parent) = target.parent() {
+                        std::fs::create_dir_all(parent).map_err(|error| {
+                            RuntimeError::Workspace(format!(
+                                "best-of-k reapply mkdir for {path}: {error}"
+                            ))
+                        })?;
+                    }
+                    std::fs::write(&target, bytes).map_err(|error| {
+                        RuntimeError::Workspace(format!("best-of-k reapply write {path}: {error}"))
+                    })?;
+                }
+                None => {
+                    let target = self.workspace.root().join(path);
+                    if target.exists() {
+                        std::fs::remove_file(&target).map_err(|error| {
+                            RuntimeError::Workspace(format!(
+                                "best-of-k reapply remove {path}: {error}"
+                            ))
+                        })?;
+                    }
+                }
+            }
+            self.run_changed.insert(path.clone());
+        }
+        let mut verification = outcome.verification;
+        if self.fingerprint() != outcome.fingerprint {
+            mark_stale(
+                &mut verification,
+                "Best-of-k winner reapply diverged from its verified state",
+            );
+            Self::sync_verification(report, &verification);
+        }
+        report_mut::set(
+            report,
+            "best_of_k",
+            serde_json::json!({
+                "k": self.best_of_k,
+                "generated": summaries.len(),
+                "selected": outcome.index,
+                "candidates": summaries,
+            }),
+        );
+        Ok((outcome.coder, outcome.reviewer, verification))
+    }
+
+    /// Capture every regular file under the workspace root, keyed by
+    /// `/`-joined relative path. Bounded by the `SNAPSHOT_*_MAX` caps;
+    /// symlinks, special files, and `.git` internals are rejected or
+    /// skipped so a snapshot can never escape the root.
+    fn snapshot_workspace(&self) -> Result<WorkspaceSnapshot, RuntimeError> {
+        let mut files = std::collections::BTreeMap::new();
+        let mut total_bytes: u64 = 0;
+        for (relative, absolute) in self.walk_workspace_files()? {
+            let metadata = std::fs::metadata(&absolute).map_err(|error| {
+                RuntimeError::Workspace(format!("best-of-k snapshot stat {relative}: {error}"))
+            })?;
+            if metadata.len() > SNAPSHOT_FILE_BYTES_MAX {
+                return Err(RuntimeError::Workspace(format!(
+                    "best-of-k snapshot file {relative} exceeds SNAPSHOT_FILE_BYTES_MAX"
+                )));
+            }
+            total_bytes = total_bytes.saturating_add(metadata.len());
+            if total_bytes > SNAPSHOT_TOTAL_BYTES_MAX {
+                return Err(RuntimeError::Workspace(
+                    "best-of-k snapshot exceeds SNAPSHOT_TOTAL_BYTES_MAX".to_owned(),
+                ));
+            }
+            let bytes = std::fs::read(&absolute).map_err(|error| {
+                RuntimeError::Workspace(format!("best-of-k snapshot read {relative}: {error}"))
+            })?;
+            files.insert(relative, bytes);
+            if files.len() > SNAPSHOT_FILES_MAX {
+                return Err(RuntimeError::Workspace(
+                    "best-of-k snapshot exceeds SNAPSHOT_FILES_MAX".to_owned(),
+                ));
+            }
+        }
+        Ok(WorkspaceSnapshot { files })
+    }
+
+    /// Restore the workspace tree to `snapshot`: files created since are
+    /// removed, changed or deleted files are rewritten from the capture.
+    fn restore_workspace(&self, snapshot: &WorkspaceSnapshot) -> Result<(), RuntimeError> {
+        for (relative, _absolute) in self.walk_workspace_files()? {
+            if !snapshot.files.contains_key(&relative) {
+                std::fs::remove_file(self.workspace.root().join(&relative)).map_err(|error| {
+                    RuntimeError::Workspace(format!("best-of-k restore remove {relative}: {error}"))
+                })?;
+            }
+        }
+        for (relative, bytes) in &snapshot.files {
+            let target = self.workspace.root().join(relative);
+            let current = std::fs::read(&target).ok();
+            if current.as_deref() != Some(bytes.as_slice()) {
+                if let Some(parent) = target.parent() {
+                    std::fs::create_dir_all(parent).map_err(|error| {
+                        RuntimeError::Workspace(format!(
+                            "best-of-k restore mkdir for {relative}: {error}"
+                        ))
+                    })?;
+                }
+                std::fs::write(&target, bytes).map_err(|error| {
+                    RuntimeError::Workspace(format!("best-of-k restore write {relative}: {error}"))
+                })?;
+            }
+        }
+        Ok(())
+    }
+
+    /// List regular files under the workspace root as
+    /// `(relative, absolute)` pairs, sorted by relative path. `.git`
+    /// directories are not entered; symlinks and non-regular files are
+    /// a typed error, never silently followed.
+    fn walk_workspace_files(&self) -> Result<Vec<(String, PathBuf)>, RuntimeError> {
+        let root = self.workspace.root().to_path_buf();
+        let mut found = Vec::new();
+        let mut stack = vec![root.clone()];
+        while let Some(dir) = stack.pop() {
+            let entries = std::fs::read_dir(&dir).map_err(|error| {
+                RuntimeError::Workspace(format!("best-of-k walk {}: {error}", dir.display()))
+            })?;
+            for entry in entries {
+                let entry = entry.map_err(|error| {
+                    RuntimeError::Workspace(format!("best-of-k walk entry: {error}"))
+                })?;
+                let path = entry.path();
+                let file_type = entry.file_type().map_err(|error| {
+                    RuntimeError::Workspace(format!("best-of-k walk type: {error}"))
+                })?;
+                if file_type.is_dir() {
+                    if entry.file_name() != ".git" {
+                        stack.push(path);
+                    }
+                } else if file_type.is_file() {
+                    let relative = path
+                        .strip_prefix(&root)
+                        .expect("walk stays under the root")
+                        .components()
+                        .map(|part| part.as_os_str().to_string_lossy().into_owned())
+                        .collect::<Vec<_>>()
+                        .join("/");
+                    found.push((relative, path));
+                } else {
+                    return Err(RuntimeError::Workspace(format!(
+                        "best-of-k walk: non-regular file {}",
+                        path.display()
+                    )));
+                }
+            }
+        }
+        found.sort();
+        Ok(found)
     }
 
     /// Runtime status snapshot. Never contacts the model, mirroring

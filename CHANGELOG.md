@@ -7,6 +7,20 @@ All notable changes to phlow are documented here. Format follows
 
 ### Added
 
+- Best-of-k candidate selection in `phlow-runtime` (NCM S1, D-1050):
+  `Runtime::set_best_of_k(k)` (1..=8, default 1 = single-sample) makes
+  the first coder cycle generate up to `k` candidates from the same
+  context, each from a restored workspace snapshot, and selects the
+  winner by host verification first and reviewer second (never by
+  consensus among candidates), stopping early at the first fully
+  approved candidate. The winner's changes are re-applied and its
+  fingerprint rechecked before the run continues; the report gains a
+  `best_of_k` block with per-candidate evidence. Headless workspaces
+  only: a configured editor bridge makes the run fail with a typed
+  error. Selection-mechanics tests live in
+  `crates/phlow-runtime/tests/best_of_k.rs`; the live-model arm
+  comparison runner is `tests/best_of_k_real.rs` (ignored by default).
+
 - Staged supervised-self-improvement experiment scaffolding: new workspace
   member `crates/phlow-experiment` (`phlow-experiment` 0.1.0, edition 2024,
   `#![forbid(unsafe_code)]`, no new external dependencies — only `toml 0.8`,
