@@ -38,15 +38,56 @@ pub fn system_prompt_for_role(role: &str) -> String {
          Do not claim verification; the host runs a required gate. "
     );
     let suffix = match role {
-        "planner" => "Inspect relevant files and return a concrete plan. You are read-only.",
+        // Plan-first contract (D-1061): the plan is the deliverable from
+        // the first turn; inspection exists only to serve it.
+        "planner" => {
+            "Your deliverable is a concrete plan, returned as a plain-text reply. \
+             Inspect relevant files only as needed to write that plan; inspection \
+             serves the plan, never replaces it. Return the plan itself as your \
+             reply. You are read-only."
+        }
         "coder" => "Implement the plan using file tools, then explain changes. Fix check failures.",
+        // Verdict-first contract (D-1060): the reply is the verdict JSON;
+        // inspection exists only to serve it.
         _ => {
-            "Review actual files and evidence read-only. End with exactly JSON: \
+            "Your reply is the verdict: exactly JSON: \
              {\"approved\":true|false,\"summary\":\"...\",\"issues\":[\"...\"]}. \
+             Review actual files and evidence read-only only as needed to reach \
+             that verdict; inspection serves the verdict, never replaces it. \
              Approve only if implementation addresses the task; report real defects."
         }
     };
     format!("{base}\n\n{middle}{suffix}")
+}
+
+/// The instruction appended for a role's forced closing turn (D-1060/D-1061).
+///
+/// When the planner or reviewer spends its whole iteration budget on tool
+/// calls and never emits its artifact as text, the runtime runs exactly one
+/// final turn with tools disabled and this instruction appended as a user
+/// message, demanding the artifact now. Only the planner and reviewer have
+/// a closing turn; asking for any other role is a programming error (the
+/// coder's contract is unchanged).
+pub fn closing_instruction_for_role(role: &str) -> &'static str {
+    assert!(
+        matches!(role, "planner" | "reviewer"),
+        "no closing turn for role: {role}"
+    );
+    match role {
+        "planner" => {
+            "Your iteration budget is exhausted and you have not returned a plan. \
+             Tools are disabled for this final turn. Reply now with the concrete \
+             plan as plain text, based on what you have already inspected. \
+             Do not call any tool."
+        }
+        _ => {
+            "Your iteration budget is exhausted and you have not returned a verdict. \
+             Tools are disabled for this final turn. Reply now with exactly the \
+             verdict JSON and nothing else: \
+             {\"approved\":true|false,\"summary\":\"...\",\"issues\":[\"...\"]}. \
+             Do not call any tool."
+        }
+    }
 }
 
 /// Normalize raw model `tool_calls` into well-formed assistant-message calls.
@@ -304,6 +345,42 @@ mod tests {
             system_prompt_for_role("reviewer")
                 .contains("{\"approved\":true|false,\"summary\":\"...\",\"issues\":[\"...\"]}")
         );
+    }
+
+    #[test]
+    fn system_prompt_is_artifact_first() {
+        // D-1061: the plan is the stated deliverable from the first turn.
+        let planner = system_prompt_for_role("planner");
+        assert!(planner.contains("Your deliverable is a concrete plan"));
+        assert!(planner.contains("inspection serves the plan, never replaces it"));
+        // D-1060: the reply is the verdict; inspection serves the verdict.
+        let reviewer = system_prompt_for_role("reviewer");
+        assert!(reviewer.contains("Your reply is the verdict: exactly JSON:"));
+        assert!(reviewer.contains("inspection serves the verdict, never replaces it"));
+        // The coder contract is unchanged by D-1060/D-1061.
+        assert!(system_prompt_for_role("coder").contains(
+            "Implement the plan using file tools, then explain changes. Fix check failures."
+        ));
+    }
+
+    #[test]
+    fn closing_instruction_demands_the_artifact() {
+        let planner = closing_instruction_for_role("planner");
+        assert!(planner.contains("concrete plan as plain text"));
+        assert!(planner.contains("Tools are disabled for this final turn"));
+        assert!(planner.contains("Do not call any tool"));
+        let reviewer = closing_instruction_for_role("reviewer");
+        assert!(reviewer.contains("exactly the verdict JSON and nothing else"));
+        assert!(
+            reviewer.contains("{\"approved\":true|false,\"summary\":\"...\",\"issues\":[\"...\"]}")
+        );
+        assert!(reviewer.contains("Do not call any tool"));
+    }
+
+    #[test]
+    #[should_panic(expected = "no closing turn for role: coder")]
+    fn closing_instruction_rejects_the_coder() {
+        let _ = closing_instruction_for_role("coder");
     }
 
     #[test]
