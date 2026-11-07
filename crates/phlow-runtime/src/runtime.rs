@@ -33,8 +33,8 @@ use sha2::{Digest, Sha256};
 
 use crate::error::RuntimeError;
 use crate::prompt::{
-    ROLES, closing_instruction_for_role, normalize_tool_calls, reviewer_verdict_normalized,
-    system_prompt_for_role,
+    ContractVariant, ROLES, closing_instruction_for_role_variant, normalize_tool_calls,
+    reviewer_verdict_normalized, system_prompt_for_role_variant,
 };
 use crate::report::{new_report, run_all_report_to_value};
 use crate::tools::{schemas_for_role, tool_function};
@@ -465,6 +465,12 @@ pub struct Runtime<L: LlmTransport, E: EditorTransport> {
     /// embedder via [`Runtime::set_best_of_k`]. `1` (the default) is the
     /// current single-sample behaviour, byte-for-byte.
     best_of_k: u32,
+    /// Contract variants for the planner and reviewer (D-1063), set by
+    /// the embedder via the `set_*_contract_variant` methods.
+    /// `Canonical` (the default) is the rung-1 hand-written contract,
+    /// byte-for-byte.
+    planner_contract_variant: ContractVariant,
+    reviewer_contract_variant: ContractVariant,
 }
 
 impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
@@ -507,6 +513,8 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
             run_model_override: None,
             run_max_cycles: None,
             best_of_k: 1,
+            planner_contract_variant: ContractVariant::Canonical,
+            reviewer_contract_variant: ContractVariant::Canonical,
         })
     }
 
@@ -537,6 +545,59 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
     /// The configured best-of-k candidate count (`1` = single-sample).
     pub fn best_of_k(&self) -> u32 {
         self.best_of_k
+    }
+
+    /// Set the planner's contract variant (D-1063). The default,
+    /// [`ContractVariant::Canonical`], is the rung-1 hand-written
+    /// contract, byte-for-byte.
+    ///
+    /// # Panics
+    /// Panics when `variant` does not apply to the planner; variant
+    /// selection is an embedder contract, not external input.
+    pub fn set_planner_contract_variant(&mut self, variant: ContractVariant) {
+        assert!(
+            variant.applies_to("planner"),
+            "contract variant {} does not apply to role: planner",
+            variant.id()
+        );
+        self.planner_contract_variant = variant;
+    }
+
+    /// The planner's configured contract variant.
+    pub fn planner_contract_variant(&self) -> ContractVariant {
+        self.planner_contract_variant
+    }
+
+    /// Set the reviewer's contract variant (D-1063). The default,
+    /// [`ContractVariant::Canonical`], is the rung-1 hand-written
+    /// contract, byte-for-byte.
+    ///
+    /// # Panics
+    /// Panics when `variant` does not apply to the reviewer; variant
+    /// selection is an embedder contract, not external input.
+    pub fn set_reviewer_contract_variant(&mut self, variant: ContractVariant) {
+        assert!(
+            variant.applies_to("reviewer"),
+            "contract variant {} does not apply to role: reviewer",
+            variant.id()
+        );
+        self.reviewer_contract_variant = variant;
+    }
+
+    /// The reviewer's configured contract variant.
+    pub fn reviewer_contract_variant(&self) -> ContractVariant {
+        self.reviewer_contract_variant
+    }
+
+    /// The contract variant in force for `role` in this runtime. The
+    /// coder always runs the canonical contract (D-1063 varies the
+    /// planner and reviewer only).
+    fn contract_variant_for(&self, role: &str) -> ContractVariant {
+        match role {
+            "planner" => self.planner_contract_variant,
+            "reviewer" => self.reviewer_contract_variant,
+            _ => ContractVariant::Canonical,
+        }
     }
 
     /// Install the joint-attention dispatch gate. The gate is consulted
@@ -953,11 +1014,22 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
         };
         let (model, fell_back) = self.effective_model(model_role, &configured);
         let user_content = must_dumps(&serde_json::json!({"task": task, "context": context}));
+        let variant = self.contract_variant_for(role);
         let mut messages = vec![
-            serde_json::json!({"role": "system", "content": system_prompt_for_role(role)}),
+            serde_json::json!({"role": "system", "content": system_prompt_for_role_variant(role, variant)}),
             serde_json::json!({"role": "user", "content": user_content}),
         ];
         let mut state = Self::role_state(role, &model);
+        if variant != ContractVariant::Canonical {
+            // Provenance for probe measurement: a non-canonical role
+            // run records the variant that produced its artifact. The
+            // canonical default adds no field, so default reports are
+            // unchanged byte-for-byte.
+            state.insert(
+                "contract_variant".to_owned(),
+                Value::String(variant.id().to_owned()),
+            );
+        }
         if fell_back {
             state.insert("model_configured".to_owned(), Value::String(configured));
             state.insert(
@@ -1003,7 +1075,7 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
                     );
                     messages.push(serde_json::json!({
                         "role": "user",
-                        "content": closing_instruction_for_role(role),
+                        "content": closing_instruction_for_role_variant(role, variant),
                     }));
                 }
             }
@@ -1183,7 +1255,10 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
         state.insert("closing_turn".to_owned(), Value::Bool(true));
         messages.push(serde_json::json!({
             "role": "user",
-            "content": closing_instruction_for_role(role),
+            "content": closing_instruction_for_role_variant(
+                role,
+                self.contract_variant_for(role)
+            ),
         }));
         let turns = state
             .get("turns")

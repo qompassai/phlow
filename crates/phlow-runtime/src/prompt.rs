@@ -20,6 +20,169 @@ pub const VENDORED_SYSTEM_PROMPT: &str = include_str!("../skills/system_prompt.m
 /// The three agent roles, in pipeline order.
 pub const ROLES: [&str; 3] = ["planner", "coder", "reviewer"];
 
+/// A contract variant for the planner or reviewer (D-1063).
+///
+/// Variants are append-only diffs against the canonical contract: the
+/// canonical suffix and closing instruction stay byte-identical as a
+/// prefix, and a variant adds its clauses after them (pinned by a unit
+/// test). Variants vary prompt wording only — the strict verdict
+/// parser, the watchdog mechanics, and all budgets are runtime, not
+/// contract, and no variant may vary them. `Canonical` is the rung-1
+/// hand-written contract (D-1060/D-1061) and the default everywhere.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContractVariant {
+    /// The canonical rung-1 contract, unchanged.
+    Canonical,
+    /// Reviewer: explicit exact-serialization clause (rung-3 R-V1).
+    Serialization,
+    /// Reviewer: one compact worked example of a correct verdict (R-V2).
+    WorkedExample,
+    /// Reviewer: a fixed decision order before the verdict (R-V3).
+    DecisionChecklist,
+    /// Planner: a fixed Goal / Files / Steps / Checks skeleton (P-V1).
+    PlanSkeleton,
+    /// Planner: a bounded plan — step cap, one file per step (P-V2).
+    BoundedPlan,
+    /// Planner: the plan must open with the named defect (P-V3).
+    DefectFirst,
+}
+
+impl ContractVariant {
+    /// The stable id of this variant, as recorded in probe results.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Canonical => "canonical",
+            Self::Serialization => "serialization",
+            Self::WorkedExample => "worked-example",
+            Self::DecisionChecklist => "decision-checklist",
+            Self::PlanSkeleton => "plan-skeleton",
+            Self::BoundedPlan => "bounded-plan",
+            Self::DefectFirst => "defect-first",
+        }
+    }
+
+    /// Parse a variant id (the probe harnesses select variants by id).
+    ///
+    /// # Panics
+    /// Panics on an unknown id: variant selection is an embedder
+    /// contract, not external input, so an unknown id is a programming
+    /// error — never a silent fallback to canonical.
+    pub fn from_id(id: &str) -> Self {
+        match id {
+            "canonical" => Self::Canonical,
+            "serialization" => Self::Serialization,
+            "worked-example" => Self::WorkedExample,
+            "decision-checklist" => Self::DecisionChecklist,
+            "plan-skeleton" => Self::PlanSkeleton,
+            "bounded-plan" => Self::BoundedPlan,
+            "defect-first" => Self::DefectFirst,
+            _ => panic!("unknown contract variant id: {id}"),
+        }
+    }
+
+    /// True when this variant may be selected for `role`. Reviewer
+    /// variants apply only to the reviewer, planner variants only to
+    /// the planner, and canonical applies to every role.
+    pub fn applies_to(self, role: &str) -> bool {
+        match self {
+            Self::Canonical => ROLES.contains(&role),
+            Self::Serialization | Self::WorkedExample | Self::DecisionChecklist => {
+                role == "reviewer"
+            }
+            Self::PlanSkeleton | Self::BoundedPlan | Self::DefectFirst => role == "planner",
+        }
+    }
+
+    /// Assert this variant applies to `role` (see [`Self::applies_to`]).
+    fn assert_applies_to(self, role: &str) {
+        assert!(
+            self.applies_to(role),
+            "contract variant {} does not apply to role: {role}",
+            self.id()
+        );
+    }
+}
+
+/// The clause a variant appends to a role's prompt suffix (D-1063).
+/// Empty for canonical: the canonical text is the prefix every variant
+/// branches from, never a rewrite of it.
+fn suffix_clause(role: &str, variant: ContractVariant) -> &'static str {
+    match (role, variant) {
+        ("reviewer", ContractVariant::Serialization) => {
+            "Serialize exactly: close every brace and bracket you open; \
+             your reply is exactly the JSON object \u{2014} its first character \
+             is { and its last character is }. No code fence, no commentary, \
+             no trailing characters."
+        }
+        ("reviewer", ContractVariant::WorkedExample) => {
+            "Example of a correct verdict (a different task, for shape only): \
+             {\"approved\":false,\"summary\":\"median returns the largest element \
+             instead of the middle value\",\"issues\":[\"solve.py: median uses \
+             max(xs)\"]}"
+        }
+        ("reviewer", ContractVariant::DecisionChecklist) => {
+            "Decide in this order before replying: (1) does the implementation \
+             address the task; (2) does the evidence show a real defect; \
+             (3) is every issue you list backed by a file or evidence you \
+             actually read. Then reply with only the verdict JSON."
+        }
+        ("planner", ContractVariant::PlanSkeleton) => {
+            "Structure the plan with exactly these headings, in this order: \
+             Goal / Files / Steps / Checks. Under Files name every file you \
+             will change or read; under Checks name the exact test or command \
+             that proves the fix."
+        }
+        ("planner", ContractVariant::BoundedPlan) => {
+            "Bound the plan: at most six numbered steps; each step names \
+             exactly one file; name the defective module file in the first \
+             step; the final step is the exact check command to run \
+             (for example python3 test_<name>.py)."
+        }
+        ("planner", ContractVariant::DefectFirst) => {
+            "Begin the plan with the defect: name the module and function \
+             you believe is wrong and the evidence for that belief, in one \
+             sentence; then give the fix steps. A plan that does not name a \
+             specific defective module and function is incomplete."
+        }
+        _ => "",
+    }
+}
+
+/// The clause a variant appends to a role's closing instruction
+/// (D-1063). Empty for canonical, as in [`suffix_clause`].
+fn closing_clause(role: &str, variant: ContractVariant) -> &'static str {
+    match (role, variant) {
+        ("reviewer", ContractVariant::Serialization) => {
+            "Close every brace and bracket; the first character of your \
+             reply is { and the last is }."
+        }
+        ("reviewer", ContractVariant::WorkedExample) => {
+            "For shape only, a correct verdict looks like: \
+             {\"approved\":false,\"summary\":\"median returns the largest element \
+             instead of the middle value\",\"issues\":[\"solve.py: median uses \
+             max(xs)\"]}"
+        }
+        ("reviewer", ContractVariant::DecisionChecklist) => {
+            "Apply the same order: task addressed, defect shown by the \
+             evidence, issues backed by what you read; then the verdict \
+             JSON only."
+        }
+        ("planner", ContractVariant::PlanSkeleton) => {
+            "Use exactly these headings, in this order: Goal / Files / Steps / Checks."
+        }
+        ("planner", ContractVariant::BoundedPlan) => {
+            "At most six numbered steps, one file per step, the defective \
+             module named in step 1, and the exact check command as the \
+             final step."
+        }
+        ("planner", ContractVariant::DefectFirst) => {
+            "Begin with the defective module and function and the evidence \
+             for that belief, in one sentence; then the fix steps."
+        }
+        _ => "",
+    }
+}
+
 /// Severities that count as errors in editor diagnostics.
 const ERROR_SEVERITIES: [&str; 2] = ["error", "Error"];
 
@@ -28,7 +191,21 @@ const ERROR_SEVERITIES: [&str; 2] = ["error", "Error"];
 /// Mirrors `_system_prompt`: `load_system_prompt()` with no tool descriptions
 /// or language profile, then `"\n\n"`, then the role suffix.
 pub fn system_prompt_for_role(role: &str) -> String {
+    system_prompt_for_role_variant(role, ContractVariant::Canonical)
+}
+
+/// Build the system prompt for `role` under a contract `variant`
+/// (D-1063). With [`ContractVariant::Canonical`] the result is
+/// byte-identical to [`system_prompt_for_role`]; any other variant
+/// appends its clause after the canonical suffix, so the canonical
+/// prompt is a byte prefix of every variant prompt.
+///
+/// # Panics
+/// Panics on an unknown role, or when `variant` does not apply to
+/// `role` (variant selection is an embedder contract).
+pub fn system_prompt_for_role_variant(role: &str, variant: ContractVariant) -> String {
     assert!(ROLES.contains(&role), "unknown role: {role}");
+    variant.assert_applies_to(role);
     let base = phlow_llm::load_system_prompt(Some(VENDORED_SYSTEM_PROMPT), "", "");
     let middle = format!(
         "You are Phlow's {role}, a local software engineering agent. \
@@ -57,7 +234,13 @@ pub fn system_prompt_for_role(role: &str) -> String {
              Approve only if implementation addresses the task; report real defects."
         }
     };
-    format!("{base}\n\n{middle}{suffix}")
+    let mut prompt = format!("{base}\n\n{middle}{suffix}");
+    let clause = suffix_clause(role, variant);
+    if !clause.is_empty() {
+        prompt.push(' ');
+        prompt.push_str(clause);
+    }
+    prompt
 }
 
 /// The instruction appended for a role's forced closing turn (D-1060/D-1061).
@@ -87,6 +270,25 @@ pub fn closing_instruction_for_role(role: &str) -> &'static str {
              {\"approved\":true|false,\"summary\":\"...\",\"issues\":[\"...\"]}. \
              Do not call any tool."
         }
+    }
+}
+
+/// The closing instruction for `role` under a contract `variant`
+/// (D-1063). With [`ContractVariant::Canonical`] the result equals
+/// [`closing_instruction_for_role`] exactly; any other variant appends
+/// its clause after the canonical instruction.
+///
+/// # Panics
+/// Panics for a role with no closing turn, or when `variant` does not
+/// apply to `role`.
+pub fn closing_instruction_for_role_variant(role: &str, variant: ContractVariant) -> String {
+    let base = closing_instruction_for_role(role);
+    variant.assert_applies_to(role);
+    let clause = closing_clause(role, variant);
+    if clause.is_empty() {
+        base.to_owned()
+    } else {
+        format!("{base} {clause}")
     }
 }
 
@@ -381,6 +583,100 @@ mod tests {
     #[should_panic(expected = "no closing turn for role: coder")]
     fn closing_instruction_rejects_the_coder() {
         let _ = closing_instruction_for_role("coder");
+    }
+
+    #[test]
+    fn canonical_variant_is_byte_identical_to_the_legacy_contracts() {
+        // D-1063: no selection (canonical) must reproduce today's
+        // prompts byte-for-byte, for prompts and closing instructions.
+        for role in ROLES {
+            assert_eq!(
+                system_prompt_for_role_variant(role, ContractVariant::Canonical),
+                system_prompt_for_role(role)
+            );
+        }
+        for role in ["planner", "reviewer"] {
+            assert_eq!(
+                closing_instruction_for_role_variant(role, ContractVariant::Canonical),
+                closing_instruction_for_role(role)
+            );
+        }
+    }
+
+    #[test]
+    fn variants_append_to_canonical_never_rewrite_it() {
+        // Restart-from-base, mechanically: every variant prompt and
+        // closing instruction starts with the canonical bytes and adds
+        // a non-empty clause after them.
+        let cases = [
+            ("reviewer", ContractVariant::Serialization),
+            ("reviewer", ContractVariant::WorkedExample),
+            ("reviewer", ContractVariant::DecisionChecklist),
+            ("planner", ContractVariant::PlanSkeleton),
+            ("planner", ContractVariant::BoundedPlan),
+            ("planner", ContractVariant::DefectFirst),
+        ];
+        for (role, variant) in cases {
+            let canonical = system_prompt_for_role(role);
+            let probed = system_prompt_for_role_variant(role, variant);
+            assert!(probed.starts_with(&canonical), "{} {variant:?}", role);
+            assert!(probed.len() > canonical.len());
+            assert_ne!(probed, canonical);
+            let canonical_closing = closing_instruction_for_role(role);
+            let probed_closing = closing_instruction_for_role_variant(role, variant);
+            assert!(probed_closing.starts_with(canonical_closing));
+            assert!(probed_closing.len() > canonical_closing.len());
+        }
+    }
+
+    #[test]
+    fn variant_ids_round_trip() {
+        for variant in [
+            ContractVariant::Canonical,
+            ContractVariant::Serialization,
+            ContractVariant::WorkedExample,
+            ContractVariant::DecisionChecklist,
+            ContractVariant::PlanSkeleton,
+            ContractVariant::BoundedPlan,
+            ContractVariant::DefectFirst,
+        ] {
+            assert_eq!(ContractVariant::from_id(variant.id()), variant);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "unknown contract variant id: bogus")]
+    fn unknown_variant_id_panics() {
+        let _ = ContractVariant::from_id("bogus");
+    }
+
+    #[test]
+    #[should_panic(expected = "does not apply to role: planner")]
+    fn reviewer_variant_rejects_the_planner() {
+        let _ = system_prompt_for_role_variant("planner", ContractVariant::Serialization);
+    }
+
+    #[test]
+    fn reviewer_variants_keep_the_canonical_verdict_template() {
+        // Variants vary wording only: the exact-JSON template the
+        // strict parser expects stays in every reviewer variant, in
+        // the suffix and in the closing instruction.
+        let template = "{\"approved\":true|false,\"summary\":\"...\",\"issues\":[\"...\"]}";
+        for variant in [
+            ContractVariant::Canonical,
+            ContractVariant::Serialization,
+            ContractVariant::WorkedExample,
+            ContractVariant::DecisionChecklist,
+        ] {
+            assert!(
+                system_prompt_for_role_variant("reviewer", variant).contains(template),
+                "{variant:?} suffix lost the verdict template"
+            );
+            assert!(
+                closing_instruction_for_role_variant("reviewer", variant).contains(template),
+                "{variant:?} closing lost the verdict template"
+            );
+        }
     }
 
     #[test]
