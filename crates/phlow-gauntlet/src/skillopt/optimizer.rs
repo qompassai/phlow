@@ -16,6 +16,10 @@
 //!   (`qwen3:8b`) over HTTP, `think: false`, structured SkillOpt-style
 //!   reflection prompts. Loopback only; unreachable endpoint is a typed
 //!   error, never a fabricated result.
+//!
+//! Every prompt the model backend sends first passes the
+//! [`super::blindness`] pre-flight (D-1065): grader material in the
+//! reflection context is a typed refusal, never a sent prompt.
 
 use super::doc::{Edit, EditOp, PER_EDIT_CHARS_MAX, SkillDoc};
 use super::rng::XorShift;
@@ -244,6 +248,13 @@ pub enum OptimizerError {
         /// What was wrong.
         detail: String,
     },
+    /// The verifier-blindness pre-flight refused the context:
+    /// grader material (verdict/rubric/score) was present in what
+    /// the session was about to see.
+    Blindness {
+        /// Bounded hit report from the guard.
+        detail: String,
+    },
 }
 
 impl fmt::Display for OptimizerError {
@@ -252,6 +263,9 @@ impl fmt::Display for OptimizerError {
             Self::Unavailable { detail } => write!(f, "optimizer unavailable: {detail}"),
             Self::NoUsableEdits => write!(f, "model returned no parseable edits"),
             Self::Config { detail } => write!(f, "optimizer misconfigured: {detail}"),
+            Self::Blindness { detail } => {
+                write!(f, "blindness guard refused context: {detail}")
+            }
         }
     }
 }
@@ -1030,6 +1044,12 @@ impl Optimizer for ModelOptimizer {
         _rng: &mut XorShift,
     ) -> Result<Vec<Edit>, OptimizerError> {
         let prompt = self.reflection_prompt(ctx);
+        // D-1065 (§4.9): verifier-blindness pre-flight — the
+        // session must never see grader material; fail closed on
+        // a hit instead of sending the prompt.
+        super::blindness::scan_text(&prompt).map_err(|e| OptimizerError::Blindness {
+            detail: e.to_string(),
+        })?;
         let text = self.generate(&prompt)?;
         let edits = parse_model_edits(&text);
         if edits.is_empty() {

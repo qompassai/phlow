@@ -21,8 +21,12 @@
 //! - [`harness`]: the safety boundary (sandbox, approval-gated export).
 //! - [`adversarial`]: the labeled adversarial optimizer for task-109
 //!   (adversarial edit catch rate).
+//! - [`blindness`]: the verifier-blindness pre-flight (D-1065,
+//!   Harness2 §4.9): scan a context bundle for grader material
+//!   (verdict / rubric / score) and refuse on a hit.
 
 pub mod adversarial;
+pub mod blindness;
 pub mod doc;
 pub mod driver;
 pub mod gate;
