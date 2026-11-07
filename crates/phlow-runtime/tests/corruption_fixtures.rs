@@ -38,8 +38,8 @@ use std::time::Duration;
 use phlow_config::{FlowConfig, LoadOptions, load_config};
 use phlow_editor::{CALL_LUA, EditorTransport, SCHEMAS_LUA, TransportError};
 use phlow_llm::{LlmError, LlmTransport};
-use phlow_runtime::Runtime;
 use phlow_runtime::transport::ReqwestTransport;
+use phlow_runtime::{ContractVariant, Runtime};
 use serde_json::{Map, Value, json};
 
 /// The fixture set, embedded at compile time so the tests are hermetic.
@@ -373,6 +373,12 @@ fn live_reviewer_catch_measurement() {
         std::env::var("PHLOW_S2_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:11434".to_owned());
     let out_path =
         std::env::var("PHLOW_S2_OUT").unwrap_or_else(|_| "s2-live-results.json".to_owned());
+    // D-1063: the reviewer contract variant under probe, selected by
+    // id. Default canonical: with no selection this measurement is
+    // exactly the rung-1/2 harness.
+    let variant = ContractVariant::from_id(
+        &std::env::var("PHLOW_R3_REVIEWER_VARIANT").unwrap_or_else(|_| "canonical".to_owned()),
+    );
     // The [agent] budgets mirror the production role wiring
     // (~/.config/phlow/roles-wired.toml, 2026-11-02) so the measurement
     // runs the reviewer under its production posture.
@@ -391,6 +397,7 @@ fn live_reviewer_catch_measurement() {
         let hybrid = HybridLlm { script, real };
         let mut runtime =
             Runtime::new(config, hybrid, FakeEditor::new(), None).expect("runtime builds");
+        runtime.set_reviewer_contract_variant(variant);
         let report = runtime.run(&task);
         let reviewer = report["roles"]
             .as_array()
@@ -420,6 +427,7 @@ fn live_reviewer_catch_measurement() {
     let document = json!({
         "model": model,
         "base_url": base_url,
+        "reviewer_variant": variant.id(),
         "fixtures": results,
         "reviewer_caught": caught,
     });
