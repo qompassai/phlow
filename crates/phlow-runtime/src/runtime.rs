@@ -43,6 +43,23 @@ use crate::tools::{schemas_for_role, tool_function};
 pub const SUMMARY_CHARS_MAX: usize = 16_000;
 /// Maximum candidates in best-of-k mode, including the first sample.
 pub const BEST_OF_K_MAX: u32 = 8;
+/// Watchdog threshold in tool calls (D-1062): the number of tool calls a
+/// planner or reviewer may make within one role run without returning its
+/// artifact (plan / verdict) before the runtime fires the watchdog: it
+/// injects the closing instruction and closes tool access for the rest of
+/// the run, so the role can only answer in text. Liveness only; the
+/// flowguard `decide()` gate is untouched.
+///
+/// The default is evidence-set, not round: in the rung-1 live S2 run
+/// (max_iterations = 6) spontaneous artifacts arrived after at most five
+/// tool-only turns, while every never-speaking role spent all six. A
+/// threshold of five therefore fires after the fifth tool call and leaves
+/// the sixth, still in-budget turn as the forced text turn (turns stay
+/// below max_iterations + 1) instead of needing the rung-1 closing turn
+/// one turn past the budget. A run whose turns batch several calls fires
+/// earlier in turns; either way the threshold is reachable before
+/// iteration-budget exhaustion in the S2 posture, never dead code there.
+pub const WATCHDOG_TOOL_CALLS: u64 = 5;
 /// Best-of-k workspace snapshot cap: files per snapshot.
 const SNAPSHOT_FILES_MAX: usize = 4_096;
 /// Best-of-k workspace snapshot cap: bytes per file.
@@ -71,6 +88,10 @@ const _: () = assert!(
     "preview must fit inside the tool result cap"
 );
 const _: () = assert!(SUMMARY_CHARS_MAX > 0, "summary cap must be positive");
+const _: () = assert!(
+    WATCHDOG_TOOL_CALLS > 0,
+    "watchdog threshold must be positive"
+);
 
 /// Language name for a lowercase dotted extension, mirroring `FILETYPES`.
 fn language_for_extension(extension: &str) -> &'static str {
@@ -899,6 +920,20 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
     /// without a text turn, exactly one forced closing turn runs before
     /// the budget-exhausted state is declared (D-1060/D-1061; see
     /// [`Runtime::closing_turn`]). Python has no closing turn.
+    ///
+    /// Second deviation, D-1062: a watchdog generalises the closing turn
+    /// inside the loop. Once a planner or reviewer has made
+    /// [`RoleBudgets::watchdog_tool_calls`] tool calls in this run with
+    /// no text turn yet, the closing instruction is appended as a user
+    /// message and tool access closes for the remainder of the run:
+    /// later turns are called with an empty tool list and any tool calls
+    /// they still attempt are ignored, never dispatched. The firing is
+    /// recorded in the role state (`watchdog_fired`,
+    /// `watchdog_at_tool_calls`) from the moment it happens. The coder
+    /// has no closing artifact and the watchdog never fires for it. If a
+    /// watchdog-fired role still never speaks, the loop exhausts and the
+    /// rung-1 closing turn stacks on top; a role that answers after the
+    /// watchdog needs no closing turn.
     fn role(
         &mut self,
         role: &str,
@@ -933,19 +968,44 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
         let roles_len = roles_len(report);
         let tools = self.schemas(role);
         let budgets = RoleBudgets::from_config(self.config.agent());
+        // Per-role-run tool-call count for the watchdog: the report
+        // counter is global across roles and cycles, so this run's count
+        // is the delta from the snapshot taken here.
+        let tool_calls_at_start = report_mut::counter(report, "tool_calls");
+        let mut watchdog_fired = false;
         for turn in 0..budgets.max_iterations {
+            let active_tools: &[Value] = if watchdog_fired { &[] } else { &tools };
             if let Some(result) = self.role_turn(
                 role,
                 turn,
                 roles_len,
                 &mut messages,
                 &mut state,
-                &tools,
+                active_tools,
                 &model,
                 report,
                 &budgets,
+                watchdog_fired,
             ) {
                 return Ok(result);
+            }
+            // D-1062 watchdog: reaching this point means the turn ended
+            // on tool calls, so no text artifact exists yet this run.
+            if !watchdog_fired && matches!(role, "planner" | "reviewer") {
+                let run_tool_calls =
+                    report_mut::counter(report, "tool_calls").saturating_sub(tool_calls_at_start);
+                if run_tool_calls >= budgets.watchdog_tool_calls {
+                    watchdog_fired = true;
+                    state.insert("watchdog_fired".to_owned(), Value::Bool(true));
+                    state.insert(
+                        "watchdog_at_tool_calls".to_owned(),
+                        Value::Number(run_tool_calls.into()),
+                    );
+                    messages.push(serde_json::json!({
+                        "role": "user",
+                        "content": closing_instruction_for_role(role),
+                    }));
+                }
             }
         }
         let turns = state
@@ -991,6 +1051,14 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
     /// One model turn. Returns `Some(result)` when the role finishes this
     /// turn (context/tool budget hit, protocol failure, or a text-only
     /// reply); `None` means the loop continues with tool results appended.
+    ///
+    /// `tools_closed` is the D-1062 watchdog state: this turn was called
+    /// with an empty tool list, so tool calls in the reply are ignored and
+    /// never dispatched (there is nothing to honour them with, and they
+    /// do not spend the tool-call budget). A reply carrying text finishes
+    /// through the normal text path; a reply with calls and no text means
+    /// the role still has not spoken, so the loop continues tools-closed
+    /// until the budget ends and the closing turn can stack.
     #[allow(clippy::too_many_arguments)]
     fn role_turn(
         &mut self,
@@ -1003,6 +1071,7 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
         model: &str,
         report: &mut Value,
         budgets: &RoleBudgets,
+        tools_closed: bool,
     ) -> Option<Value> {
         if must_dumps(&Value::Array(messages.clone())).chars().count() > budgets.max_context_chars {
             role_terminal(state, "Context budget exhausted");
@@ -1025,10 +1094,11 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
                 ));
             }
         };
-        if calls.len() as u64
-            > budgets
-                .max_tool_calls
-                .saturating_sub(report_mut::counter(report, "tool_calls"))
+        if !tools_closed
+            && calls.len() as u64
+                > budgets
+                    .max_tool_calls
+                    .saturating_sub(report_mut::counter(report, "tool_calls"))
         {
             role_terminal(state, "Tool call budget exhausted");
             return Some(finish_role(report, state.clone(), roles_len));
@@ -1045,6 +1115,17 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
                 ));
             }
         };
+        if tools_closed {
+            // The calls are stripped from the recorded message, exactly
+            // as in the closing turn: offered no tools, the role gets no
+            // tool results back, and nothing is dispatched.
+            messages.push(assistant_message(&content, &[]));
+            if normalized.is_empty() || !content.is_empty() {
+                finish_text_turn(role, &content, state);
+                return Some(finish_role(report, state.clone(), roles_len));
+            }
+            return None;
+        }
         messages.push(assistant_message(&content, &normalized));
         if normalized.is_empty() {
             finish_text_turn(role, &content, state);
@@ -1262,6 +1343,11 @@ struct RoleBudgets {
     max_iterations: usize,
     max_context_chars: usize,
     max_tool_calls: u64,
+    /// D-1062 watchdog threshold in tool calls per role run; see
+    /// [`WATCHDOG_TOOL_CALLS`] for the evidence behind the default. Kept
+    /// in this family so a future agent-config schema for it lands here,
+    /// beside the budgets it interacts with, not in a parallel store.
+    watchdog_tool_calls: u64,
 }
 
 impl RoleBudgets {
@@ -1270,6 +1356,7 @@ impl RoleBudgets {
             max_iterations: agent.max_iterations() as usize,
             max_context_chars: agent.max_context_chars() as usize,
             max_tool_calls: u64::from(agent.max_tool_calls()),
+            watchdog_tool_calls: WATCHDOG_TOOL_CALLS,
         }
     }
 }
