@@ -33,7 +33,8 @@ use sha2::{Digest, Sha256};
 
 use crate::error::RuntimeError;
 use crate::prompt::{
-    ROLES, normalize_tool_calls, reviewer_verdict_normalized, system_prompt_for_role,
+    ROLES, closing_instruction_for_role, normalize_tool_calls, reviewer_verdict_normalized,
+    system_prompt_for_role,
 };
 use crate::report::{new_report, run_all_report_to_value};
 use crate::tools::{schemas_for_role, tool_function};
@@ -892,6 +893,12 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
     }
 
     /// Run one role's model loop, mirroring `_role`.
+    ///
+    /// Deviation from the Python reference, by Owner ruling: when the
+    /// planner or reviewer exhausts its iteration budget on tool calls
+    /// without a text turn, exactly one forced closing turn runs before
+    /// the budget-exhausted state is declared (D-1060/D-1061; see
+    /// [`Runtime::closing_turn`]). Python has no closing turn.
     fn role(
         &mut self,
         role: &str,
@@ -949,6 +956,18 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
             turns, budgets.max_iterations as u64,
             "role loop must run to budget"
         );
+        // D-1060/D-1061: a planner or reviewer that spent every turn on
+        // tool calls has not failed to think, it has failed to speak.
+        // Give it exactly one forced closing turn (tools disabled) to emit
+        // its artifact before the budget-exhausted state is declared. The
+        // coder has no closing turn; its contract is unchanged.
+        if matches!(role, "planner" | "reviewer") {
+            let closing =
+                self.closing_turn(role, roles_len, &mut messages, &mut state, &model, report);
+            if let Some(result) = closing {
+                return Ok(result);
+            }
+        }
         state.insert("status".to_owned(), Value::String("unverified".to_owned()));
         state.insert(
             "error".to_owned(),
@@ -1036,6 +1055,68 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
             messages.push(tool_message);
         }
         None
+    }
+
+    /// The forced closing turn (D-1060/D-1061): exactly one extra model
+    /// turn, run only when the planner or reviewer exhausted its iteration
+    /// budget on tool calls without ever emitting its artifact as text.
+    ///
+    /// The turn is called with an empty tool list — the payload builder
+    /// omits `tools` entirely for an empty list, so tool use is off at the
+    /// wire — and with [`closing_instruction_for_role`] appended as a user
+    /// message demanding the artifact now. The reply is routed through
+    /// [`finish_text_turn`], the same finish path as a spontaneous text
+    /// turn, so a reviewer verdict parses via
+    /// `reviewer_verdict_normalized` and a plan records identically.
+    ///
+    /// Contract:
+    /// - fires at most once per role run: this is the only call site, it
+    ///   runs after the bounded loop (never inside it), and `role` returns
+    ///   its result immediately;
+    /// - tool calls in the reply are ignored, never dispatched: no tools
+    ///   were offered, so there is nothing to honour them with. The
+    ///   reply's text goes through the text finish path exactly like a
+    ///   garbage text turn would, so a garbage reviewer reply stays
+    ///   `unverified` with `approved == false` — never a false approval;
+    /// - a backend failure returns `None`, degrading to the caller's
+    ///   budget-exhausted `unverified` state, never to a fabricated
+    ///   artifact.
+    ///
+    /// The state carries `"closing_turn": true` from the moment the turn
+    /// is attempted, and `turns`/`model_calls` count it like any other
+    /// turn, so re-measurement can distinguish a spontaneous artifact
+    /// from a forced one and audit the one extra call.
+    fn closing_turn(
+        &mut self,
+        role: &str,
+        roles_len: usize,
+        messages: &mut Vec<Value>,
+        state: &mut Map<String, Value>,
+        model: &str,
+        report: &mut Value,
+    ) -> Option<Value> {
+        assert!(
+            matches!(role, "planner" | "reviewer"),
+            "closing turn is planner/reviewer only: {role}"
+        );
+        state.insert("closing_turn".to_owned(), Value::Bool(true));
+        messages.push(serde_json::json!({
+            "role": "user",
+            "content": closing_instruction_for_role(role),
+        }));
+        let turns = state
+            .get("turns")
+            .and_then(|turns| turns.as_u64())
+            .unwrap_or(0);
+        state.insert("turns".to_owned(), Value::Number((turns + 1).into()));
+        report_mut::add(report, "model_calls", 1);
+        let (content, _calls) = match self.chat(messages, &[], model) {
+            Ok(outcome) => outcome,
+            Err(_) => return None,
+        };
+        messages.push(assistant_message(&content, &[]));
+        finish_text_turn(role, &content, state);
+        Some(finish_role(report, state.clone(), roles_len))
     }
 }
 
