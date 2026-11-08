@@ -1256,6 +1256,13 @@ fn check_on_closed_runtime() {
 fn second_file_script() -> Vec<Value> {
     vec![
         chat_text("Plan: write a different file.\nI will create second.txt."),
+        // D-1076: in the second run this plan text lands on the
+        // reviewer (the runs share one script queue), fails the
+        // verdict parse, and earns exactly one verdict retry. The
+        // retry is scripted garbage so the run's cycle alignment —
+        // and this test's subject, per-run ledger isolation — is
+        // exactly what it was before the retry existed.
+        chat_text("Still prose, no verdict JSON."),
         chat_tools(json!([tool_call(
             "call_1",
             "file_write",

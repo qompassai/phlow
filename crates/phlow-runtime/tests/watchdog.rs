@@ -472,8 +472,11 @@ fn garbage_after_watchdog_firing_stays_unverified() {
     script.extend(coder_turns());
     script.extend(tool_only_turns(5, "reviewer_look"));
     script.push(chat_text("I looked at everything and it seems fine to me."));
-    // The fallback is an approving verdict: any further call would flip
-    // the reviewer to approved and fail here.
+    // D-1076: the unparseable forced-turn reply earns exactly one
+    // verdict retry; it is scripted garbage too. The fallback is an
+    // approving verdict: any call beyond the one retry would flip the
+    // reviewer to approved and fail here.
+    script.push(chat_text("Still just my prose summary, no JSON."));
     let llm = ScriptLlm::with_fallback(script, chat_text(APPROVE_VERDICT));
     let mut rt = runtime(&dir, TASK_TOML, llm.clone());
     let report = rt.run(TASK);
@@ -481,11 +484,16 @@ fn garbage_after_watchdog_firing_stays_unverified() {
     let reviewer = role_state(&report, "reviewer");
     assert_eq!(reviewer["watchdog_fired"], json!(true));
     assert_eq!(reviewer["watchdog_at_tool_calls"], json!(5));
+    assert_eq!(reviewer["verdict_retry"], json!(true));
     assert_eq!(reviewer["status"], json!("unverified"));
     assert_eq!(reviewer["approved"], json!(false), "never a false approval");
     assert_ne!(report["status"], json!("ok"));
     assert_ne!(report["verified"], json!(true));
-    assert_eq!(llm.post_count(), 9, "no call beyond the forced turn");
+    assert_eq!(
+        llm.post_count(),
+        10,
+        "no call beyond the forced turn + retry"
+    );
 }
 
 #[test]

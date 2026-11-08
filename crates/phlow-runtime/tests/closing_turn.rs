@@ -364,19 +364,27 @@ fn reviewer_closing_turn_garbage_stays_unverified() {
     script.extend(coder_turns());
     script.extend(tool_only_turns(3, "reviewer_look"));
     script.push(chat_text("I looked at everything and it seems fine to me."));
-    // The fallback is an approving verdict: if the runtime made any
-    // further call, the reviewer would flip to approved and fail here.
+    // D-1076: the unparseable closing reply earns exactly one verdict
+    // retry; it is scripted garbage too. The fallback is an approving
+    // verdict: any call beyond the one retry would flip the reviewer
+    // to approved and fail here.
+    script.push(chat_text("Still just my prose summary, no JSON."));
     let llm = ScriptLlm::with_fallback(script, chat_text(APPROVE_VERDICT));
     let mut rt = runtime(&dir, TASK_TOML, llm.clone());
     let report = rt.run(TASK);
 
     let reviewer = role_state(&report, "reviewer");
     assert_eq!(reviewer["closing_turn"], json!(true));
+    assert_eq!(reviewer["verdict_retry"], json!(true));
     assert_eq!(reviewer["status"], json!("unverified"));
     assert_eq!(reviewer["approved"], json!(false), "never a false approval");
     assert_ne!(report["status"], json!("ok"));
     assert_ne!(report["verified"], json!(true));
-    assert_eq!(llm.post_count(), 7, "no call beyond the closing turn");
+    assert_eq!(
+        llm.post_count(),
+        8,
+        "no call beyond the closing turn + retry"
+    );
 }
 
 #[test]
