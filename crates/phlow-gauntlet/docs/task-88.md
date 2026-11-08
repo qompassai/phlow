@@ -1,38 +1,46 @@
-# task-88: A2A error-shape propagation
+# task-88: A2A presence audit
 
-**Kind:** rust (recon) · **Status:** fail at "seam" (open) · **Wave:** 86–90 · **Commits:** pending (wave 86-90)
+**Kind:** rust · **Status:** pass (D-1059 redesign, 2026-11-07) · **Wave:** 86–90 · **Commits:** pending (phlow programme rung 4)
 
 ## ELI5
 
-The design asks: when the other side's AI agent hits an error, the error should arrive *typed* — which error code, what message, and what extra data — while the extra data is treated as untrusted (size-limited, quoted in logs, never interpreted as instructions). Unknown task states should be rejected as protocol violations, not silently ignored. And if the remote side claims something about *your* run, that claim should be recorded as *their* assertion — your own run's state stays authoritative.
+The original task-88 asked whether phlow's rust code could carry another agent's errors across the A2A boundary *typed* — code, message, and extra data preserved — while treating that extra data as untrusted, rejecting unknown task states instead of ignoring them, and never letting a remote agent's claims overwrite your own run's state. Back then the honest answer was: there is no rust A2A boundary at all, so the task reported the seam's absence and banked the product decision.
 
-The honest finding: there is no rust A2A client boundary at all. Bounded exact-token scans over every product crate's `src/**/*.rs` (the gauntlet crate itself excluded, because the harness's own probes legitimately use the design vocabulary) find zero hits for `a2a`, for task-state vocabulary, for agent-card handling, and for the A2A JSON-RPC methods. Remote error shapes cross no rust boundary, so there is nothing to preserve, bound, or quote. The only A2A boundary in the workspace is diver's Lua (`ai.a2a.client` / `ai.a2a.tasks`, exercised by task-07) — where the `bad-state` scenario showed unknown state strings are *ignored* by the task state machine rather than rejected as protocol violations (diver-owned, flagged).
+That decision has since been taken: `crates/phlow-a2a` exists — a registry of external agents, a bounded task store with a legal-transition state machine, a loopback-first JSON-RPC server, and a synchronous client. So task-88 is redesigned (D-1059) from an absence probe into a **presence audit**: instead of scanning source for words that must *not* be there, it drives the real crate and asserts the boundary *exists and behaves*.
 
 ## What this task attempts
 
-- **Goal:** verify the A2A client boundary carries remote errors as typed errors (code/message/data preserved), treats attacker-controlled error `data` as untrusted, rejects unknown task states as protocol violations, and records remote claims about the local run as remote assertions — or document the seam's absence with bounded scans.
-- **Mechanism:** `src/tasks/task_88.rs` runs four bounded source recons (the task-48 scan pattern: max 4000 files, 512 KiB per file, exact-token case-insensitive, gauntlet crate excluded): `no_a2a_client_boundary` (token `a2a` → 0 hits), `no_task_state_machine` (tokens `task_state`, `taskstate` → 0 hits), `no_agent_card_handling` (tokens `agent_card`, `agentcard` → 0 hits), `no_a2a_rpc_methods` (tokens `tasks/send`, `message/send`, `tasks/get`, `tasks/cancel` → 0 hits). Each case fails closed — premise changed — if a hit ever appears.
-- **Success criterion:** the propagation discipline verified, or the seam's absence documented with scan evidence.
-- **Non-goals:** inventing a rust A2A client on gauntlet authority (it is a product decision — banked for Matt, never implemented here).
+- **Goal:** verify against the real `phlow-a2a` crate that (a) registration and the client/server handshake work end to end, (b) the task store round-trips state, history, and artifacts under its transition table, (c) unknown task states are rejected as protocol violations at the name layer, the decode path, and the wire, and (d) remote errors arrive typed (code/message/data preserved), attacker-controlled error data stays bounded and is treated as data only, and a fetched remote task never enters or mutates a local store.
+- **Mechanism:** `src/tasks/task_88.rs` runs four cases against `phlow-a2a` (now a gauntlet dependency). Validation cases use the registry, a real loopback `A2aServer` with a trivial echo executor, the real client, and a real `TaskStore`. Adversarial cases use the crate's actual serde decode path, raw JSON-RPC over a socket (a `ListTasks` filter carrying an unknown state — a payload the typed client correctly refuses to construct), and a raw fake peer serving attacker-shaped and oversized error responses to the real client.
+- **Success criterion:** all four cases pass against the crate as it stands. If the crate behaved otherwise, the case would fail and the failure would be the audit's finding — the audit is never weakened to force green, and this task does not change `phlow-a2a` behaviour.
+- **Non-goals:** changing any `phlow-a2a` behaviour; the flow-gated `ExternalRegistry::send_task` path (the audit uses registration + `client_for`; send-gating is `phlow-a2a`'s own wire-test territory); diver's Lua A2A boundary (task-07's territory, unchanged).
+
+## Cases
+
+Two validation, two adversarial:
+
+- **V1 `registry_and_handshake`:** register an `ExternalAgent` in an `ExternalRegistry` (unknown names fail with `RegistryError::UnknownAgent`); `client_for` builds a client; `fetch_card` returns the served card — name matches, primary URL is the server's bound URL (the server rewrites the ephemeral `:0` authority when serving), and the card does not claim push notifications; `send_message` completes a task end-to-end with the executor's echo artifact; `get_task` shows the terminal `TASK_STATE_COMPLETED`.
+- **V2 `store_roundtrip`:** `TaskStore` create (starts `Submitted`, first message in history) → `append_message` → legal transitions → `add_artifact` → `get` reflects history (2), artifacts (1), and `Working` state; `cancel` reaches terminal `Canceled` with the cancellation flag set, and the terminal task then rejects messages and transitions; a second task walks the full `Submitted → Working → Completed` chain. The illegal `Submitted → Completed` skip is rejected both by `transition_valid` (false) and by `transition` returning `StoreError::InvalidTransition` — typed, never a silent no-op.
+- **A1 `unknown_state_rejected`:** `TaskState::from_name` returns `None` for `TASK_STATE_BOGUS`, `bogus-state`, the empty string, and a near-miss spelling, while known proto and legacy spellings still parse; serde decoding a `TaskState` or a whole `Task` payload carrying `TASK_STATE_BOGUS` fails (the crate's actual decode path); at the wire, a raw `ListTasks` request filtered by `TASK_STATE_BOGUS` is answered with JSON-RPC error **-32602** and no result, while the same request with a known state returns a result (control).
+- **A2 `error_shape_typed_bounded`:** the real server's unknown-task error reaches the client as `A2aError::Rpc` with code **-32001**, message ("task not found: …"), and data (the `TASK_NOT_FOUND` ErrorInfo) preserved; a fake peer's error carrying attacker-shaped `data` (an instruction-like payload) round-trips **verbatim** in the typed error's `data` field — carried as data, never interpreted; a fake peer's error response larger than the client's `RESPONSE_BYTES_MAX` (4,194,304 bytes) is refused as `A2aError::Transport` on the response cap instead of being delivered; and a remote task fetched from the server does not enter or mutate a separate local `TaskStore` (length unchanged, remote id absent, local task's state untouched) — remote claims stay remote assertions.
 
 ## What happened
 
-Honest FAIL at `where = "seam"`, first attempt — the seam is ABSENT in rust:
+All four cases pass against `phlow-a2a` as it stands (programme rung 4, 2026-11-07; gate: `cargo test -p phlow-gauntlet --test task_88` — 4 passed / 0 failed; see the rung report for the full gate record). No product findings: every behaviour the original design discipline asked for is present — typed errors with preserved shape, bounded and untrusted error data, unknown states rejected at every layer tested, and remote tasks kept as data only.
 
-- **V1:** no A2A client boundary — zero `a2a` hits in any rust product crate.
-- **V2:** no task-state machine — zero `task_state`/`taskstate` hits; unknown states have nothing to be rejected by.
-- **A1:** no agent-card handling — a peer's card claims cross no rust boundary at all.
-- **A2:** no A2A RPC methods — error responses to the A2A methods have no rust handler; attacker-controlled error `data` crosses no rust boundary.
+History: the previous absence-probe version of this task (four bounded source scans, honest `fail` at `"seam"`) is superseded by this redesign under D-1059. Its diver-side observation stands separately and is unchanged: task-07 found diver's Lua task state machine *ignores* unknown state strings rather than rejecting them — diver-owned, outside this task's crate.
 
 ## Full technical depth
 
-The recon follows task-48's bounded-scan discipline: walk `crates/*/src/**/*.rs` from the workspace root (located via `CARGO_MANIFEST_DIR` + a `Cargo.lock` check), skip the gauntlet crate's own tree (the harness-probe principle: harness probes use design vocabulary; only product crates count — the task-82/task-48 regression that motivated it), tokenize on non-alphanumeric boundaries, and compare exact tokens case-insensitively. The task-level verdict reports the honest seam absence and banks the product decision: whether phlow should gain a rust A2A client boundary with typed error-shape propagation (code/message/data preserved; attacker data size-bounded, quoted, never interpolated; unknown states rejected; remote claims about the local run recorded as remote assertions only).
+The driver keeps the gauntlet contract (`ID`/`NAME`/`KIND`, `CASES`, `run_case(case) -> CaseReport`, `run(ctx) -> TaskOutcome`) and returns `Pass` only when every case passes; a failing case names itself in `where_` with its assertion failures in `how`. Notable mechanics:
 
-Distinct from task-07 (the Lua A2A boundary, which exists and was exercised there): this is the *rust* boundary, and there is none. The Lua-side observation — task-07's `bad-state` scenario showed the task state machine *ignores* unknown states — stands as the diver-owned adversarial note for this design point.
-
-Product decision banked for Matt: whether phlow should gain a rust A2A client boundary with the full error-shape discipline. Not implemented on gauntlet authority.
+- The server fixture follows `phlow-a2a`'s own wire-test pattern (`tests/wire.rs`): `A2aServer::start(ServerConfig::default(), card, executor)` on loopback with an ephemeral port, a card whose interface URL uses the `:0` authority, and a one-artifact echo executor implementing `server::AgentExecutor`.
+- The wire-level unknown-state probe cannot go through the typed client — `ListTasksParams.status` is a `TaskState`, so the bogus string is unconstructible there (itself part of the discipline). The probe therefore POSTs raw JSON-RPC and asserts on the server's error envelope; the server decodes params via `serde_json::from_value`, whose `TaskState` deserializer rejects unknown variants, surfacing as -32602.
+- The bounded-error probe relies on the client's read path, not a post-hoc size check: `read_capped` reads through `take(RESPONSE_BYTES_MAX + 1)`, so an oversized body is refused during the read and surfaces as a transport error. The fake peer is a one-shot `std::net` listener in the driver; it reads one request and answers with the crafted body, and tolerates the client closing early (that early close *is* the bound working).
+- Executor failures are deliberately *not* used as the typed-error source: in this crate an executor error becomes a `Failed` task with the reason as a status message, not a JSON-RPC error. The typed-error assertions therefore use genuine protocol errors (unknown task, crafted peer errors), which is what `A2aError::Rpc` exists to carry.
 
 ## Sources
 
-- `~/workspace/gauntlet-design-tasks-71-100.md` — task-88 design (Wave 86–90)
-- `~/workspace/repos/diver/lua/ai/a2a/client.lua`, `~/workspace/repos/diver/lua/ai/a2a/tasks.lua` — the only A2A boundary in the workspace (Lua; task-07's `bad-state` scenario: unknown states ignored, not rejected)
+- `crates/phlow-a2a` — the crate under audit (`registry.rs`, `store.rs`, `server.rs`, `client.rs`, `types.rs`; its `tests/wire.rs` for fixture patterns).
+- D-1059 — the redesign ruling (presence audit replacing the refuted absence assertions).
+- `~/workspace/gauntlet-design-tasks-71-100.md` — the original task-88 design (Wave 86–90), whose discipline this audit carries forward.
