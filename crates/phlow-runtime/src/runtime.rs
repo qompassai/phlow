@@ -467,8 +467,8 @@ pub struct Runtime<L: LlmTransport, E: EditorTransport> {
     best_of_k: u32,
     /// Contract variants for the planner and reviewer (D-1063), set by
     /// the embedder via the `set_*_contract_variant` methods.
-    /// `Canonical` (the default) is the rung-1 hand-written contract,
-    /// byte-for-byte.
+    /// `Canonical` (the default) is the hand-written contract as
+    /// amended by the rung-3 adoption, byte-for-byte.
     planner_contract_variant: ContractVariant,
     reviewer_contract_variant: ContractVariant,
 }

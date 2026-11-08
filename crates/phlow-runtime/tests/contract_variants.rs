@@ -1,18 +1,21 @@
-//! D-1063: contract-variant selection seam (scripted, hermetic).
+//! D-1063: contract-variant selection seam + rung-3 adoption
+//! (scripted, hermetic).
 //!
 //! Drives the real `Runtime` planner → coder → verification → reviewer
 //! loop with a scripted model transport, on the same bounded task as
 //! `closing_turn.rs` (fix `add` in `calc.py`). These tests pin the
-//! mechanism, not any variant's quality (that is the live probe's
-//! job):
+//! mechanism and its compose outcome, not any variant's quality (that
+//! was the live probe's job):
 //!
-//! - Validation: a selected variant changes the system prompt actually
-//!   sent on the wire for its role, and only for its role; with no
-//!   selection the payloads carry the canonical prompt bytes.
-//! - Adversarial: a variant cannot weaken the strict verdict parser
-//!   (garbage under a variant still stays unverified), and a variant
-//!   selected for the wrong role panics at the setter boundary instead
-//!   of silently falling back.
+//! - Validation: with no selection the payloads carry the canonical
+//!   prompt bytes; the clauses adopted at rung 3 (reviewer
+//!   serialization, planner skeleton) are part of those canonical
+//!   bytes and reach the wire by default, including in the closing
+//!   instruction.
+//! - Adversarial: the adopted wording cannot weaken the strict
+//!   verdict parser (garbage still stays unverified), near-JSON is
+//!   still unverified through the single parse path, and the retired
+//!   pool's ids panic instead of silently resolving.
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -22,7 +25,7 @@ use phlow_config::{FlowConfig, LoadOptions, load_config};
 use phlow_editor::{EditorTransport, SCHEMAS_LUA, TransportError};
 use phlow_llm::{LlmError, LlmTransport};
 use phlow_runtime::prompt::{
-    closing_instruction_for_role_variant, reviewer_verdict_normalized, system_prompt_for_role,
+    closing_instruction_for_role, reviewer_verdict_normalized, system_prompt_for_role,
 };
 use phlow_runtime::{ContractVariant, Runtime};
 use serde_json::{Map, Value, json};
@@ -193,6 +196,29 @@ fn happy_script() -> Vec<Value> {
     ]
 }
 
+/// A script whose reviewer reads calc.py on every turn (tool-only),
+/// then answers the closing turn with `closing_reply`.
+fn tool_only_reviewer_script(closing_reply: &str) -> Vec<Value> {
+    let mut script = vec![
+        chat_text("Plan: fix add in calc.py so the tests pass."),
+        chat_tools(json!([tool_call(
+            "write_0",
+            "file_write",
+            json!({"path": "calc.py", "content": CORRECT_FIX}),
+        )])),
+        chat_text("Done. Updated calc.py."),
+    ];
+    for index in 0..3 {
+        script.push(chat_tools(json!([tool_call(
+            &format!("read_{index}"),
+            "file_read",
+            json!({"path": "calc.py"}),
+        )])));
+    }
+    script.push(chat_text(closing_reply));
+    script
+}
+
 /// The system-prompt content of the first payload addressed to `role`.
 fn system_prompt_on_wire(payloads: &[Map<String, Value>], role: &str) -> String {
     let needle = format!("Phlow's {role}");
@@ -241,75 +267,44 @@ fn no_selection_sends_canonical_prompt_bytes() {
 }
 
 #[test]
-fn reviewer_serialization_variant_reaches_the_wire() {
-    let dir = workspace("reviewer-serialization");
+fn adopted_reviewer_clause_reaches_the_wire_by_default() {
+    // D-1063 adoption: the serialization clause is canonical now, so
+    // the default reviewer payload carries it with no selection.
+    let dir = workspace("adopted-reviewer");
     let llm = ScriptLlm::new(happy_script());
     let mut rt = runtime(&dir, llm.clone());
-    rt.set_reviewer_contract_variant(ContractVariant::Serialization);
     let report = rt.run(TASK);
     let payloads = llm.payloads();
     let reviewer_prompt = system_prompt_on_wire(&payloads, "reviewer");
-    assert!(reviewer_prompt.starts_with(&system_prompt_for_role("reviewer")));
     assert!(reviewer_prompt.contains("Serialize exactly: close every brace"));
     assert!(reviewer_prompt.contains("its last character is }"));
-    // The planner is untouched by a reviewer variant.
-    assert_eq!(
-        system_prompt_on_wire(&payloads, "planner"),
-        system_prompt_for_role("planner")
-    );
-    assert_eq!(
-        role_state(&report, "reviewer")["contract_variant"],
-        json!("serialization")
+    assert!(
+        role_state(&report, "reviewer")
+            .get("contract_variant")
+            .is_none(),
+        "the adopted clause is canonical, not a variant selection"
     );
 }
 
 #[test]
-fn planner_skeleton_variant_reaches_the_wire() {
-    let dir = workspace("planner-skeleton");
+fn adopted_planner_clause_reaches_the_wire_by_default() {
+    let dir = workspace("adopted-planner");
     let llm = ScriptLlm::new(happy_script());
     let mut rt = runtime(&dir, llm.clone());
-    rt.set_planner_contract_variant(ContractVariant::PlanSkeleton);
-    let report = rt.run(TASK);
+    rt.run(TASK);
     let payloads = llm.payloads();
     let planner_prompt = system_prompt_on_wire(&payloads, "planner");
-    assert!(planner_prompt.starts_with(&system_prompt_for_role("planner")));
     assert!(planner_prompt.contains("Goal / Files / Steps / Checks"));
-    // The reviewer is untouched by a planner variant.
-    assert_eq!(
-        system_prompt_on_wire(&payloads, "reviewer"),
-        system_prompt_for_role("reviewer")
-    );
-    assert_eq!(
-        role_state(&report, "planner")["contract_variant"],
-        json!("plan-skeleton")
-    );
+    assert!(planner_prompt.contains("name the exact test or command"));
 }
 
 #[test]
-fn variant_closing_instruction_reaches_the_wire() {
-    // A tool-only reviewer under the serialization variant must be
-    // rescued by a closing turn whose instruction is the variant's.
-    let dir = workspace("variant-closing");
-    let mut script = vec![
-        chat_text("Plan: fix add in calc.py so the tests pass."),
-        chat_tools(json!([tool_call(
-            "write_0",
-            "file_write",
-            json!({"path": "calc.py", "content": CORRECT_FIX}),
-        )])),
-        chat_text("Done. Updated calc.py."),
-    ];
-    for index in 0..3 {
-        script.push(chat_tools(json!([tool_call(
-            &format!("read_{index}"),
-            "file_read",
-            json!({"path": "calc.py"}),
-        )])));
-    }
-    script.push(chat_text(APPROVING_VERDICT));
-    let llm = ScriptLlm::new(script);
+fn adopted_closing_instruction_reaches_the_wire() {
+    // A tool-only reviewer must be rescued by a closing turn whose
+    // instruction is the canonical (adopted) closing text, verbatim.
+    let dir = workspace("adopted-closing");
+    let llm = ScriptLlm::new(tool_only_reviewer_script(APPROVING_VERDICT));
     let mut rt = runtime(&dir, llm.clone());
-    rt.set_reviewer_contract_variant(ContractVariant::Serialization);
     let report = rt.run(TASK);
     let reviewer = role_state(&report, "reviewer");
     assert_eq!(reviewer["closing_turn"], json!(true));
@@ -317,7 +312,8 @@ fn variant_closing_instruction_reaches_the_wire() {
     let payloads = llm.payloads();
     let closing_payload = payloads
         .iter()
-        .filter(|payload| {
+        .rev()
+        .find(|payload| {
             payload["messages"].as_array().is_some_and(|messages| {
                 messages.iter().any(|message| {
                     message["content"]
@@ -326,7 +322,6 @@ fn variant_closing_instruction_reaches_the_wire() {
                 })
             })
         })
-        .last()
         .expect("a closing payload was sent");
     let last_message = closing_payload["messages"]
         .as_array()
@@ -336,11 +331,8 @@ fn variant_closing_instruction_reaches_the_wire() {
         .clone();
     assert_eq!(
         last_message["content"],
-        json!(closing_instruction_for_role_variant(
-            "reviewer",
-            ContractVariant::Serialization
-        )),
-        "the closing payload must carry the variant closing instruction"
+        json!(closing_instruction_for_role("reviewer")),
+        "the closing payload must carry the canonical closing instruction"
     );
     assert!(
         last_message["content"]
@@ -355,31 +347,13 @@ fn variant_closing_instruction_reaches_the_wire() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn variant_garbage_verdict_stays_unverified() {
-    // The serialization variant strengthens wording only: a garbage
-    // closing reply still goes through the one strict parse path and
-    // stays unverified with approved == false.
-    let dir = workspace("variant-garbage");
-    let mut script = vec![
-        chat_text("Plan: fix add in calc.py so the tests pass."),
-        chat_tools(json!([tool_call(
-            "write_0",
-            "file_write",
-            json!({"path": "calc.py", "content": CORRECT_FIX}),
-        )])),
-        chat_text("Done. Updated calc.py."),
-    ];
-    for index in 0..3 {
-        script.push(chat_tools(json!([tool_call(
-            &format!("read_{index}"),
-            "file_read",
-            json!({"path": "calc.py"}),
-        )])));
-    }
-    script.push(chat_text("approved, probably — trust me"));
-    let llm = ScriptLlm::new(script);
+fn garbage_verdict_stays_unverified_under_the_adopted_contract() {
+    // The adopted clause strengthens wording only: a garbage closing
+    // reply still goes through the one strict parse path and stays
+    // unverified with approved == false.
+    let dir = workspace("adopted-garbage");
+    let llm = ScriptLlm::new(tool_only_reviewer_script("approved, probably — trust me"));
     let mut rt = runtime(&dir, llm.clone());
-    rt.set_reviewer_contract_variant(ContractVariant::Serialization);
     let report = rt.run(TASK);
     let reviewer = role_state(&report, "reviewer");
     assert_eq!(reviewer["status"], json!("unverified"));
@@ -388,11 +362,10 @@ fn variant_garbage_verdict_stays_unverified() {
 }
 
 #[test]
-fn shipped_variant_set_keeps_the_single_strict_parse_path() {
-    // reviewer_verdict_normalized is the only parse path and no
-    // variant changes it: near-JSON (the rung-1/2 residual class — a
-    // correct verdict missing its final brace) is unverified, and
-    // only the exact object parses.
+fn shipped_contract_keeps_the_single_strict_parse_path() {
+    // reviewer_verdict_normalized is the only parse path: near-JSON
+    // (the rung-1/2 residual class — a correct verdict missing its
+    // final brace) is unverified, and only the exact object parses.
     let near = r#"{"approved": false, "summary": "defect", "issues": ["x"]"#;
     let verdict = reviewer_verdict_normalized(near);
     assert_eq!(verdict["status"], json!("unverified"));
@@ -401,36 +374,20 @@ fn shipped_variant_set_keeps_the_single_strict_parse_path() {
     let verdict = reviewer_verdict_normalized(exact);
     assert!(verdict.get("status").is_none());
     assert_eq!(verdict["approved"], json!(false));
-    // Every shipped reviewer variant's closing instruction still
-    // demands exactly the verdict JSON and nothing else.
-    for variant in [
-        ContractVariant::Canonical,
-        ContractVariant::Serialization,
-        ContractVariant::WorkedExample,
-        ContractVariant::DecisionChecklist,
-    ] {
-        let closing = closing_instruction_for_role_variant("reviewer", variant);
-        assert!(
-            closing.contains("exactly the verdict JSON and nothing else"),
-            "{variant:?} closing weakened the exact-JSON demand"
-        );
-    }
+    // The shipped closing instruction still demands exactly the
+    // verdict JSON and nothing else.
+    let closing = closing_instruction_for_role("reviewer");
+    assert!(closing.contains("exactly the verdict JSON and nothing else"));
 }
 
 #[test]
-#[should_panic(expected = "does not apply to role: reviewer")]
-fn planner_variant_rejected_for_the_reviewer() {
-    let dir = workspace("mismatch-reviewer");
-    let llm = ScriptLlm::new(happy_script());
-    let mut rt = runtime(&dir, llm);
-    rt.set_reviewer_contract_variant(ContractVariant::PlanSkeleton);
+#[should_panic(expected = "unknown contract variant id: serialization")]
+fn retired_reviewer_variant_id_panics() {
+    let _ = ContractVariant::from_id("serialization");
 }
 
 #[test]
-#[should_panic(expected = "does not apply to role: planner")]
-fn reviewer_variant_rejected_for_the_planner() {
-    let dir = workspace("mismatch-planner");
-    let llm = ScriptLlm::new(happy_script());
-    let mut rt = runtime(&dir, llm);
-    rt.set_planner_contract_variant(ContractVariant::WorkedExample);
+#[should_panic(expected = "unknown contract variant id: plan-skeleton")]
+fn retired_planner_variant_id_panics() {
+    let _ = ContractVariant::from_id("plan-skeleton");
 }
