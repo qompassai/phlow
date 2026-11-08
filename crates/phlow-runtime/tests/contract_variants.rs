@@ -25,7 +25,8 @@ use phlow_config::{FlowConfig, LoadOptions, load_config};
 use phlow_editor::{EditorTransport, SCHEMAS_LUA, TransportError};
 use phlow_llm::{LlmError, LlmTransport};
 use phlow_runtime::prompt::{
-    closing_instruction_for_role, reviewer_verdict_normalized, system_prompt_for_role,
+    closing_instruction_for_role, closing_instruction_for_role_variant,
+    reviewer_verdict_normalized, system_prompt_for_role, system_prompt_for_role_variant,
 };
 use phlow_runtime::{ContractVariant, Runtime};
 use serde_json::{Map, Value, json};
@@ -390,4 +391,112 @@ fn retired_reviewer_variant_id_panics() {
 #[should_panic(expected = "unknown contract variant id: plan-skeleton")]
 fn retired_planner_variant_id_panics() {
     let _ = ContractVariant::from_id("plan-skeleton");
+}
+
+// ---------------------------------------------------------------------------
+// D-1075 rung 3: coder variants (validation + adversarial)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn coder_variant_reaches_the_wire_and_records_provenance() {
+    let dir = workspace("coder-variant");
+    let llm = ScriptLlm::new(happy_script());
+    let mut rt = runtime(&dir, llm.clone());
+    rt.set_coder_contract_variant(ContractVariant::CheckPerWrite);
+    let report = rt.run(TASK);
+    let payloads = llm.payloads();
+    let coder_prompt = system_prompt_on_wire(&payloads, "coder");
+    assert_eq!(
+        coder_prompt,
+        system_prompt_for_role_variant("coder", ContractVariant::CheckPerWrite)
+    );
+    assert!(coder_prompt.starts_with(&system_prompt_for_role("coder")));
+    assert!(coder_prompt.contains("after EVERY file_write, run flow_check"));
+    let coder = role_state(&report, "coder");
+    assert_eq!(coder["contract_variant"], json!("check-per-write"));
+    assert_eq!(coder["status"], json!("ok"));
+    // Other roles stay canonical and record nothing.
+    for role in ["planner", "reviewer"] {
+        assert!(role_state(&report, role).get("contract_variant").is_none());
+    }
+}
+
+/// A script whose coder writes on every turn (never speaks), then
+/// answers the closing turn with a summary; the reviewer approves.
+fn tool_only_coder_script(closing_reply: &str) -> Vec<Value> {
+    let mut script = vec![chat_text("Plan: fix add in calc.py so the tests pass.")];
+    for index in 0..3 {
+        script.push(chat_tools(json!([tool_call(
+            &format!("write_{index}"),
+            "file_write",
+            json!({"path": "calc.py", "content": CORRECT_FIX}),
+        )])));
+    }
+    script.push(chat_text(closing_reply));
+    script.push(chat_text(APPROVING_VERDICT));
+    script
+}
+
+#[test]
+fn coder_variant_closing_instruction_reaches_the_wire() {
+    let dir = workspace("coder-variant-closing");
+    let llm = ScriptLlm::new(tool_only_coder_script("Done. Updated calc.py; checks ok."));
+    let mut rt = runtime(&dir, llm.clone());
+    rt.set_coder_contract_variant(ContractVariant::StrictStop);
+    let report = rt.run(TASK);
+    let coder = role_state(&report, "coder");
+    assert_eq!(coder["closing_turn"], json!(true));
+    assert_eq!(coder["status"], json!("ok"));
+    let payloads = llm.payloads();
+    let closing_payload = payloads
+        .iter()
+        .rev()
+        .find(|payload| {
+            payload["messages"].as_array().is_some_and(|messages| {
+                messages.iter().any(|message| {
+                    message["content"]
+                        .as_str()
+                        .is_some_and(|content| content.contains("iteration budget is exhausted"))
+                })
+            })
+        })
+        .expect("a closing payload was sent");
+    let last_message = closing_payload["messages"]
+        .as_array()
+        .expect("messages")
+        .last()
+        .expect("last message")
+        .clone();
+    assert_eq!(
+        last_message["content"],
+        json!(closing_instruction_for_role_variant(
+            "coder",
+            ContractVariant::StrictStop
+        )),
+        "the coder closing payload must carry the variant closing instruction"
+    );
+    assert!(
+        last_message["content"]
+            .as_str()
+            .expect("content")
+            .contains("report the first flow_check status")
+    );
+}
+
+#[test]
+#[should_panic(expected = "contract variant check-per-write does not apply to role: planner")]
+fn coder_variant_cannot_be_set_on_the_planner() {
+    let dir = workspace("coder-variant-mismatch");
+    let llm = ScriptLlm::new(happy_script());
+    let mut rt = runtime(&dir, llm);
+    rt.set_planner_contract_variant(ContractVariant::CheckPerWrite);
+}
+
+#[test]
+#[should_panic(expected = "contract variant strict-stop does not apply to role: reviewer")]
+fn coder_variant_cannot_be_set_on_the_reviewer() {
+    let dir = workspace("coder-variant-mismatch-reviewer");
+    let llm = ScriptLlm::new(happy_script());
+    let mut rt = runtime(&dir, llm);
+    rt.set_reviewer_contract_variant(ContractVariant::StrictStop);
 }

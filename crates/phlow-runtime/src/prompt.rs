@@ -45,11 +45,30 @@ pub const ROLES: [&str; 3] = ["planner", "coder", "reviewer"];
 /// rung-3 report and in git history. This enum is the seam a future
 /// pool branches from — from the adopted canonical, never from a
 /// retired variant (restart-from-base).
+///
+/// D-1075 rung 3 (coder pool): three coder-only variants branch from
+/// the rung-2 anytime canonical — `CheckPerWrite`,
+/// `CoderWorkedExample`, and `StrictStop` — wording only (coder
+/// suffix + coder closing clauses), probed live at k=1 on the frozen
+/// S1 set under verification-selected acceptance. The anytime
+/// machinery, scoring, budgets, and watchdog scope are not variant
+/// surface.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ContractVariant {
     /// The canonical contract (rung-1 contracts as amended by the
     /// D-1063 rung-3 adoption).
     Canonical,
+    /// Coder C-V1 (D-1075 rung 3): run the unnamed `flow_check`
+    /// after EVERY `file_write`, stopping at the first aggregate
+    /// `ok`.
+    CheckPerWrite,
+    /// Coder C-V2 (D-1075 rung 3): a short worked example of the
+    /// target turn pattern, shape only, for a different task.
+    CoderWorkedExample,
+    /// Coder C-V3 (D-1075 rung 3): hard stop — the first aggregate
+    /// `ok` ends the stage at once, and a check is never re-run
+    /// without an intervening write.
+    StrictStop,
 }
 
 impl ContractVariant {
@@ -57,6 +76,9 @@ impl ContractVariant {
     pub fn id(self) -> &'static str {
         match self {
             Self::Canonical => "canonical",
+            Self::CheckPerWrite => "check-per-write",
+            Self::CoderWorkedExample => "coder-worked-example",
+            Self::StrictStop => "strict-stop",
         }
     }
 
@@ -70,6 +92,9 @@ impl ContractVariant {
     pub fn from_id(id: &str) -> Self {
         match id {
             "canonical" => Self::Canonical,
+            "check-per-write" => Self::CheckPerWrite,
+            "coder-worked-example" => Self::CoderWorkedExample,
+            "strict-stop" => Self::StrictStop,
             _ => panic!("unknown contract variant id: {id}"),
         }
     }
@@ -78,6 +103,7 @@ impl ContractVariant {
     pub fn applies_to(self, role: &str) -> bool {
         match self {
             Self::Canonical => ROLES.contains(&role),
+            Self::CheckPerWrite | Self::CoderWorkedExample | Self::StrictStop => role == "coder",
         }
     }
 
@@ -92,19 +118,60 @@ impl ContractVariant {
 }
 
 /// The clause a variant appends to a role's prompt suffix (D-1063).
-/// The rung-3 pool is retired (see [`ContractVariant`]), so no shipped
-/// variant appends anything; a future pool adds its rows here.
-fn suffix_clause(_role: &str, variant: ContractVariant) -> &'static str {
-    match variant {
-        ContractVariant::Canonical => "",
+/// The planner/reviewer pool is retired (see [`ContractVariant`]);
+/// the D-1075 rung-3 coder pool adds its rows here, coder only.
+fn suffix_clause(role: &str, variant: ContractVariant) -> &'static str {
+    match (role, variant) {
+        ("coder", ContractVariant::CheckPerWrite) => {
+            "Check after every write: after EVERY file_write, run flow_check \
+             with no name argument before any other tool call, even if the \
+             write felt trivial or partial \u{2014} do not make two writes \
+             without a check between them. Stop at the first flow_check whose \
+             result reports status \"ok\": reply with your summary \
+             immediately and make no further tool calls."
+        }
+        ("coder", ContractVariant::CoderWorkedExample) => {
+            "Worked example (a different task, shape only \u{2014} copy the \
+             turn pattern, not the content): the task is to fix clamp in \
+             limits.py. Turn 1: file_write limits.py with a complete \
+             candidate implementation. Turn 2: flow_check with no name \
+             argument. If that result reports status \"ok\", reply with \
+             your summary at once. If it does not report \"ok\", make \
+             exactly one fix with file_write, run the unnamed flow_check \
+             once more, and then reply with your summary either way."
+        }
+        ("coder", ContractVariant::StrictStop) => {
+            "Hard stop: the first flow_check result that reports status \
+             \"ok\" ends your work immediately \u{2014} your very next \
+             reply is your summary, with no polishing, no refactoring, no \
+             extra files, and no further tool calls. Never re-run \
+             flow_check on an unchanged workspace: every flow_check after \
+             the first must follow a file_write; two flow_check calls with \
+             no write between them are forbidden."
+        }
+        _ => "",
     }
 }
 
 /// The clause a variant appends to a role's closing instruction
-/// (D-1063). Empty for every shipped variant, as in [`suffix_clause`].
-fn closing_clause(_role: &str, variant: ContractVariant) -> &'static str {
-    match variant {
-        ContractVariant::Canonical => "",
+/// (D-1063). The coder pool's closing clauses state what the forced
+/// summary must report about the checks; tools stay disabled.
+fn closing_clause(role: &str, variant: ContractVariant) -> &'static str {
+    match (role, variant) {
+        ("coder", ContractVariant::CheckPerWrite) => {
+            "In your summary, report the status of the flow_check you ran \
+             after your last file_write."
+        }
+        ("coder", ContractVariant::CoderWorkedExample) => {
+            "End as in the worked example: your summary names the files you \
+             changed and the status of your final flow_check."
+        }
+        ("coder", ContractVariant::StrictStop) => {
+            "In your summary, report the first flow_check status \"ok\" \
+             you reached, or the last check status if no check reached \
+             \"ok\"."
+        }
+        _ => "",
     }
 }
 
@@ -623,6 +690,58 @@ mod tests {
             ContractVariant::from_id(ContractVariant::Canonical.id()),
             ContractVariant::Canonical
         );
+        for variant in [
+            ContractVariant::CheckPerWrite,
+            ContractVariant::CoderWorkedExample,
+            ContractVariant::StrictStop,
+        ] {
+            assert_eq!(ContractVariant::from_id(variant.id()), variant);
+        }
+    }
+
+    #[test]
+    fn coder_variants_are_append_only_and_coder_only() {
+        // D-1075 rung 3: every coder variant branches from the rung-2
+        // canonical — the canonical prompt/closing stay byte-identical
+        // as a prefix — and no coder variant applies to another role.
+        let canonical_prompt = system_prompt_for_role("coder");
+        let canonical_closing = closing_instruction_for_role("coder");
+        for variant in [
+            ContractVariant::CheckPerWrite,
+            ContractVariant::CoderWorkedExample,
+            ContractVariant::StrictStop,
+        ] {
+            assert!(variant.applies_to("coder"), "{variant:?}");
+            assert!(!variant.applies_to("planner"), "{variant:?}");
+            assert!(!variant.applies_to("reviewer"), "{variant:?}");
+            let prompt = system_prompt_for_role_variant("coder", variant);
+            assert!(prompt.starts_with(&canonical_prompt), "{variant:?}");
+            assert!(prompt.len() > canonical_prompt.len(), "{variant:?}");
+            let closing = closing_instruction_for_role_variant("coder", variant);
+            assert!(closing.starts_with(canonical_closing), "{variant:?}");
+            assert!(closing.len() > canonical_closing.len(), "{variant:?}");
+        }
+    }
+
+    #[test]
+    fn coder_variant_clauses_carry_their_mechanisms() {
+        let check = system_prompt_for_role_variant("coder", ContractVariant::CheckPerWrite);
+        assert!(check.contains("after EVERY file_write, run flow_check"));
+        assert!(check.contains("do not make two writes without a check between them"));
+        let example = system_prompt_for_role_variant("coder", ContractVariant::CoderWorkedExample);
+        assert!(example.contains("Worked example (a different task, shape only"));
+        assert!(example.contains("fix clamp in limits.py"));
+        assert!(example.contains("reply with your summary either way"));
+        let strict = system_prompt_for_role_variant("coder", ContractVariant::StrictStop);
+        assert!(strict.contains("Hard stop: the first flow_check result"));
+        assert!(strict.contains("no polishing, no refactoring, no extra files"));
+        assert!(strict.contains("two flow_check calls with no write between them are forbidden"));
+    }
+
+    #[test]
+    #[should_panic(expected = "contract variant check-per-write does not apply to role: planner")]
+    fn coder_variant_rejects_other_roles() {
+        let _ = system_prompt_for_role_variant("planner", ContractVariant::CheckPerWrite);
     }
 
     #[test]
