@@ -47,7 +47,7 @@ pub use prompt::{
     ContractVariant, VENDORED_SYSTEM_PROMPT, closing_instruction_for_role,
     closing_instruction_for_role_variant, has_error_diagnostics, normalize_tool_calls,
     reviewer_verdict, reviewer_verdict_normalized, strip_verdict_code_block,
-    system_prompt_for_role, system_prompt_for_role_variant,
+    system_prompt_for_role, system_prompt_for_role_variant, verdict_retry_instruction,
 };
 pub use report::{
     check_report_to_value, list_result_to_value, new_report, read_result_to_value,

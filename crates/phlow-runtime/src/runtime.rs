@@ -34,7 +34,7 @@ use sha2::{Digest, Sha256};
 use crate::error::RuntimeError;
 use crate::prompt::{
     ContractVariant, ROLES, closing_instruction_for_role_variant, normalize_tool_calls,
-    reviewer_verdict_normalized, system_prompt_for_role_variant,
+    reviewer_verdict_normalized, system_prompt_for_role_variant, verdict_retry_instruction,
 };
 use crate::report::{new_report, run_all_report_to_value};
 use crate::tools::{schemas_for_role, tool_function};
@@ -1382,6 +1382,7 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
             messages.push(assistant_message(&content, &[]));
             if normalized.is_empty() || !content.is_empty() {
                 finish_text_turn(role, &content, state);
+                self.maybe_retry_reviewer_verdict(role, &content, messages, state, model, report);
                 return Some(finish_role(report, state.clone(), roles_len));
             }
             return None;
@@ -1389,6 +1390,7 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
         messages.push(assistant_message(&content, &normalized));
         if normalized.is_empty() {
             finish_text_turn(role, &content, state);
+            self.maybe_retry_reviewer_verdict(role, &content, messages, state, model, report);
             return Some(finish_role(report, state.clone(), roles_len));
         }
         for call in &normalized {
@@ -1554,7 +1556,121 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
         };
         messages.push(assistant_message(&content, &[]));
         finish_text_turn(role, &content, state);
+        self.maybe_retry_reviewer_verdict(role, &content, messages, state, model, report);
         Some(finish_role(report, state.clone(), roles_len))
+    }
+
+    /// The D-1076 verdict-retry hook, called immediately after every
+    /// `finish_text_turn` that ends a role run and before the role
+    /// result is recorded. It is a no-op unless the reviewer just
+    /// finished with a verdict that failed the strict parse, and it
+    /// fires at most once per role run.
+    ///
+    /// Parse failure is recomputed exactly, never inferred from state
+    /// strings: [`reviewer_verdict_normalized`] returns a map carrying
+    /// an `"error"` key if and only if the strict parser rejected the
+    /// content (a parsed verdict map is exactly
+    /// `{approved, issues, summary}`). The failed reply must also be a
+    /// verdict attempt — non-empty text: an empty or tool-call-only
+    /// reply hands the retry nothing to re-form and stays the closing
+    /// turn's domain. The `"verdict_retry"` state
+    /// marker is the second gate: [`Runtime::verdict_retry`] sets it
+    /// before the retry turn runs, so no finish path can retry twice.
+    fn maybe_retry_reviewer_verdict(
+        &mut self,
+        role: &str,
+        content: &str,
+        messages: &mut Vec<Value>,
+        state: &mut Map<String, Value>,
+        model: &str,
+        report: &mut Value,
+    ) {
+        if role != "reviewer" || state.contains_key("verdict_retry") {
+            return;
+        }
+        if content.trim().is_empty() {
+            // No verdict was attempted: there is no raw text to hand
+            // back, so there is nothing for the retry to re-form. An
+            // empty (or tool-call-only) reply stays the closing turn's
+            // domain — a failure to speak, not a failure of form.
+            return;
+        }
+        if !reviewer_verdict_normalized(content).contains_key("error") {
+            return;
+        }
+        self.verdict_retry(content, messages, state, model, report);
+    }
+
+    /// The reviewer's verdict retry (D-1076): exactly one extra model
+    /// turn, run only when the reviewer's reply just failed the strict
+    /// verdict parse (see [`Runtime::maybe_retry_reviewer_verdict`]).
+    ///
+    /// The ruling this implements: the D-1075 S1 re-measure's remaining
+    /// arm-A losses included reviewer approvals written as prose with
+    /// an embedded JSON verdict, which the byte-strict parser rejected
+    /// while the coder's patch stood host-verified. The fix is
+    /// contract-side, not parser-side: the retry instruction hands the
+    /// reviewer its own raw text back with the required verdict format
+    /// restated and demands the verdict re-emitted in that format only.
+    /// The parser is NOT loosened — the retry's reply is routed through
+    /// [`finish_text_turn`] and the same strict parse, and its verdict
+    /// is the one that counts.
+    ///
+    /// Contract:
+    /// - fires at most once per role run: the only call site is the
+    ///   hook above, the `"verdict_retry"` state marker is set before
+    ///   the turn runs, and the retry's own finish never re-enters the
+    ///   hook;
+    /// - the turn is called with an empty tool list — tools are off at
+    ///   the wire, exactly as in the closing turn — and tool calls in
+    ///   the reply are ignored, never dispatched;
+    /// - if the retry reply also fails the parse, the state keeps the
+    ///   parse-failure outcome (`unverified`, `approved == false`, the
+    ///   parse error): the parse failure is the recorded outcome,
+    ///   never a silent pass and never an invented verdict;
+    /// - a backend failure leaves the recorded parse failure untouched:
+    ///   the stage degrades to the pre-D-1076 outcome plus the attempt
+    ///   marker.
+    ///
+    /// Precedence with the closing turn and the watchdog: the retry is
+    /// downstream of whichever turn produced the unparseable verdict.
+    /// A spontaneous or watchdog-forced text finish leaves no closing
+    /// turn pending (the closing turn exists only for runs that exhaust
+    /// the loop without ever speaking), so the retry replaces nothing;
+    /// a closing-turn reply that fails the parse gets the retry on top.
+    /// A reviewer run therefore gains at most one closing turn and at
+    /// most one verdict retry, never two of either. The retry is a
+    /// contract mechanism, not a budget change: no `RoleBudgets` value
+    /// is altered, and `turns`/`model_calls` count the retry turn like
+    /// any other turn so re-measurement can audit the extra call.
+    fn verdict_retry(
+        &mut self,
+        raw_content: &str,
+        messages: &mut Vec<Value>,
+        state: &mut Map<String, Value>,
+        model: &str,
+        report: &mut Value,
+    ) {
+        state.insert("verdict_retry".to_owned(), Value::Bool(true));
+        messages.push(serde_json::json!({
+            "role": "user",
+            "content": verdict_retry_instruction(raw_content),
+        }));
+        let turns = state
+            .get("turns")
+            .and_then(|turns| turns.as_u64())
+            .unwrap_or(0);
+        state.insert("turns".to_owned(), Value::Number((turns + 1).into()));
+        report_mut::add(report, "model_calls", 1);
+        let (content, _calls) = match self.chat(messages, &[], model) {
+            Ok(outcome) => outcome,
+            Err(_) => return,
+        };
+        messages.push(assistant_message(&content, &[]));
+        // The retry's verdict replaces the failed one wholesale: drop
+        // the stale parse error so a parsed retry does not report one.
+        state.remove("error");
+        finish_text_turn("reviewer", &content, state);
     }
 }
 

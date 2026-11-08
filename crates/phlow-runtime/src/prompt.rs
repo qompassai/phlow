@@ -269,6 +269,30 @@ pub fn closing_instruction_for_role_variant(role: &str, variant: ContractVariant
     }
 }
 
+/// The instruction appended for the reviewer's verdict retry (D-1076).
+///
+/// When a reviewer reply fails the strict verdict parse
+/// ([`reviewer_verdict`]), the runtime runs exactly one retry turn with
+/// tools disabled and this instruction appended as a user message. The
+/// instruction hands the reviewer its own raw reply back verbatim,
+/// restates the exact required verdict format, and demands the verdict
+/// re-emitted in that format only. It changes nothing about acceptance:
+/// the retry's reply goes through the same strict parser as any other
+/// reviewer text, and an unparseable retry stays unverified.
+pub fn verdict_retry_instruction(raw_content: &str) -> String {
+    format!(
+        "Your previous reply could not be parsed as a verdict. It is quoted \
+         back to you exactly as received:\n\n{raw_content}\n\nReply now with \
+         exactly the verdict JSON and nothing else: \
+         {{\"approved\":true|false,\"summary\":\"...\",\"issues\":[\"...\"]}}. \
+         Re-emit only the verdict in that format \u{2014} keep the judgment \
+         your quoted reply already reached and change nothing but the form. \
+         Serialize exactly: close every brace and bracket you open; the \
+         first character of your reply is {{ and the last is }}. No markdown \
+         wrapping, no commentary, no trailing characters."
+    )
+}
+
 /// Normalize raw model `tool_calls` into well-formed assistant-message calls.
 ///
 /// Mirrors `_normalize_tool_calls`: non-object calls are rejected, missing ids
