@@ -66,6 +66,11 @@ const SNAPSHOT_FILES_MAX: usize = 4_096;
 const SNAPSHOT_FILE_BYTES_MAX: u64 = 16 * 1024 * 1024;
 /// Best-of-k workspace snapshot cap: total bytes per snapshot.
 const SNAPSHOT_TOTAL_BYTES_MAX: u64 = 64 * 1024 * 1024;
+/// Cap on the per-check (name, status) pairs recorded on one
+/// `flow_check` event (D-1075 rung 2 instrumentation). Configured check
+/// counts are operator-bounded, but an event is a report artifact and
+/// stays bounded regardless of configuration size.
+const CHECK_EVENT_RESULTS_MAX: usize = 64;
 /// Tool result cap, in characters of Python-compatible JSON.
 pub const TOOL_RESULT_CHARS_MAX: usize = 40_000;
 /// Preview cap inside a truncated tool result, in characters.
@@ -291,6 +296,101 @@ struct WorkspaceSnapshot {
     files: std::collections::BTreeMap<String, Vec<u8>>,
 }
 
+/// The score of one coder workspace state, derived from the
+/// `flow_check` result the model actually received (D-1075 rung 2).
+///
+/// The tuple is `(aggregate_rank, ok_checks)`, compared
+/// lexicographically — verification-first, in the `candidate_rank`
+/// spirit: the result's aggregate status ranks `ok` (2) above
+/// `unverified` (1) above anything else (0: `failed`, `stale`,
+/// `error`, `timeout`, `unavailable`); ties on the aggregate break on
+/// the count of checks in the result detail whose status is `ok`.
+/// A state with no check evidence at all (writes after the last
+/// `flow_check`, or no `flow_check` yet) scores `(0, 0)`, so an
+/// unverified trailing state never displaces a scored snapshot, and
+/// snapshot ties keep the earliest snapshot (displacement requires a
+/// strictly greater score).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+struct AnytimeScore {
+    aggregate_rank: u64,
+    ok_checks: u64,
+}
+
+/// Score a `flow_check` result value; total over every result shape
+/// the checks runner can return, including the compact unknown-name
+/// report (no `checks` array → zero ok checks, aggregate as reported).
+fn anytime_score(result: &Value) -> AnytimeScore {
+    let aggregate_rank = match result.get("status").and_then(|status| status.as_str()) {
+        Some("ok") => 2,
+        Some("unverified") => 1,
+        _ => 0,
+    };
+    let ok_checks = result
+        .get("checks")
+        .and_then(|checks| checks.as_array())
+        .map(|checks| {
+            checks
+                .iter()
+                .filter(|check| check.get("status") == Some(&Value::String("ok".to_owned())))
+                .count() as u64
+        })
+        .unwrap_or(0);
+    AnytimeScore {
+        aggregate_rank,
+        ok_checks,
+    }
+}
+
+/// The coder's retained anytime candidate (D-1075 rung 2): the best
+/// scored workspace state seen at a `flow_check` in the current coder
+/// stage, held so budget exhaustion can restore it over a worse final
+/// state. The tree capture reuses the best-of-k snapshot/restore
+/// primitives; `changed` mirrors [`CandidateOutcome`] `changed`
+/// (path → bytes, `None` = absent) for the run-ledger repair on
+/// restore.
+struct AnytimeSnapshot {
+    /// The role turn whose `flow_check` produced this score.
+    turn: u64,
+    /// The score that retained this snapshot.
+    score: AnytimeScore,
+    /// The aggregate status string of the scoring result.
+    aggregate: String,
+    /// Full-tree capture for restore.
+    tree: WorkspaceSnapshot,
+    /// Changed-file bytes at capture time, by relative path.
+    changed: std::collections::BTreeMap<String, Option<Vec<u8>>>,
+}
+
+/// The provenance record published in the coder's role state when an
+/// anytime snapshot is retained: the turn and score that retained it,
+/// and whether exhaustion later restored it. The record appears only
+/// when the mechanism engaged (a snapshot was taken).
+fn anytime_snapshot_record(
+    turn: u64,
+    aggregate: &str,
+    score: AnytimeScore,
+    restored: bool,
+) -> Value {
+    serde_json::json!({
+        "turn": turn,
+        "aggregate": aggregate,
+        "aggregate_rank": score.aggregate_rank,
+        "ok_checks": score.ok_checks,
+        "restored": restored,
+    })
+}
+
+/// Per-coder-stage tracking for the anytime contract (D-1075 rung 2):
+/// the score of the most recent `flow_check` result and whether any
+/// successful write landed after it. Reset at every coder stage start.
+#[derive(Default)]
+struct CoderStage {
+    /// Score of the latest `flow_check` result this stage, if any.
+    last_check_score: Option<AnytimeScore>,
+    /// A `file_write` succeeded after that result was received.
+    wrote_after_check: bool,
+}
+
 /// The ordinary cycle-approval rule, shared by `run_inner` and the
 /// best-of-k early exit: coder ok, reviewer approves, host verified.
 fn cycle_approved(coder: &Value, reviewer: &Value, verification: &Value) -> bool {
@@ -471,6 +571,19 @@ pub struct Runtime<L: LlmTransport, E: EditorTransport> {
     /// amended by the rung-3 adoption, byte-for-byte.
     planner_contract_variant: ContractVariant,
     reviewer_contract_variant: ContractVariant,
+    /// The coder's contract variant slot (D-1075 rung 2): same plumbing
+    /// as the planner/reviewer slots, so rung 3 can define and probe
+    /// coder variants without further plumbing changes. Canonical is
+    /// the only shipped variant in this rung.
+    coder_contract_variant: ContractVariant,
+    /// The retained anytime snapshot for the coder stage currently in
+    /// `role` (D-1075 rung 2); `None` outside a coder stage and until
+    /// the stage's first scored `flow_check`. Single-role-at-a-time
+    /// execution (the writer lock) means one slot suffices.
+    anytime_snapshot: Option<AnytimeSnapshot>,
+    /// Score/write tracking for the current coder stage; see
+    /// [`CoderStage`].
+    coder_stage: CoderStage,
 }
 
 impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
@@ -515,6 +628,9 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
             best_of_k: 1,
             planner_contract_variant: ContractVariant::Canonical,
             reviewer_contract_variant: ContractVariant::Canonical,
+            coder_contract_variant: ContractVariant::Canonical,
+            anytime_snapshot: None,
+            coder_stage: CoderStage::default(),
         })
     }
 
@@ -589,14 +705,35 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
         self.reviewer_contract_variant
     }
 
-    /// The contract variant in force for `role` in this runtime. The
-    /// coder always runs the canonical contract (D-1063 varies the
-    /// planner and reviewer only).
+    /// Set the coder's contract variant (D-1075 rung 2). The default,
+    /// [`ContractVariant::Canonical`], is the anytime contract,
+    /// byte-for-byte. No non-canonical coder variant is defined in
+    /// this rung; the slot exists so rung 3 can add one by extending
+    /// [`ContractVariant`] and its `applies_to` rows only.
+    ///
+    /// # Panics
+    /// Panics when `variant` does not apply to the coder; variant
+    /// selection is an embedder contract, not external input.
+    pub fn set_coder_contract_variant(&mut self, variant: ContractVariant) {
+        assert!(
+            variant.applies_to("coder"),
+            "contract variant {} does not apply to role: coder",
+            variant.id()
+        );
+        self.coder_contract_variant = variant;
+    }
+
+    /// The coder's configured contract variant.
+    pub fn coder_contract_variant(&self) -> ContractVariant {
+        self.coder_contract_variant
+    }
+
+    /// The contract variant in force for `role` in this runtime.
     fn contract_variant_for(&self, role: &str) -> ContractVariant {
         match role {
             "planner" => self.planner_contract_variant,
             "reviewer" => self.reviewer_contract_variant,
-            _ => ContractVariant::Canonical,
+            _ => self.coder_contract_variant,
         }
     }
 
@@ -876,7 +1013,22 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
             .expect("normalized calls carry function objects");
         let name = function.get("name").cloned().unwrap_or(Value::Null);
         let result = self.run_tool_call(role, &name, function);
-        record_tool_event(report, state, role, &name, &id, &result);
+        let check_call = flow_check_call(&name, function);
+        if role == "coder" {
+            // Anytime tracking (D-1075 rung 2) happens per call, in
+            // dispatch order, so a write batched after a check in the
+            // same turn is correctly seen as unscored trailing work.
+            match name.as_str() {
+                Some("flow_check") => self.note_coder_check(state, &result),
+                Some("file_write")
+                    if result.get("status") == Some(&Value::String("ok".to_owned())) =>
+                {
+                    self.coder_stage.wrote_after_check = true;
+                }
+                _ => {}
+            }
+        }
+        record_tool_event(report, state, role, &name, &id, &result, check_call);
         let encoded = truncate_tool_result(&result);
         let mut message = Map::new();
         message.insert("role".to_owned(), Value::String("tool".to_owned()));
@@ -990,11 +1142,27 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
     /// later turns are called with an empty tool list and any tool calls
     /// they still attempt are ignored, never dispatched. The firing is
     /// recorded in the role state (`watchdog_fired`,
-    /// `watchdog_at_tool_calls`) from the moment it happens. The coder
-    /// has no closing artifact and the watchdog never fires for it. If a
-    /// watchdog-fired role still never speaks, the loop exhausts and the
-    /// rung-1 closing turn stacks on top; a role that answers after the
-    /// watchdog needs no closing turn.
+    /// `watchdog_at_tool_calls`) from the moment it happens. The
+    /// watchdog stays planner/reviewer-scoped: the coder's rung-1
+    /// failure mode was not artifact-lessness mid-inspection but a
+    /// write→check loop with no positive signal, so D-1075 rung 2
+    /// fixes the coder with the anytime contract instead (below) and
+    /// leaves the watchdog gate untouched. If a watchdog-fired role
+    /// still never speaks, the loop exhausts and the rung-1 closing
+    /// turn stacks on top; a role that answers after the watchdog
+    /// needs no closing turn.
+    ///
+    /// Third deviation, D-1075 rung 2 (coder only): the anytime
+    /// contract. Each coder `flow_check` result scores the workspace
+    /// state it describes ([`anytime_score`]); a strictly better score
+    /// retains a full-tree snapshot ([`Runtime::note_coder_check`]).
+    /// On budget exhaustion the retained snapshot is restored when it
+    /// strictly outranks the final state, and only then does the
+    /// coder's closing turn run, so its summary describes the patch as
+    /// it stands post-restore. A coder that finishes spontaneously is
+    /// untouched by all of this beyond the `anytime_snapshot`
+    /// provenance record, which appears only when a snapshot was
+    /// actually retained.
     fn role(
         &mut self,
         role: &str,
@@ -1038,6 +1206,12 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
             );
         }
         let roles_len = roles_len(report);
+        if role == "coder" {
+            // Each coder stage starts with no retained candidate and
+            // no check evidence (D-1075 rung 2).
+            self.anytime_snapshot = None;
+            self.coder_stage = CoderStage::default();
+        }
         let tools = self.schemas(role);
         let budgets = RoleBudgets::from_config(self.config.agent());
         // Per-role-run tool-call count for the watchdog: the report
@@ -1091,9 +1265,23 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
         // D-1060/D-1061: a planner or reviewer that spent every turn on
         // tool calls has not failed to think, it has failed to speak.
         // Give it exactly one forced closing turn (tools disabled) to emit
-        // its artifact before the budget-exhausted state is declared. The
-        // coder has no closing turn; its contract is unchanged.
+        // its artifact before the budget-exhausted state is declared.
         if matches!(role, "planner" | "reviewer") {
+            let closing =
+                self.closing_turn(role, roles_len, &mut messages, &mut state, &model, report);
+            if let Some(result) = closing {
+                return Ok(result);
+            }
+        }
+        // D-1075 rung 2: the coder joins the closing-turn mechanism —
+        // the rung-1 anatomy showed its missing artifact was likewise
+        // one text turn (the summary). Order matters: first restore
+        // the retained anytime snapshot when it strictly outranks the
+        // final state, then run the closing turn, so the summary
+        // describes the patch as it stands after any restore, and the
+        // cycle's host verification runs against the restored state.
+        if role == "coder" {
+            self.restore_anytime_snapshot(&mut state);
             let closing =
                 self.closing_turn(role, roles_len, &mut messages, &mut state, &model, report);
             if let Some(result) = closing {
@@ -1210,9 +1398,103 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
         None
     }
 
-    /// The forced closing turn (D-1060/D-1061): exactly one extra model
-    /// turn, run only when the planner or reviewer exhausted its iteration
-    /// budget on tool calls without ever emitting its artifact as text.
+    /// Score one coder `flow_check` result and retain a snapshot of
+    /// the workspace state it describes when it strictly outranks the
+    /// retained snapshot (D-1075 rung 2). Ties keep the earliest
+    /// snapshot. A state whose full-tree capture fails a snapshot cap
+    /// is not retained (the score is still tracked as the stage's last
+    /// check evidence); snapshotting never fails the stage.
+    ///
+    /// The provenance record (`anytime_snapshot` in the role state)
+    /// appears only when a snapshot is actually retained, and is
+    /// replaced when a better snapshot displaces it.
+    fn note_coder_check(&mut self, state: &mut Map<String, Value>, result: &Value) {
+        let score = anytime_score(result);
+        self.coder_stage.last_check_score = Some(score);
+        self.coder_stage.wrote_after_check = false;
+        if self
+            .anytime_snapshot
+            .as_ref()
+            .is_some_and(|snapshot| score <= snapshot.score)
+        {
+            return;
+        }
+        let Ok(tree) = self.snapshot_workspace() else {
+            return;
+        };
+        let changed = self.capture_changed_files();
+        let turn = state
+            .get("turns")
+            .and_then(|turns| turns.as_u64())
+            .unwrap_or(0);
+        let aggregate = result
+            .get("status")
+            .and_then(|status| status.as_str())
+            .unwrap_or("unverified")
+            .to_owned();
+        let snapshot = AnytimeSnapshot {
+            turn,
+            score,
+            aggregate,
+            tree,
+            changed,
+        };
+        state.insert(
+            "anytime_snapshot".to_owned(),
+            anytime_snapshot_record(snapshot.turn, &snapshot.aggregate, snapshot.score, false),
+        );
+        self.anytime_snapshot = Some(snapshot);
+    }
+
+    /// On coder budget exhaustion: restore the retained anytime
+    /// snapshot when it strictly outranks the final state (D-1075
+    /// rung 2). The final state's score is the stage's last
+    /// `flow_check` score, or `(0, 0)` when writes landed after that
+    /// check (an unscored trailing state) or no check ever ran. A
+    /// restore rewinds the workspace via the best-of-k restore
+    /// primitive and repairs the run ledger to the snapshot's changed
+    /// set; the provenance record's `restored` flag flips only when
+    /// the restore actually happened.
+    fn restore_anytime_snapshot(&mut self, state: &mut Map<String, Value>) {
+        let Some(snapshot) = self.anytime_snapshot.take() else {
+            return;
+        };
+        let final_score = if self.coder_stage.wrote_after_check {
+            AnytimeScore::default()
+        } else {
+            self.coder_stage.last_check_score.unwrap_or_default()
+        };
+        if snapshot.score <= final_score {
+            return;
+        }
+        if self.restore_workspace(&snapshot.tree).is_err() {
+            return;
+        }
+        self.run_changed = snapshot.changed.keys().cloned().collect();
+        if let Some(record) = state
+            .get_mut("anytime_snapshot")
+            .and_then(|record| record.as_object_mut())
+        {
+            record.insert("restored".to_owned(), Value::Bool(true));
+        }
+    }
+
+    /// The current bytes of every file in the run ledger
+    /// (path → bytes, `None` = absent), mirroring the
+    /// [`CandidateOutcome`] `changed` capture in best-of-k.
+    fn capture_changed_files(&self) -> std::collections::BTreeMap<String, Option<Vec<u8>>> {
+        let mut changed = std::collections::BTreeMap::new();
+        for path in self.changed_files_sorted() {
+            let bytes = std::fs::read(self.workspace.root().join(&path)).ok();
+            changed.insert(path, bytes);
+        }
+        changed
+    }
+
+    /// The forced closing turn (D-1060/D-1061; coder added by D-1075
+    /// rung 2): exactly one extra model turn, run only when the role
+    /// exhausted its iteration budget on tool calls without ever
+    /// emitting its artifact as text.
     ///
     /// The turn is called with an empty tool list — the payload builder
     /// omits `tools` entirely for an empty list, so tool use is off at the
@@ -1249,8 +1531,8 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
         report: &mut Value,
     ) -> Option<Value> {
         assert!(
-            matches!(role, "planner" | "reviewer"),
-            "closing turn is planner/reviewer only: {role}"
+            matches!(role, "planner" | "reviewer" | "coder"),
+            "closing turn is planner/reviewer/coder only: {role}"
         );
         state.insert("closing_turn".to_owned(), Value::Bool(true));
         messages.push(serde_json::json!({
@@ -1276,7 +1558,33 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
     }
 }
 
+/// The `flow_check` call shape for event instrumentation (D-1075
+/// rung 2): `Some(Some(name))` for a named call, `Some(None)` for an
+/// unnamed (all-checks) call, `None` when the tool is not
+/// `flow_check`. Arguments that fail to parse record as unnamed —
+/// the dispatch itself will surface the parse error as the result.
+fn flow_check_call(name: &Value, function: &Map<String, Value>) -> Option<Option<String>> {
+    if name.as_str() != Some("flow_check") {
+        return None;
+    }
+    let parsed = parse_tool_arguments(function.get("arguments")).unwrap_or(Value::Null);
+    Some(
+        parsed
+            .get("name")
+            .and_then(|called| called.as_str())
+            .map(str::to_owned),
+    )
+}
+
 /// Count a failed tool call and record its event in the report.
+///
+/// `flow_check` events additionally carry the called check name
+/// (`"check_name"`, `null` for an unnamed call) and the per-check
+/// `(name, status)` pairs from the result (`"check_results"`, capped
+/// at [`CHECK_EVENT_RESULTS_MAX`], no result bodies) — the rung-1
+/// measurement could not reconstruct either from the sidecars
+/// (D-1075 rung 2 closes cannot-establish #1/#4). Additive fields:
+/// existing event consumers read only the keys they know.
 fn record_tool_event(
     report: &mut Value,
     state: &mut Map<String, Value>,
@@ -1284,6 +1592,7 @@ fn record_tool_event(
     name: &Value,
     id: &str,
     result: &Value,
+    check_call: Option<Option<String>>,
 ) {
     if result.get("status") != Some(&Value::String("ok".to_owned())) {
         let errors = state
@@ -1305,6 +1614,29 @@ fn record_tool_event(
     );
     if let Some(error) = result.get("error") {
         event.insert("error".to_owned(), error.clone());
+    }
+    if let Some(called) = check_call {
+        event.insert(
+            "check_name".to_owned(),
+            called.map_or(Value::Null, Value::String),
+        );
+        let pairs = result
+            .get("checks")
+            .and_then(|checks| checks.as_array())
+            .map(|checks| {
+                checks
+                    .iter()
+                    .take(CHECK_EVENT_RESULTS_MAX)
+                    .map(|check| {
+                        serde_json::json!({
+                            "name": check.get("name").cloned().unwrap_or(Value::Null),
+                            "status": check.get("status").cloned().unwrap_or(Value::Null),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        event.insert("check_results".to_owned(), Value::Array(pairs));
     }
     report_mut::push(report, "events", Value::Object(event));
 }
@@ -2118,11 +2450,7 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
             self.run_changed.clear();
             let (coder, reviewer, verification) = self.cycle(task, context, report)?;
             let fingerprint = self.fingerprint();
-            let mut changed = std::collections::BTreeMap::new();
-            for path in self.changed_files_sorted() {
-                let bytes = std::fs::read(self.workspace.root().join(&path)).ok();
-                changed.insert(path, bytes);
-            }
+            let changed = self.capture_changed_files();
             let approved = cycle_approved(&coder, &reviewer, &verification);
             candidates.push(CandidateOutcome {
                 index,
