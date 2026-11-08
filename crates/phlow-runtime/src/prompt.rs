@@ -22,7 +22,7 @@ pub const ROLES: [&str; 3] = ["planner", "coder", "reviewer"];
 
 /// A contract variant for the planner or reviewer (D-1063).
 ///
-/// Variants are append-only diffs against the canonical contract: the
+/// Variants are additive diffs against the canonical contract: the
 /// canonical suffix and closing instruction stay byte-identical as a
 /// prefix, and a variant adds its clauses after them. Variants vary
 /// prompt wording only — the strict verdict parser, the watchdog
@@ -166,7 +166,7 @@ pub fn system_prompt_for_role_variant(role: &str, variant: ContractVariant) -> S
              Approve only if implementation addresses the task; report real defects. \
              Serialize exactly: close every brace and bracket you open; \
              your reply is exactly the JSON object \u{2014} its first character \
-             is { and its last character is }. No code fence, no commentary, \
+             is { and its last character is }. No markdown wrapping, no commentary, \
              no trailing characters."
         }
     };
