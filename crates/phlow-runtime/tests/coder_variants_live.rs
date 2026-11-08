@@ -32,6 +32,13 @@
 //! the exact coder prompt + closing strings per config to
 //! `CODER3_PROMPTS_OUT` before probing (the byte-check baseline for
 //! any adoption).
+//!
+//! Rung-3 outcome: no variant beat the canonical contract (canonical
+//! 20/20 run `ok`, tied with check-per-write and ahead on the
+//! exhaustion tie-break 4 vs 8; the pool is retired, its ids now
+//! panic at `from_id`). This harness stays as the seam a future
+//! coder pool branches from — from the canonical, never from a
+//! retired variant.
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -128,10 +135,7 @@ fn dump_coder3_probed_prompts() {
         "CODER3_PROMPTS_OUT",
         "/home/phaedrus/.local/share/pax/detach/coder3-probed-prompts.json",
     );
-    let ids = env_or(
-        "CODER3_PROMPT_IDS",
-        "canonical,check-per-write,coder-worked-example,strict-stop",
-    );
+    let ids = env_or("CODER3_PROMPT_IDS", "canonical");
     let mut configs = serde_json::Map::new();
     for id in ids.split(',').map(str::trim).filter(|id| !id.is_empty()) {
         let variant = ContractVariant::from_id(id);
