@@ -139,7 +139,10 @@ fn real_model_arms() {
         }
         results.push(json!({"task": id, "arms": arms}));
     }
-    std::fs::write(&out_path, serde_json::to_string_pretty(&results).expect("json"))
-        .expect("write results");
+    std::fs::write(
+        &out_path,
+        serde_json::to_string_pretty(&results).expect("json"),
+    )
+    .expect("write results");
     println!("results written to {out_path}");
 }
