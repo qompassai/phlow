@@ -20,7 +20,9 @@ pub const VENDORED_SYSTEM_PROMPT: &str = include_str!("../skills/system_prompt.m
 /// The three agent roles, in pipeline order.
 pub const ROLES: [&str; 3] = ["planner", "coder", "reviewer"];
 
-/// A contract variant for the planner or reviewer (D-1063).
+/// A contract variant for a role (D-1063; the coder gained its slot
+/// in D-1075 rung 2, so rung 3 can probe coder variants through the
+/// same plumbing).
 ///
 /// Variants are additive diffs against the canonical contract: the
 /// canonical suffix and closing instruction stay byte-identical as a
@@ -152,7 +154,26 @@ pub fn system_prompt_for_role_variant(role: &str, variant: ContractVariant) -> S
              name every file you will change or read; under Checks name the \
              exact test or command that proves the fix."
         }
-        "coder" => "Implement the plan using file tools, then explain changes. Fix check failures.",
+        // Anytime contract (D-1075 rung 2): the rung-1 anatomy showed
+        // coders dying mid write→check loop because the in-loop signal
+        // never said yes — every recorded flow_check was a named call
+        // whose aggregate came back "unverified", while the host's
+        // unnamed (all-checks) run on the same state returned "ok".
+        // The contract therefore names the unnamed call and phrases
+        // the stop rule on the aggregate status the result carries.
+        "coder" => {
+            "Implement the plan using file tools, then explain changes. Fix check failures. \
+             Work anytime: write the assigned target module first, as a complete candidate, \
+             before refining anything. Immediately after that first write, run flow_check \
+             with no name argument — an unnamed flow_check runs all the configured checks — \
+             and treat its result as your verification signal: when the flow_check result \
+             reports status \"ok\", stop working and reply with your summary. Only when the \
+             checks do not pass, use your remaining turns to improve the candidate, \
+             re-running the unnamed flow_check after each change. The configured checks \
+             are the only verification route: do not create your own test harness or \
+             scratch files (for example run_test.py or execute_test.sh) in the workspace — \
+             the tool surface has no delete, so any file you write stays as a change."
+        }
         // Verdict-first contract (D-1060): the reply is the verdict JSON;
         // inspection exists only to serve it. The serialization clause
         // was adopted from the rung-3 pool (D-1063): probed 10/10
@@ -179,20 +200,25 @@ pub fn system_prompt_for_role_variant(role: &str, variant: ContractVariant) -> S
     prompt
 }
 
-/// The instruction appended for a role's forced closing turn (D-1060/D-1061).
+/// The instruction appended for a role's forced closing turn
+/// (D-1060/D-1061; extended to the coder by D-1075 rung 2).
 ///
-/// When the planner or reviewer spends its whole iteration budget on tool
-/// calls and never emits its artifact as text, the runtime runs exactly one
-/// final turn with tools disabled and this instruction appended as a user
-/// message, demanding the artifact now. Only the planner and reviewer have
-/// a closing turn; asking for any other role is a programming error (the
-/// coder's contract is unchanged).
+/// When a role spends its whole iteration budget on tool calls and never
+/// emits its artifact as text, the runtime runs exactly one final turn
+/// with tools disabled and this instruction appended as a user message,
+/// demanding the artifact now. For the coder the artifact is a summary
+/// of the patch as it stands; the rung-1 anatomy showed 19 of 23
+/// budget-death runs already held a host-verified patch and lacked only
+/// that one text turn.
 pub fn closing_instruction_for_role(role: &str) -> &'static str {
-    assert!(
-        matches!(role, "planner" | "reviewer"),
-        "no closing turn for role: {role}"
-    );
+    assert!(ROLES.contains(&role), "no closing turn for role: {role}");
     match role {
+        "coder" => {
+            "Your iteration budget is exhausted and you have not returned a summary. \
+             Tools are disabled for this final turn. Reply now with a plain-text \
+             summary of the patch as it stands: the files you changed and what \
+             the checks last reported. Do not call any tool."
+        }
         "planner" => {
             "Your iteration budget is exhausted and you have not returned a plan. \
              Tools are disabled for this final turn. Reply now with the concrete \
@@ -497,7 +523,8 @@ mod tests {
         let reviewer = system_prompt_for_role("reviewer");
         assert!(reviewer.contains("Your reply is the verdict: exactly JSON:"));
         assert!(reviewer.contains("inspection serves the verdict, never replaces it"));
-        // The coder contract is unchanged by D-1060/D-1061.
+        // The coder contract is unchanged by D-1060/D-1061 (the
+        // anytime shape below was added later, by D-1075 rung 2).
         assert!(system_prompt_for_role("coder").contains(
             "Implement the plan using file tools, then explain changes. Fix check failures."
         ));
@@ -518,9 +545,33 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "no closing turn for role: coder")]
-    fn closing_instruction_rejects_the_coder() {
-        let _ = closing_instruction_for_role("coder");
+    fn anytime_coder_contract_names_the_unnamed_check_and_stop_rule() {
+        // D-1075 rung 2: the coder contract is anytime-shaped — target
+        // module first, unnamed (all-checks) flow_check immediately,
+        // stop on the aggregate status the result actually carries —
+        // and it states the scratch-file position (no delete tool).
+        let coder = system_prompt_for_role("coder");
+        assert!(coder.contains("write the assigned target module first"));
+        assert!(coder.contains("run flow_check with no name argument"));
+        assert!(coder.contains("reports status \"ok\", stop working"));
+        assert!(coder.contains("do not create your own test harness or scratch files"));
+        assert!(coder.contains("the tool surface has no delete"));
+    }
+
+    #[test]
+    fn closing_instruction_demands_the_coder_summary() {
+        // D-1075 rung 2: the coder's closing artifact is a summary of
+        // the patch as it stands, demanded tools-off like the others.
+        let coder = closing_instruction_for_role("coder");
+        assert!(coder.contains("summary of the patch as it stands"));
+        assert!(coder.contains("Tools are disabled for this final turn"));
+        assert!(coder.contains("Do not call any tool"));
+    }
+
+    #[test]
+    #[should_panic(expected = "no closing turn for role: nobody")]
+    fn closing_instruction_rejects_unknown_roles() {
+        let _ = closing_instruction_for_role("nobody");
     }
 
     #[test]
@@ -533,7 +584,7 @@ mod tests {
                 system_prompt_for_role(role)
             );
         }
-        for role in ["planner", "reviewer"] {
+        for role in ROLES {
             assert_eq!(
                 closing_instruction_for_role_variant(role, ContractVariant::Canonical),
                 closing_instruction_for_role(role)
