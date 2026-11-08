@@ -1833,6 +1833,7 @@ dependencies = [
  "ed25519-dalek",
  "ml-dsa",
  "percent-encoding",
+ "phlow-a2a",
  "phlow-agent",
  "phlow-approval",
  "phlow-cli",

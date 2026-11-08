@@ -42,6 +42,10 @@ phlow-json = { version = "0.1.0", path = "../phlow-json" }
 # (solpi::context_compact::evaluate_compaction). Path dependency, same
 # workspace.
 phlow-agent = { version = "0.1.0", path = "../phlow-agent" }
+# phlow-a2a: the real A2A boundary under test for task-88, redesigned
+# by D-1059 from an absence probe into a presence audit (registry,
+# store, loopback server, client). Path dependency, same workspace.
+phlow-a2a = { version = "0.1.0", path = "../phlow-a2a" }
 # phlow-tuios: the real hook subprocess fan-out under test for task-47
 # (hooks::HookManager + counting semaphores) and the real mailbox ring
 # under test for task-50 (mailbox::Mailbox). Path dependency, same
