@@ -64,7 +64,7 @@ pub struct Cli {
     #[arg(long, global = true, allow_negative_numbers = true, value_parser = parse_python_float)]
     pub editor_timeout: Option<f64>,
 
-    /// Print `Phlow 0.2.0` and exit. Root-only, like Python's version action.
+    /// Print `Phlow 0.2.2` and exit. Root-only, like Python's version action.
     #[arg(long, action = ArgAction::SetTrue)]
     pub version: bool,
 

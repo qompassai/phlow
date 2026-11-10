@@ -48,7 +48,7 @@ pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 /// clients, even though the repository is now named `phlow`.
 pub const SERVER_NAME: &str = "flow";
 /// Server version reported in `serverInfo`.
-pub const SERVER_VERSION: &str = "0.2.0";
+pub const SERVER_VERSION: &str = "0.2.2";
 /// Instructions reported on discover.
 pub const INSTRUCTIONS: &str = "Trusted workspace named checks only. Missing checks never verify.";
 

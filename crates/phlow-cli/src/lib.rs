@@ -47,7 +47,7 @@ use wiring::CliRuntime;
 /// Version string. The legacy Python tree prints `Flow {flow.__version__}`;
 /// the Rust product is `Phlow {VERSION}` — the differential test that pinned
 /// the two together was removed when the products diverged (see tests/cli.rs).
-pub const VERSION: &str = "0.2.0";
+pub const VERSION: &str = "0.2.2";
 
 /// Run the CLI to completion and return the process exit code.
 ///
@@ -296,7 +296,7 @@ mod tests {
             format!("Phlow {}", python_version.trim()),
             format!("Phlow {VERSION}")
         );
-        assert_eq!(VERSION, "0.2.0");
+        assert_eq!(VERSION, "0.2.2");
     }
 
     #[test]

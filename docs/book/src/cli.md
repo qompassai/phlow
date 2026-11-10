@@ -29,7 +29,7 @@ after** the subcommand, exactly like argparse's `parents=[common]`.
 
 Notes that bite:
 
-- `--version` prints `Phlow 0.2.0` and exits 0. It is root-only:
+- `--version` prints `Phlow 0.2.2` and exits 0. It is root-only:
   `phlow run --version` is a usage error (exit 2), like argparse.
 - `check --name X` wins over a positional name (`args.check_name or
   args.name`).

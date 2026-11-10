@@ -120,7 +120,7 @@ is needed — it is documented below but not pursued first.
 3. Submit a manifest to `microsoft/winget-pkgs`
    (`qompassai.phlow`, version, installer URL + SHA256, `winget install
    qompassai.phlow`).
-4. Verify on a clean Windows VM: `phlow --version` prints `Phlow 0.2.0`,
+4. Verify on a clean Windows VM: `phlow --version` prints `Phlow 0.2.2`,
    `phlow status` prints one JSON line.
 
 WiX route (if ever needed): `cargo wix` on the same release build,

@@ -15,7 +15,7 @@ edition = "2024"
 # becomes `global = true`), subcommand help, exit code 2 on usage errors.
 # Derive is chosen over the builder API so flag wiring is compile-checked;
 # `--version` is a manual flag because the required string is exactly
-# "Phlow 0.2.0", not clap's "{bin} {version}" rendering.
+# "Phlow 0.2.2", not clap's "{bin} {version}" rendering.
 clap = { version = "4", features = ["derive"] }
 # serde_json: report values; serialization itself goes through
 # phlow_tools::python_json_dumps for byte-parity with Python's json.dumps.

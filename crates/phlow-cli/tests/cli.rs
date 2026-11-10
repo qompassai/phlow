@@ -34,10 +34,10 @@ fn stdout_lines(output: &std::process::Output) -> Vec<String> {
 // --- version / usage ------------------------------------------------------
 
 #[test]
-fn version_prints_phlow_0_2_0_and_exits_0() {
+fn version_prints_phlow_0_2_2_and_exits_0() {
     let output = phlow().arg("--version").output().expect("spawn phlow");
     assert!(output.status.success());
-    assert_eq!(output.stdout, b"Phlow 0.2.0\n");
+    assert_eq!(output.stdout, b"Phlow 0.2.2\n");
 }
 
 #[test]

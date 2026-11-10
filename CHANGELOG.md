@@ -154,6 +154,23 @@ All notable changes to phlow are documented here. Format follows
   exist, the `phlow/` location wins. Decision recorded in
   `docs/decisions.md`.
 
+## [0.2.2] - 2026-11-10
+
+### Fixed
+
+- Release version identity: the binary and the MCP server now report
+  the release they ship in. Through v0.2.1 the version strings were
+  hardcoded constants stuck at `0.2.0` (`phlow-cli`'s `VERSION`,
+  `phlow-mcp`'s `SERVER_VERSION`), and v0.2.1 was a designation-only
+  bump — its tag changed only `server.json`, and its bundled binary
+  was byte-identical to v0.2.0's. v0.2.2 bumps both constants and
+  their asserting tests, sets the `phlow-mcp` package version to
+  0.2.2, and ships a freshly built `.mcpb` whose binary reports
+  `Phlow 0.2.2` and `serverInfo.version` `0.2.2` (D-1241). Cut from
+  main at the D-1076 verdict-retry tip plus this change; the feature
+  entries under [Unreleased] ride along in the binary and stay
+  documented there until the next feature release.
+
 ## [2026-09-28] — tuios session/inbox integration
 
 ### Added
