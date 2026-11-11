@@ -16,6 +16,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod cue;
 pub mod disabled;
 pub mod pin;
 pub mod run_contract;
