@@ -24,6 +24,19 @@ pub enum SelfImproveError {
     Workspace(phlow_workspace::WorkspaceError),
     /// Automatic prompt evolution was requested; it is disabled.
     EvolutionDisabled,
+    /// An outcome row already exists for this run id; runs leave
+    /// exactly one row (PH-1).
+    OutcomeDuplicate {
+        /// The run that already has a row.
+        run_id: String,
+    },
+    /// An outcome row failed validation and was refused (PH-1/PH-K3).
+    OutcomeInvalid {
+        /// Which field was refused.
+        field: &'static str,
+        /// Why it was refused.
+        reason: String,
+    },
     /// A skill mutation was requested; automatic mutation is disabled.
     SkillMutationDisabled,
     /// A Git mutation was requested; automatic Git mutation is disabled.
@@ -46,6 +59,12 @@ impl fmt::Display for SelfImproveError {
                 f,
                 "Automatic prompt evolution and implicit Git commits are disabled. Review and edit operator-owned prompts manually."
             ),
+            SelfImproveError::OutcomeDuplicate { run_id } => {
+                write!(f, "run {run_id} already has an outcome row")
+            }
+            SelfImproveError::OutcomeInvalid { field, reason } => {
+                write!(f, "outcome field {field} refused: {reason}")
+            }
             SelfImproveError::SkillMutationDisabled => {
                 write!(f, "Automatic skill mutation is disabled; edit manually")
             }

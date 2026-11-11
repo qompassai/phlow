@@ -153,6 +153,13 @@ fn dispatch(cli: &Cli) -> Result<i32, String> {
     // used for filesystem access.
     let workspace_root = config.workspace_dir().to_string_lossy().into_owned();
     let trusted = config.trusted();
+    // PH-1: the outcome store lives beside the operator config (the
+    // feedback store's home). Captured before `config` moves into the
+    // runtime. With no config file there is no phlow home to record
+    // into, so recording stays off — a deliberate, documented absence.
+    let outcome_db_path = config
+        .config_path()
+        .and_then(|path| path.parent().map(|dir| dir.join("feedback.db")));
 
     let llm_transport = ReqwestTransport::new().map_err(|error| error.to_string())?;
     // Python builds no editor transport without --nvim; the msgpack worker
@@ -169,6 +176,12 @@ fn dispatch(cli: &Cli) -> Result<i32, String> {
         runtime
             .set_editor_timeout(timeout)
             .map_err(|error| error.to_string())?;
+    }
+    // PH-1: every production run through this runtime — CLI, TUI, and
+    // the MCP server all dispatch here — appends exactly one outcome
+    // row when it finishes.
+    if let Some(db_path) = outcome_db_path {
+        runtime.set_outcome_db(db_path);
     }
     // The joint-attention gate over one process-wide board. `serve`
     // hands the same board to the MCP server, so foci published through

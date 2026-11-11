@@ -1,5 +1,6 @@
-//! Self-improvement surfaces: the SQLite feedback store, the disabled
-//! prompt evolver, and the read-only skill store.
+//! Self-improvement surfaces: the SQLite feedback store, the
+//! append-only per-run outcome record ([`outcome`], PH-1), the
+//! disabled prompt evolver, and the read-only skill store.
 //!
 //! Nothing here mutates prompts, skills, or Git history automatically.
 //! Feedback is recorded for operator review; evolution and mutation always
@@ -19,10 +20,12 @@
 
 pub mod error;
 pub mod feedback;
+pub mod outcome;
 pub mod prompt_evolver;
 pub mod skill_store;
 
 pub use error::SelfImproveError;
 pub use feedback::{FeedbackEntry, FeedbackStore};
+pub use outcome::{OutcomeStore, RecordedOutcome, RunOutcome, VerificationStrength};
 pub use prompt_evolver::PromptEvolver;
 pub use skill_store::SkillStore;

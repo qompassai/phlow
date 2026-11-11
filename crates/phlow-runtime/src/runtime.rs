@@ -19,8 +19,9 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use phlow_checks::{CheckPins, CheckReport, CheckRunner, RunAllReport, pin_checks};
 use phlow_config::{FlowConfig, ModelRole};
@@ -561,6 +562,12 @@ pub struct Runtime<L: LlmTransport, E: EditorTransport> {
     /// Run-scoped cycle cap from the utility pre-gate (mid route
     /// without a cheap model). Same lifetime as `run_model_override`.
     run_max_cycles: Option<u32>,
+    /// Feedback-store path for the per-run outcome record (PH-1), set
+    /// by the embedder via [`Runtime::set_outcome_db`]. `None` (the
+    /// default) records nothing: library embedders choose their store,
+    /// while the CLI/MCP wiring always sets it, so every production
+    /// run leaves exactly one append-only outcome row.
+    outcome_db: Option<PathBuf>,
     /// Best-of-k candidate count for the first coder cycle, set by the
     /// embedder via [`Runtime::set_best_of_k`]. `1` (the default) is the
     /// current single-sample behaviour, byte-for-byte.
@@ -625,6 +632,7 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
             intake_admission: None,
             run_model_override: None,
             run_max_cycles: None,
+            outcome_db: None,
             best_of_k: 1,
             planner_contract_variant: ContractVariant::Canonical,
             reviewer_contract_variant: ContractVariant::Canonical,
@@ -2364,6 +2372,7 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
             Err(_) => return error_report("Runtime busy: single writer"),
         };
         let mut report = new_report(task);
+        let run_started = Instant::now();
         match self.run_inner(task, &mut report) {
             Ok(()) => {}
             Err(error) => {
@@ -2389,7 +2398,56 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
             );
         }
         self.last_report = Some(Value::Object(last));
+        self.record_run_outcome(&mut report, run_started);
         report
+    }
+
+    /// Set the feedback-store path for the per-run outcome record
+    /// (PH-1). Every later [`Runtime::run`] appends exactly one
+    /// outcome row to that store when the run finishes — including
+    /// runs that end in `error` — written by this runtime code, never
+    /// by the model. Recording failure is surfaced on the report as
+    /// `outcome_error`; it never rewrites the run's own verdict.
+    pub fn set_outcome_db(&mut self, path: PathBuf) {
+        self.outcome_db = Some(path);
+    }
+
+    /// The configured outcome-store path, if any.
+    pub fn outcome_db(&self) -> Option<&Path> {
+        self.outcome_db.as_deref()
+    }
+
+    /// Append this run's outcome row (PH-1). No-op when no store is
+    /// configured. The run id is minted here, by the runtime:
+    /// `run-<pid>-<unix-nanos>-<counter>` — unique per process and
+    /// across processes without coordination.
+    fn record_run_outcome(&mut self, report: &mut Value, started: Instant) {
+        static RUN_COUNTER: AtomicU64 = AtomicU64::new(0);
+        let Some(db_path) = self.outcome_db.clone() else {
+            return;
+        };
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let run_id = format!(
+            "run-{}-{nanos}-{}",
+            std::process::id(),
+            RUN_COUNTER.fetch_add(1, Ordering::SeqCst)
+        );
+        let wall_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let outcome =
+            phlow_self_improve::RunOutcome::from_report(&run_id, "flow_run", report, wall_ms);
+        match phlow_self_improve::OutcomeStore::open(&db_path)
+            .and_then(|store| store.record(&outcome))
+        {
+            Ok(_) => {
+                report_mut::set(report, "outcome_run_id", Value::String(run_id));
+            }
+            Err(error) => {
+                report_mut::set(report, "outcome_error", Value::String(error.to_string()));
+            }
+        }
     }
 
     /// The fallible body of [`Runtime::run`].
