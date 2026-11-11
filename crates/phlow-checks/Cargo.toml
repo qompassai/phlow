@@ -19,6 +19,10 @@ rustix = { version = "1", features = ["process"] }
 # sha2: SHA-256 executable pins taken at admission and re-verified before
 # every spawn. RustCrypto; already locked for phlow-runtime (no new crate).
 sha2 = { version = "0.10" }
+# serde_json: the run-contract and cue records (run.json, done.json, cue
+# files) are small JSON documents, parsed strictly and bounded on read.
+# Already locked for phlow-runtime and phlow-self-improve (no new crate).
+serde_json = "1"
 
 # phlow-seccomp: the Linux egress filter installed in every check child
 # (socket(AF_INET/AF_INET6) and io_uring_setup -> EPERM). Its one unsafe
