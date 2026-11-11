@@ -5,6 +5,7 @@ host-enforced verification gate. Ollama is the default backend. CLI, terminal UI
 and the MCP server share **one safe runtime**; none uses the old unrestricted shell
 or auto-loaded plugin path.
 <a href="./LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License: Apache 2.0"></a>
+<a href="https://registry.modelcontextprotocol.io/v0/servers/ai.qompass%2Fphlow/versions"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fregistry.modelcontextprotocol.io%2Fv0%2Fservers%2Fai.qompass%252Fphlow%2Fversions&query=%24.servers%5B0%5D.server.version&label=MCP%20Registry" alt="MCP Registry"></a>
 
 Flow can work alone or bidirectionally with [Rose](https://github.com/qompassai/rose.nvim):
 Rose calls Flow over MCP stdio; Flow calls Rose's native editor tools over a private
