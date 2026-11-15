@@ -22,9 +22,9 @@ use phlow_config::{FlowConfig, LoadOptions, load_config};
 use phlow_editor::{EditorTransport, SCHEMAS_LUA, TransportError};
 use phlow_llm::{LlmError, LlmTransport};
 use phlow_runtime::Runtime;
+use phlow_self_improve::OutcomeStore;
 use phlow_self_improve::divergence::{DivergenceStore, PlanDivergence};
 use phlow_self_improve::lessons::LessonStore;
-use phlow_self_improve::OutcomeStore;
 use serde_json::{Map, Value, json};
 
 fn testdir(name: &str) -> PathBuf {
@@ -275,7 +275,8 @@ fn planner_gets_the_card_as_context_and_the_prompt_never_changes() {
     let control_user: Value =
         serde_json::from_str(control.planner_user.as_deref().unwrap()).unwrap();
     assert_eq!(control_user["context"], json!({}));
-    let card_user: Value = serde_json::from_str(with_card.planner_user.as_deref().unwrap()).unwrap();
+    let card_user: Value =
+        serde_json::from_str(with_card.planner_user.as_deref().unwrap()).unwrap();
     let lessons_text = card_user["context"]["lessons"].as_str().unwrap();
     assert!(lessons_text.contains("lesson card v1"));
     assert!(lessons_text.contains("src/a.rs"));

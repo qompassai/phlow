@@ -182,9 +182,9 @@ fn run(command: &Command) -> Result<String, String> {
             let mut sections = Vec::new();
             let mut queued = Vec::new();
             for cluster in clusters {
-                let validation = validate.get(&cluster.check_name).map(|(escaped, fixed)| {
-                    validate_check(&cluster.check_argv, escaped, fixed)
-                });
+                let validation = validate
+                    .get(&cluster.check_name)
+                    .map(|(escaped, fixed)| validate_check(&cluster.check_argv, escaped, fixed));
                 let queue_state = match &validation {
                     Some(validation) if validation.gate_holds => {
                         let record = queue_check_proposal(&mut queue, &cluster, validation)

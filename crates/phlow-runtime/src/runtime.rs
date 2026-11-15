@@ -2458,12 +2458,8 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
             .task_class()
             .unwrap_or("flow_run")
             .to_owned();
-        let outcome = phlow_self_improve::RunOutcome::from_report(
-            &run_id,
-            &task_class,
-            report,
-            wall_ms,
-        );
+        let outcome =
+            phlow_self_improve::RunOutcome::from_report(&run_id, &task_class, report, wall_ms);
         match phlow_self_improve::OutcomeStore::open(&db_path)
             .and_then(|store| store.record(&outcome))
         {

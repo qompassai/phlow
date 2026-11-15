@@ -176,17 +176,12 @@ impl EscapeStore {
                 "the escaped run recorded no checks; nothing was escaped from",
             ));
         }
-        if let Some(caught) = checks.iter().find(|check| {
-            check.get("status").and_then(|v| v.as_str()) != Some("ok")
-        }) {
-            let name = caught
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("?");
-            let status = caught
-                .get("status")
-                .and_then(|v| v.as_str())
-                .unwrap_or("?");
+        if let Some(caught) = checks
+            .iter()
+            .find(|check| check.get("status").and_then(|v| v.as_str()) != Some("ok"))
+        {
+            let name = caught.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+            let status = caught.get("status").and_then(|v| v.as_str()).unwrap_or("?");
             return Err(invalid(
                 "checks_json",
                 &format!(
@@ -276,9 +271,7 @@ fn validate_escape(escape: &Escape) -> Result<(), SelfImproveError> {
         ESCAPE_CHECK_NAME_CHARS_MAX,
     )
     .map_err(|_| invalid("check_name", "exceeds ESCAPE_CHECK_NAME_CHARS_MAX"))?;
-    if escape.check_name.trim().is_empty()
-        || escape.check_name.chars().any(char::is_control)
-    {
+    if escape.check_name.trim().is_empty() || escape.check_name.chars().any(char::is_control) {
         return Err(invalid(
             "check_name",
             "must be non-empty and free of control characters",
@@ -442,11 +435,7 @@ pub struct CheckValidation {
 /// working directory. Each run is bounded by
 /// [`CHECK_VALIDATION_TIMEOUT`]; a run past the deadline is killed
 /// and reported, never left behind.
-pub fn validate_check(
-    argv: &[String],
-    escaped_dir: &Path,
-    fixed_dir: &Path,
-) -> CheckValidation {
+pub fn validate_check(argv: &[String], escaped_dir: &Path, fixed_dir: &Path) -> CheckValidation {
     let escaped = run_bounded(argv, escaped_dir);
     let fixed = run_bounded(argv, fixed_dir);
     let (escaped_exit, escaped_error) = match escaped {
@@ -728,7 +717,9 @@ mod tests {
             &dir,
             "[{\"name\":\"tests\",\"status\":\"ok\"},{\"name\":\"lint\",\"status\":\"ok\"}]",
         );
-        escapes.record(&outcomes, &escape("esc-1", "run-1")).unwrap();
+        escapes
+            .record(&outcomes, &escape("esc-1", "run-1"))
+            .unwrap();
         let rows = escapes.list(10).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].task_class, "code_fix");
@@ -761,7 +752,11 @@ mod tests {
         // Adversarial: no checks at all, and an unknown run.
         let dir = temp_dir("empty");
         let (outcomes, escapes) = seeded(&dir, "[]");
-        assert!(escapes.record(&outcomes, &escape("esc-3", "run-1")).is_err());
+        assert!(
+            escapes
+                .record(&outcomes, &escape("esc-3", "run-1"))
+                .is_err()
+        );
         assert!(matches!(
             escapes.record(&outcomes, &escape("esc-4", "run-ghost")),
             Err(SelfImproveError::EscapeInvalid {
@@ -776,14 +771,23 @@ mod tests {
     fn escapes_are_append_only() {
         let dir = temp_dir("appendonly");
         let (outcomes, escapes) = seeded(&dir, "[{\"name\":\"t\",\"status\":\"ok\"}]");
-        escapes.record(&outcomes, &escape("esc-1", "run-1")).unwrap();
+        escapes
+            .record(&outcomes, &escape("esc-1", "run-1"))
+            .unwrap();
         let other = Connection::open(dir.join("feedback.db")).unwrap();
-        assert!(other
-            .execute("UPDATE escapes SET defect = 'rewritten' WHERE escape_id = 'esc-1'", [])
-            .is_err());
-        assert!(other
-            .execute("DELETE FROM escapes WHERE escape_id = 'esc-1'", [])
-            .is_err());
+        assert!(
+            other
+                .execute(
+                    "UPDATE escapes SET defect = 'rewritten' WHERE escape_id = 'esc-1'",
+                    []
+                )
+                .is_err()
+        );
+        assert!(
+            other
+                .execute("DELETE FROM escapes WHERE escape_id = 'esc-1'", [])
+                .is_err()
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -791,8 +795,12 @@ mod tests {
     fn clustering_groups_by_check_and_counts_argv_variants() {
         let dir = temp_dir("cluster");
         let (outcomes, escapes) = seeded(&dir, "[{\"name\":\"t\",\"status\":\"ok\"}]");
-        outcomes.record(&outcome("run-2", "[{\"name\":\"t\",\"status\":\"ok\"}]")).unwrap();
-        escapes.record(&outcomes, &escape("esc-1", "run-1")).unwrap();
+        outcomes
+            .record(&outcome("run-2", "[{\"name\":\"t\",\"status\":\"ok\"}]"))
+            .unwrap();
+        escapes
+            .record(&outcomes, &escape("esc-1", "run-1"))
+            .unwrap();
         let mut second = escape("esc-2", "run-2");
         second.check_argv = vec!["grep".to_owned(), "-q".to_owned(), "65507|1".to_owned()];
         escapes.record(&outcomes, &second).unwrap();
@@ -827,11 +835,8 @@ mod tests {
         let validation = validate_check(&argv, &escaped, &fixed);
         assert!(!validation.gate_holds);
         // A missing program is an error, never a pass.
-        let validation = validate_check(
-            &vec!["phlow-no-such-program".to_owned()],
-            &escaped,
-            &fixed,
-        );
+        let validation =
+            validate_check(&vec!["phlow-no-such-program".to_owned()], &escaped, &fixed);
         assert!(!validation.gate_holds);
         assert!(validation.error.is_some());
         let _ = std::fs::remove_dir_all(&dir);

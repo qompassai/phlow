@@ -136,18 +136,32 @@ fn divergence_records_and_lesson_cards_are_append_only() {
     let lessons = LessonStore::open(&db).unwrap();
     lessons.build_card(&divergences, "code_fix").unwrap();
     let other = rusqlite::Connection::open(&db).unwrap();
-    assert!(other
-        .execute("UPDATE plan_divergences SET repair_cycles = 9 WHERE run_id = 'run-1'", [])
-        .is_err());
-    assert!(other
-        .execute("DELETE FROM plan_divergences WHERE run_id = 'run-1'", [])
-        .is_err());
-    assert!(other
-        .execute("UPDATE lesson_cards SET version = 9 WHERE task_class = 'code_fix'", [])
-        .is_err());
-    assert!(other
-        .execute("DELETE FROM lesson_cards WHERE task_class = 'code_fix'", [])
-        .is_err());
+    assert!(
+        other
+            .execute(
+                "UPDATE plan_divergences SET repair_cycles = 9 WHERE run_id = 'run-1'",
+                []
+            )
+            .is_err()
+    );
+    assert!(
+        other
+            .execute("DELETE FROM plan_divergences WHERE run_id = 'run-1'", [])
+            .is_err()
+    );
+    assert!(
+        other
+            .execute(
+                "UPDATE lesson_cards SET version = 9 WHERE task_class = 'code_fix'",
+                []
+            )
+            .is_err()
+    );
+    assert!(
+        other
+            .execute("DELETE FROM lesson_cards WHERE task_class = 'code_fix'", [])
+            .is_err()
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -204,12 +218,19 @@ fn escapes_are_append_only_and_require_a_clean_run() {
     escape.run_id = "run-clean".to_owned();
     escapes.record(&outcomes, &escape).unwrap();
     let other = rusqlite::Connection::open(&db).unwrap();
-    assert!(other
-        .execute("UPDATE escapes SET defect = 'rewritten' WHERE escape_id = 'esc-1'", [])
-        .is_err());
-    assert!(other
-        .execute("DELETE FROM escapes WHERE escape_id = 'esc-1'", [])
-        .is_err());
+    assert!(
+        other
+            .execute(
+                "UPDATE escapes SET defect = 'rewritten' WHERE escape_id = 'esc-1'",
+                []
+            )
+            .is_err()
+    );
+    assert!(
+        other
+            .execute("DELETE FROM escapes WHERE escape_id = 'esc-1'", [])
+            .is_err()
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -282,11 +303,19 @@ fn a_check_proposal_never_admits_itself() {
     // A non-operator cannot decide it; a reserved actor name
     // cannot decide it; the loop itself holds no decision path.
     assert!(matches!(
-        queue.decide(&record.id, phlow_approval::HumanVerdict::Approve, Some("mallory")),
+        queue.decide(
+            &record.id,
+            phlow_approval::HumanVerdict::Approve,
+            Some("mallory")
+        ),
         Err(phlow_approval::Error::ActorRefused)
     ));
     assert!(matches!(
-        queue.decide(&record.id, phlow_approval::HumanVerdict::Approve, Some("phlow")),
+        queue.decide(
+            &record.id,
+            phlow_approval::HumanVerdict::Approve,
+            Some("phlow")
+        ),
         Err(phlow_approval::Error::ActorRefused)
     ));
     assert!(matches!(

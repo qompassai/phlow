@@ -173,10 +173,7 @@ pub fn derive_divergence(
         .take(DIVERGENCE_FILES_MAX)
         .cloned()
         .collect();
-    let cycles = report
-        .get("cycles")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
+    let cycles = report.get("cycles").and_then(|v| v.as_u64()).unwrap_or(0);
     PlanDivergence {
         run_id: run_id.to_owned(),
         task_class: task_class.to_owned(),
@@ -389,7 +386,10 @@ impl DivergenceStore {
         // it exists so a future cap change fails loudly, not silently.
         for json in [&skipped_json, &untouched_json, &added_json] {
             if json.len() > DIVERGENCE_JSON_BYTES_MAX {
-                return Err(invalid("divergence_json", "exceeds DIVERGENCE_JSON_BYTES_MAX"));
+                return Err(invalid(
+                    "divergence_json",
+                    "exceeds DIVERGENCE_JSON_BYTES_MAX",
+                ));
             }
         }
         match self.connection.execute(
@@ -675,15 +675,19 @@ mod tests {
         ));
         // Even a second, independent connection cannot rewrite it.
         let other = Connection::open(&db).unwrap();
-        assert!(other
-            .execute(
-                "UPDATE plan_divergences SET repair_cycles = 0 WHERE run_id = 'run-1'",
-                []
-            )
-            .is_err());
-        assert!(other
-            .execute("DELETE FROM plan_divergences WHERE run_id = 'run-1'", [])
-            .is_err());
+        assert!(
+            other
+                .execute(
+                    "UPDATE plan_divergences SET repair_cycles = 0 WHERE run_id = 'run-1'",
+                    []
+                )
+                .is_err()
+        );
+        assert!(
+            other
+                .execute("DELETE FROM plan_divergences WHERE run_id = 'run-1'", [])
+                .is_err()
+        );
         let read = store.get("run-1").unwrap().unwrap();
         assert_eq!(read.divergence, d);
         assert_eq!(store.classes().unwrap(), vec!["code_fix".to_owned()]);
@@ -699,10 +703,7 @@ mod tests {
         store.record(&d).unwrap();
         let read = store.get("run-1").unwrap().unwrap();
         assert_eq!(read.divergence.origin_lane, UNKNOWN_ORIGIN_LANE);
-        assert_eq!(
-            read.divergence.content_label,
-            UNCLASSIFIED_CONTENT_LABEL
-        );
+        assert_eq!(read.divergence.content_label, UNCLASSIFIED_CONTENT_LABEL);
         cleanup(&db);
     }
 }

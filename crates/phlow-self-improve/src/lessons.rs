@@ -165,10 +165,7 @@ impl LessonStore {
             .newest_any(task_class)?
             .map(|card| card.version + 1)
             .unwrap_or(1);
-        let card = LessonCard {
-            version,
-            ..built
-        };
+        let card = LessonCard { version, ..built };
         let divergences_json = serde_json::Value::Array(
             card.divergences
                 .iter()
@@ -322,10 +319,7 @@ fn aggregate(task_class: &str, rows: &[RecordedDivergence]) -> LessonCard {
     // deterministic function of the run set.
     divergences.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.kind.cmp(&b.kind)));
     divergences.truncate(LESSON_DIVERGENCES_MAX);
-    let content_label = if rows
-        .iter()
-        .all(|row| row.divergence.content_label == "sfw")
-    {
+    let content_label = if rows.iter().all(|row| row.divergence.content_label == "sfw") {
         "sfw"
     } else {
         "nsfw"
@@ -516,7 +510,10 @@ mod tests {
         // is nsfw (fail-closed) and invisible to an sfw scope.
         let db = db_path("mixed");
         let (divergences, lessons) = seeded(&db, "code_fix", &["sfw", "nsfw"]);
-        let card = lessons.build_card(&divergences, "code_fix").unwrap().unwrap();
+        let card = lessons
+            .build_card(&divergences, "code_fix")
+            .unwrap()
+            .unwrap();
         assert_eq!(card.content_label, "nsfw");
         assert!(lessons.current_card("code_fix", "sfw").unwrap().is_none());
         assert!(lessons.current_card("code_fix", "nsfw").unwrap().is_some());
@@ -527,7 +524,10 @@ mod tests {
         // All-sfw sources: the card is sfw and visible to both.
         let db = db_path("sfw");
         let (divergences, lessons) = seeded(&db, "analysis", &["sfw", "sfw"]);
-        let card = lessons.build_card(&divergences, "analysis").unwrap().unwrap();
+        let card = lessons
+            .build_card(&divergences, "analysis")
+            .unwrap()
+            .unwrap();
         assert_eq!(card.content_label, "sfw");
         assert!(lessons.current_card("analysis", "sfw").unwrap().is_some());
         assert!(lessons.current_card("analysis", "nsfw").unwrap().is_some());
@@ -540,12 +540,19 @@ mod tests {
         let (divergences, lessons) = seeded(&db, "code_fix", &["nsfw"]);
         lessons.build_card(&divergences, "code_fix").unwrap();
         let other = Connection::open(&db).unwrap();
-        assert!(other
-            .execute("UPDATE lesson_cards SET version = 9 WHERE task_class = 'code_fix'", [])
-            .is_err());
-        assert!(other
-            .execute("DELETE FROM lesson_cards WHERE task_class = 'code_fix'", [])
-            .is_err());
+        assert!(
+            other
+                .execute(
+                    "UPDATE lesson_cards SET version = 9 WHERE task_class = 'code_fix'",
+                    []
+                )
+                .is_err()
+        );
+        assert!(
+            other
+                .execute("DELETE FROM lesson_cards WHERE task_class = 'code_fix'", [])
+                .is_err()
+        );
         cleanup(&db);
     }
 
@@ -553,7 +560,10 @@ mod tests {
     fn render_is_bounded_and_names_the_evidence() {
         let db = db_path("render");
         let (divergences, lessons) = seeded(&db, "code_fix", &["nsfw"]);
-        let card = lessons.build_card(&divergences, "code_fix").unwrap().unwrap();
+        let card = lessons
+            .build_card(&divergences, "code_fix")
+            .unwrap()
+            .unwrap();
         let text = render_card(&card);
         assert!(text.contains("task class \"code_fix\""));
         assert!(text.contains("lesson card v1"));
