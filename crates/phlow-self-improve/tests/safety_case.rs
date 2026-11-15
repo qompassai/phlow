@@ -9,12 +9,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use phlow_flowguard::label::{LabelSnapshot, ReaderSet};
 use phlow_self_improve::capture::CaptureStore;
+use phlow_self_improve::capture::LessonCapture;
 use phlow_self_improve::divergence::{DivergenceStore, PlanDivergence};
 use phlow_self_improve::escape::{
     Escape, EscapeStore, cluster_escapes, queue_check_proposal, validate_check,
 };
+use phlow_self_improve::export::{ExportScope, check_export_scope, export_outcomes, intake_object};
 use phlow_self_improve::lessons::LessonStore;
-use phlow_self_improve::outcome::{RunOutcome, VerificationStrength};
+use phlow_self_improve::outcome::{RecordedOutcome, RunOutcome, VerificationStrength};
 use phlow_self_improve::skill_trust::{SkillState, load_skill_rows, skill_evidence};
 use phlow_self_improve::{OutcomeStore, PromptEvolver, SelfImproveError, SkillStore};
 
@@ -537,5 +539,165 @@ fn skill_trust_recomputes_from_rows_and_one_factual_failure_demotes() {
     assert_eq!(state_of("steady"), Some(SkillState::Trusted));
     assert_eq!(state_of("fragile"), Some(SkillState::Demoted));
     assert_eq!(state_of("unproven"), Some(SkillState::Trusted));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn export_capture(run_id: &str, lane: &'static str, label: &'static str) -> LessonCapture {
+    LessonCapture {
+        run_id: run_id.to_owned(),
+        task_class: "code_fix".to_owned(),
+        result: "ok",
+        verification_strength: "tool_checked".to_owned(),
+        lesson_eligible: true,
+        origin_lane: lane,
+        content_label: label,
+        trajectory_audience: "none",
+        trajectory_readers: None,
+        trajectory_trust: None,
+        lesson_text: "digest".to_owned(),
+    }
+}
+
+#[test]
+fn export_never_defaults_a_lane_and_never_fabricates_asked() {
+    // PH-13: the export mapping refuses what it cannot honestly
+    // map — an unknown lane is never defaulted, a result outside
+    // BL-3's vocabulary is never renamed, and `asked` is never
+    // fabricated from the plan when the task text is absent.
+    let recorded = RecordedOutcome {
+        id: 1,
+        created_at: "2026-01-01T00:00:00.000000".to_owned(),
+        outcome: labelled_row("run-x", "ok", VerificationStrength::ToolChecked),
+    };
+    let unknown = export_capture("run-x", "unknown", "sfw");
+    let error = intake_object(&recorded, &unknown, "the task").unwrap_err();
+    assert!(
+        matches!(
+            error,
+            SelfImproveError::ExportInvalid {
+                field: "origin_lane",
+                ..
+            }
+        ),
+        "{error}"
+    );
+    let mut bad_result = export_capture("run-x", "general", "sfw");
+    bad_result.result = "passed";
+    let error = intake_object(&recorded, &bad_result, "the task").unwrap_err();
+    assert!(
+        matches!(
+            error,
+            SelfImproveError::ExportInvalid {
+                field: "result",
+                ..
+            }
+        ),
+        "{error}"
+    );
+    let good = export_capture("run-x", "general", "sfw");
+    let error = intake_object(&recorded, &good, "").unwrap_err();
+    assert!(
+        matches!(
+            error,
+            SelfImproveError::ExportInvalid { field: "asked", .. }
+        ),
+        "{error}"
+    );
+    // Batch level: a run with no PH-7 capture has no derivable
+    // lane and is refused by id; nothing reaches the target.
+    let dir = temp_dir("export-nocap");
+    let db = dir.join("feedback.db");
+    let outcomes = OutcomeStore::open(&db).unwrap();
+    outcomes
+        .record(&labelled_row(
+            "run-x",
+            "ok",
+            VerificationStrength::ToolChecked,
+        ))
+        .unwrap();
+    let target = dir.join("outcomes.jsonl");
+    let tasks = std::collections::HashMap::from([("run-x".to_owned(), "the task".to_owned())]);
+    let summary = export_outcomes(&db, &target, ExportScope::Unrestricted, &tasks).unwrap();
+    assert!(summary.exported.is_empty());
+    assert_eq!(summary.refused.len(), 1);
+    assert_eq!(summary.refused[0].0, "run-x");
+    assert!(!target.exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn export_refuses_nsfw_into_an_sfw_intake() {
+    // PH-13 lane law, export side: an nsfw-labelled record is
+    // never exported into an sfw-scoped intake — the refusal is
+    // typed, and at batch level the record simply never lands.
+    let restricted = export_capture("run-x", "restricted", "nsfw");
+    let error = check_export_scope(&restricted, ExportScope::SfwOnly).unwrap_err();
+    assert!(
+        matches!(error, SelfImproveError::ExportLaneRefused { .. }),
+        "{error}"
+    );
+    assert!(check_export_scope(&restricted, ExportScope::Unrestricted).is_ok());
+
+    let dir = temp_dir("export-lane");
+    let db = dir.join("feedback.db");
+    let outcomes = OutcomeStore::open(&db).unwrap();
+    let captures = CaptureStore::open(&db).unwrap();
+    outcomes
+        .record(&labelled_row(
+            "run-x",
+            "ok",
+            VerificationStrength::ToolChecked,
+        ))
+        .unwrap();
+    captures.capture(&outcomes, "run-x", None).unwrap();
+    let target = dir.join("outcomes.jsonl");
+    let tasks = std::collections::HashMap::from([("run-x".to_owned(), "the task".to_owned())]);
+    let summary = export_outcomes(&db, &target, ExportScope::SfwOnly, &tasks).unwrap();
+    assert!(summary.exported.is_empty());
+    assert_eq!(summary.refused.len(), 1);
+    assert!(
+        summary.refused[0].1.contains("sfw-scoped intake"),
+        "{summary:?}"
+    );
+    assert!(!target.exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn export_never_duplicates_a_run() {
+    // PH-13 dedupe: bloch's store appends without dedupe, so the
+    // stop lives here — the export ledger (append-only, like all
+    // run history) plus a scan of the target itself.
+    let dir = temp_dir("export-dedupe");
+    let db = dir.join("feedback.db");
+    let outcomes = OutcomeStore::open(&db).unwrap();
+    let captures = CaptureStore::open(&db).unwrap();
+    outcomes
+        .record(&labelled_row(
+            "run-x",
+            "ok",
+            VerificationStrength::ToolChecked,
+        ))
+        .unwrap();
+    let public = LabelSnapshot {
+        readers: ReaderSet::All,
+        trust: "operator".to_owned(),
+    };
+    captures.capture(&outcomes, "run-x", Some(&public)).unwrap();
+    let target = dir.join("outcomes.jsonl");
+    let tasks = std::collections::HashMap::from([("run-x".to_owned(), "the task".to_owned())]);
+    let first = export_outcomes(&db, &target, ExportScope::Unrestricted, &tasks).unwrap();
+    assert_eq!(first.exported, vec!["run-x"]);
+    let second = export_outcomes(&db, &target, ExportScope::Unrestricted, &tasks).unwrap();
+    assert!(second.exported.is_empty());
+    assert_eq!(second.already_exported, vec!["run-x"]);
+    assert_eq!(std::fs::read_to_string(&target).unwrap().lines().count(), 1);
+    // The ledger itself is append-only history.
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    assert!(
+        conn.execute("UPDATE outcome_exports SET target = 'elsewhere'", [])
+            .is_err()
+    );
+    assert!(conn.execute("DELETE FROM outcome_exports", []).is_err());
     let _ = std::fs::remove_dir_all(&dir);
 }

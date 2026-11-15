@@ -25,3 +25,10 @@ phlow-approval = { version = "0.1.0", path = "../phlow-approval" }
 # flowguard's own trajectory label type (LabelSnapshot). Types only —
 # no flowguard runtime, no policy evaluation.
 phlow-flowguard = { version = "0.1.0", path = "../phlow-flowguard" }
+
+[dev-dependencies]
+# bloch: PH-13's acceptance test links bloch's own BL-1 intake gate
+# (bloch::outcome) so a mapped row is proven against the real gate,
+# never a re-implementation. The package is `blochs`; its library
+# is `bloch`. Dev-only: no shipped phlow binary depends on it.
+bloch = { package = "blochs", version = "=1.0.0" }
