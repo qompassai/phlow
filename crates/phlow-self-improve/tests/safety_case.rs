@@ -7,7 +7,10 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use phlow_flowguard::label::{LabelSnapshot, ReaderSet};
+use phlow_self_improve::capture::CaptureStore;
 use phlow_self_improve::divergence::{DivergenceStore, PlanDivergence};
+use phlow_self_improve::skill_trust::{SkillState, load_skill_rows, skill_evidence};
 use phlow_self_improve::escape::{
     Escape, EscapeStore, cluster_escapes, queue_check_proposal, validate_check,
 };
@@ -353,5 +356,186 @@ fn nsfw_lessons_are_invisible_to_sfw_retrieval() {
     assert_eq!(card.content_label, "nsfw");
     assert!(lessons.current_card("code_fix", "sfw").unwrap().is_none());
     assert!(lessons.current_card("code_fix", "nsfw").unwrap().is_some());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn labelled_row(run_id: &str, status: &str, strength: VerificationStrength) -> RunOutcome {
+    RunOutcome {
+        run_id: run_id.to_owned(),
+        task_class: "code_fix".to_owned(),
+        plan: "plan".to_owned(),
+        checks_json: "[{\"name\":\"tests\",\"status\":\"ok\"}]".to_owned(),
+        reviewer_verdict: Some("approved".to_owned()),
+        cycles: 1,
+        tool_calls: 1,
+        model_calls: 1,
+        context_chars: None,
+        wall_ms: 1,
+        model_ids: Vec::new(),
+        skills: Vec::new(),
+        status: status.to_owned(),
+        verification_strength: strength,
+        // The row's own labels claim the general lane on purpose:
+        // PH-7 captures must ignore them.
+        origin_lane: "general".to_owned(),
+        content_label: "sfw".to_owned(),
+        evidence: "safety case".to_owned(),
+    }
+}
+
+#[test]
+fn capture_lane_comes_from_the_trajectory_never_the_row() {
+    // PH-7: the capture's lane labels are derived from flowguard's
+    // trajectory label inside the capture. The outcome row's own
+    // labels (here claiming general/sfw) never decide the lane,
+    // and there is no caller-asserted lane to supply.
+    let dir = temp_dir("capture-lane");
+    let db = dir.join("feedback.db");
+    let outcomes = OutcomeStore::open(&db).unwrap();
+    let captures = CaptureStore::open(&db).unwrap();
+    for run_id in ["run-public", "run-restricted", "run-none"] {
+        outcomes
+            .record(&labelled_row(
+                run_id,
+                "ok",
+                VerificationStrength::ToolChecked,
+            ))
+            .unwrap();
+    }
+    let public = LabelSnapshot {
+        readers: ReaderSet::All,
+        trust: "operator".to_owned(),
+    };
+    let restricted = LabelSnapshot {
+        readers: ReaderSet::Only(std::collections::BTreeSet::from([
+            "lane@example".to_owned()
+        ])),
+        trust: "operator".to_owned(),
+    };
+    let pub_cap = captures
+        .capture(&outcomes, "run-public", Some(&public))
+        .unwrap();
+    assert_eq!(pub_cap.capture.origin_lane, "general");
+    assert_eq!(pub_cap.capture.content_label, "sfw");
+    assert!(pub_cap.capture.lesson_eligible);
+    let res_cap = captures
+        .capture(&outcomes, "run-restricted", Some(&restricted))
+        .unwrap();
+    assert_eq!(res_cap.capture.origin_lane, "restricted");
+    assert_eq!(res_cap.capture.content_label, "nsfw");
+    // Reader identities are evidence shape only — never recorded.
+    assert_eq!(res_cap.capture.trajectory_readers, Some(1));
+    assert!(!res_cap.capture.lesson_text.contains("lane@example"));
+    // No trajectory at all fails closed to the restricted lane.
+    let none_cap = captures.capture(&outcomes, "run-none", None).unwrap();
+    assert_eq!(none_cap.capture.origin_lane, "restricted");
+    assert_eq!(none_cap.capture.content_label, "nsfw");
+    // And the nsfw captures are invisible — uncounted — to sfw.
+    let sfw_view = captures.list_visible("sfw", 10).unwrap();
+    assert_eq!(sfw_view.len(), 1);
+    assert_eq!(sfw_view[0].capture.run_id, "run-public");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn captures_are_append_only_and_refuse_unknown_runs() {
+    // PH-7 evidence discipline: a capture records only against a
+    // PH-1 outcome row, exactly once, and cannot be rewritten.
+    let dir = temp_dir("capture-append");
+    let db = dir.join("feedback.db");
+    let outcomes = OutcomeStore::open(&db).unwrap();
+    let captures = CaptureStore::open(&db).unwrap();
+    let ghost = captures.capture(&outcomes, "run-ghost", None);
+    assert!(matches!(
+        ghost,
+        Err(SelfImproveError::CaptureInvalid {
+            field: "run_id",
+            ..
+        })
+    ));
+    outcomes
+        .record(&labelled_row(
+            "run-once",
+            "ok",
+            VerificationStrength::ToolChecked,
+        ))
+        .unwrap();
+    captures.capture(&outcomes, "run-once", None).unwrap();
+    let dup = captures.capture(&outcomes, "run-once", None);
+    assert!(matches!(
+        dup,
+        Err(SelfImproveError::CaptureDuplicate { .. })
+    ));
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    assert!(
+        conn.execute("UPDATE lesson_captures SET result = 'failed'", [])
+            .is_err()
+    );
+    assert!(conn.execute("DELETE FROM lesson_captures", []).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn skill_trust_recomputes_from_rows_and_one_factual_failure_demotes() {
+    // PH-8: per-skill standing is recomputed from the run rows —
+    // the rows are the evidence. One verified (factual) failure
+    // demotes a skill outright; a merely self-reported failure
+    // never does.
+    let dir = temp_dir("skill-trust");
+    let db = dir.join("feedback.db");
+    let outcomes = OutcomeStore::open(&db).unwrap();
+    let mut record = |run_id: &str, status: &str, strength, skills: Vec<String>| {
+        let mut row = labelled_row(run_id, status, strength);
+        row.skills = skills;
+        outcomes.record(&row).unwrap();
+    };
+    for i in 0..5 {
+        record(
+            &format!("run-steady-{i}"),
+            "ok",
+            VerificationStrength::ToolChecked,
+            vec!["steady".to_owned()],
+        );
+    }
+    for i in 0..9 {
+        record(
+            &format!("run-fragile-{i}"),
+            "ok",
+            VerificationStrength::ToolChecked,
+            vec!["fragile".to_owned()],
+        );
+    }
+    record(
+        "run-fragile-bad",
+        "failed",
+        VerificationStrength::ToolChecked,
+        vec!["fragile".to_owned()],
+    );
+    for i in 0..9 {
+        record(
+            &format!("run-unproven-{i}"),
+            "ok",
+            VerificationStrength::ToolChecked,
+            vec!["unproven".to_owned()],
+        );
+    }
+    record(
+        "run-unproven-bad",
+        "failed",
+        VerificationStrength::SelfReported,
+        vec!["unproven".to_owned()],
+    );
+    let rows = load_skill_rows(&db).unwrap();
+    assert_eq!(rows.len(), 25);
+    let evidence = skill_evidence(&rows);
+    let state_of = |skill: &str| {
+        evidence
+            .iter()
+            .find(|item| item.skill == skill)
+            .map(|item| item.state)
+    };
+    assert_eq!(state_of("steady"), Some(SkillState::Trusted));
+    assert_eq!(state_of("fragile"), Some(SkillState::Demoted));
+    assert_eq!(state_of("unproven"), Some(SkillState::Trusted));
     let _ = std::fs::remove_dir_all(&dir);
 }

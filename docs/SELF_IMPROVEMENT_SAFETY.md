@@ -153,6 +153,68 @@ clustering, validation gate);
 state, non-operator and reserved-actor refusals, bystander
 config byte-identical).
 
+### 8. A lesson's lane comes from its trajectory, never its caller (PH-7)
+
+PH-7 captures a finished run as a lesson record for bloch. The
+lane law (labels from birth, fail-closed, nsfw invisible to sfw)
+is enforced structurally, not by caller discipline:
+
+- **Derived, never asserted.** The capture API takes no lane
+  parameter. The lane is derived inside the capture from the
+  run's flowguard trajectory label (`LabelSnapshot`): a public
+  trajectory (`ReaderSet::All`) captures `general`/`sfw`;
+  anything narrower — or no trajectory at all — fails closed to
+  `restricted`/`nsfw`. The outcome row's own labels are never
+  copied (runtime rows carry placeholders), and the snapshot's
+  trust rank is recorded as evidence only: the audience decides
+  the lane.
+- **Evidence-checked and append-only.** A capture records only
+  against a PH-1 outcome row, exactly once per run
+  (`CaptureInvalid` / `CaptureDuplicate` refusals), in a table
+  carrying the same UPDATE/DELETE triggers as run history.
+  Trajectory evidence is recorded as shape — audience class,
+  reader count, trust name — never reader identities.
+- **Eligibility is verification, not outcome.** A capture is
+  lesson-eligible exactly when the run's verification strength
+  reaches `tool_checked` (BL-2); failed and weakly verified runs
+  are still captured, marked ineligible — the capture log is the
+  audit trail, not only the lesson feed. Visibility follows the
+  lane law: an `nsfw` capture is invisible, and uncounted, to an
+  `sfw`-scoped listing.
+
+Tests: `capture::tests` (lane derivation per audience, refusal
+and duplicate, scope visibility, append-only);
+`safety_case::capture_lane_comes_from_the_trajectory_never_the_row`,
+`safety_case::captures_are_append_only_and_refuse_unknown_runs`.
+
+### 9. Skill trust is recomputed from rows, never asserted (PH-8)
+
+PH-8 records the skills a run loaded on its outcome row and
+recomputes per-skill standing from those rows — the same posture
+as PH-5's reviewer calibration:
+
+- **Rows are the evidence.** The recompute reads only outcome
+  rows (status, verification strength, recorded skills). A run
+  recorded before PH-8 carries no skills and counts for no skill;
+  nothing is backfilled and no surface's self-report is consulted.
+- **One factual failure demotes.** A failure is *factual* when the
+  run failed **and** its verification strength reached
+  `tool_checked` — the outcome was tool-checked, not merely
+  asserted. A single factual failure demotes the skill regardless
+  of successes; a self-reported failure never demotes, because an
+  unverified run cannot indict a skill. `abandoned` runs are
+  neither successes nor failures.
+- **Standing is a proposal.** Trusted requires at least 5 runs
+  and a Wilson 95% lower bound at or above 0.5 (named proposals:
+  `MIN_SKILL_RUNS`, `TRUST_FLOOR`). The report renders evidence
+  and edits nothing — no skill, config, or prompt changes path
+  exists here, per denials 1 and 4.
+
+Tests: `skill_trust::tests` (Wilson bounds, factual-failure
+demotion, self-reported non-demotion, provisional floor,
+pre-PH-8 loader); `outcome` skills round-trip and migration
+tests; `safety_case::skill_trust_recomputes_from_rows_and_one_factual_failure_demotes`.
+
 ## What is *not* a denial (and must not become one silently)
 
 - Recording outcomes and feedback is append-only writing by the
