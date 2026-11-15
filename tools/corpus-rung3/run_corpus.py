@@ -42,7 +42,11 @@ COURTESY_WAITS_MAX = 10
 COURTESY_WAIT_S = 60
 GPU_BUSY_PERCENT = 70
 ROSE_PS_URL = "http://127.0.0.1:11434/api/ps"
-PHLOW_BIN = "/home/phaedrus/.local/bin/phlow"
+# The corpus must run a phlow binary that carries PH-1 outcome
+# recording. The installed ~/.local/bin/phlow predates it (verified
+# 2026-11-15: no outcome strings, mtime Nov 10), so the caller passes
+# PHLOW_BIN pointing at a binary built from the landed tree.
+PHLOW_BIN = os.environ.get("PHLOW_BIN", "/home/phaedrus/.local/bin/phlow")
 FLEET_CHECKS = "/home/phaedrus/.local/share/pax/repos/phlow/tools/fleet-checks"
 SEAT_FREEZE = "/home/phaedrus/.config/phlow/freezes/torogao-ph10.tree.json"
 CORPUS_FREEZE = "/home/phaedrus/.config/phlow/freezes/torogao-corpus-rung3.tree.json"
@@ -398,7 +402,9 @@ def run_task(args, task, reviewer_models):
     with open(report_path, "r", encoding="utf-8") as handle:
         report = extract_report(handle.read())
     run_id = report.get("outcome_run_id") if report else None
-    if run_id is None or store_row(args, run_id) is None:
+    if not os.path.exists(store_path(args)):
+        run_id = None
+    elif run_id is None or store_row(args, run_id) is None:
         # Fall back to the newest row written during this run.
         connection = sqlite3.connect(f"file:{store_path(args)}?mode=ro", uri=True)
         try:

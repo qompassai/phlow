@@ -1,0 +1,172 @@
+{
+ "labels": [
+  {
+   "run_id": "run-2002163-1794734420056140033-0",
+   "task_class": "analysis",
+   "split": "fit",
+   "truth": "success",
+   "reviewer_model": "hf-granite-4.2-8b-tools-64k"
+  },
+  {
+   "run_id": "run-2008340-1794734508309227100-0",
+   "task_class": "analysis",
+   "split": "held_out",
+   "truth": "success",
+   "reviewer_model": "hf-gpt-oss-20b-tools-64k"
+  },
+  {
+   "run_id": "run-2010097-1794734566091846390-0",
+   "task_class": "analysis",
+   "split": "fit",
+   "truth": "success",
+   "reviewer_model": "hf-devstral-24b-tools-64k"
+  },
+  {
+   "run_id": "run-2011436-1794734676109551211-0",
+   "task_class": "analysis",
+   "split": "held_out",
+   "truth": "success",
+   "reviewer_model": "hf-granite-4.2-8b-tools-64k"
+  },
+  {
+   "run_id": "run-2013845-1794734764433645394-0",
+   "task_class": "analysis",
+   "split": "fit",
+   "truth": "success",
+   "reviewer_model": "hf-gpt-oss-20b-tools-64k"
+  },
+  {
+   "run_id": "run-2016181-1794734849047937089-0",
+   "task_class": "analysis",
+   "split": "held_out",
+   "truth": "success",
+   "reviewer_model": "hf-devstral-24b-tools-64k"
+  },
+  {
+   "run_id": "run-2018520-1794734992547271288-0",
+   "task_class": "analysis",
+   "split": "fit",
+   "truth": "success",
+   "reviewer_model": "hf-granite-4.2-8b-tools-64k"
+  },
+  {
+   "run_id": "run-2022881-1794735075404763001-0",
+   "task_class": "analysis",
+   "split": "held_out",
+   "truth": "success",
+   "reviewer_model": "hf-gpt-oss-20b-tools-64k"
+  },
+  {
+   "run_id": "run-2026390-1794735199587726722-0",
+   "task_class": "analysis",
+   "split": "fit",
+   "truth": "success",
+   "reviewer_model": "hf-devstral-24b-tools-64k"
+  },
+  {
+   "run_id": "run-2027672-1794735388654753801-0",
+   "task_class": "analysis",
+   "split": "held_out",
+   "truth": "success",
+   "reviewer_model": "hf-granite-4.2-8b-tools-64k"
+  },
+  {
+   "run_id": "run-2031478-1794735641227000504-0",
+   "task_class": "analysis",
+   "split": "fit",
+   "truth": "success",
+   "reviewer_model": "hf-gpt-oss-20b-tools-64k"
+  },
+  {
+   "run_id": "run-2038168-1794735787280190011-0",
+   "task_class": "analysis",
+   "split": "held_out",
+   "truth": "success",
+   "reviewer_model": "hf-devstral-24b-tools-64k"
+  },
+  {
+   "run_id": "run-2041177-1794737084894912173-0",
+   "task_class": "code_fix",
+   "split": "fit",
+   "truth": "success",
+   "reviewer_model": "hf-granite-4.2-8b-tools-64k"
+  },
+  {
+   "run_id": "run-2096571-1794737575833273620-0",
+   "task_class": "code_fix",
+   "split": "held_out",
+   "truth": "success",
+   "reviewer_model": "hf-gpt-oss-20b-tools-64k"
+  },
+  {
+   "run_id": "run-2113719-1794738421425422794-0",
+   "task_class": "code_fix",
+   "split": "fit",
+   "truth": "success",
+   "reviewer_model": "hf-devstral-24b-tools-64k"
+  },
+  {
+   "run_id": "run-2133665-1794739216256394589-0",
+   "task_class": "code_fix",
+   "split": "held_out",
+   "truth": "success",
+   "reviewer_model": "hf-granite-4.2-8b-tools-64k"
+  },
+  {
+   "run_id": "run-2150706-1794739919326098298-0",
+   "task_class": "code_fix",
+   "split": "fit",
+   "truth": "success",
+   "reviewer_model": "hf-gpt-oss-20b-tools-64k"
+  },
+  {
+   "run_id": "run-2168835-1794740704286371581-0",
+   "task_class": "code_fix",
+   "split": "held_out",
+   "truth": "success",
+   "reviewer_model": "hf-devstral-24b-tools-64k"
+  },
+  {
+   "run_id": "run-2183181-1794741531364125666-0",
+   "task_class": "code_fix",
+   "split": "fit",
+   "truth": "success",
+   "reviewer_model": "hf-granite-4.2-8b-tools-64k"
+  },
+  {
+   "run_id": "run-2197969-1794742335369807419-0",
+   "task_class": "code_fix",
+   "split": "held_out",
+   "truth": "success",
+   "reviewer_model": "hf-gpt-oss-20b-tools-64k"
+  },
+  {
+   "run_id": "run-2212737-1794743238336546743-0",
+   "task_class": "code_fix",
+   "split": "fit",
+   "truth": "failure",
+   "reviewer_model": "hf-devstral-24b-tools-64k"
+  },
+  {
+   "run_id": "run-2229474-1794743772953565242-0",
+   "task_class": "code_fix",
+   "split": "held_out",
+   "truth": "success",
+   "reviewer_model": "hf-granite-4.2-8b-tools-64k"
+  },
+  {
+   "run_id": "run-2239701-1794743919146994096-0",
+   "task_class": "code_fix",
+   "split": "fit",
+   "truth": "success",
+   "reviewer_model": "hf-gpt-oss-20b-tools-64k"
+  },
+  {
+   "run_id": "run-2243017-1794744944765682143-0",
+   "task_class": "code_fix",
+   "split": "held_out",
+   "truth": "success",
+   "reviewer_model": "hf-devstral-24b-tools-64k"
+  }
+ ]
+}
