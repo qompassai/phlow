@@ -76,6 +76,21 @@ fn assert_group_gone(pgid: u32) {
     panic!("process group {pgid} still has members after reaping");
 }
 
+/// Bounded probe for the tree being up, with the same hard 5 s cap
+/// as `assert_group_gone`: fork scheduling is not instantaneous on a
+/// loaded host, so the kit waits for the shell to fork its two sleeps
+/// before asserting the tree is alive. The reap assertions below stay
+/// exact; only the fixture precondition gets the settle window.
+fn assert_group_populated(pgid: u32, want: usize) {
+    for _ in 0..500 {
+        if group_member_pids(pgid).len() >= want {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!("run tree (shell + two sleeps) is alive before the reap");
+}
+
 #[test]
 fn k1_killed_server_run_is_reaped_by_its_deadline() {
     let root = temp_root("deadline");
@@ -85,10 +100,7 @@ fn k1_killed_server_run_is_reaped_by_its_deadline() {
     let run = RunDir::create(&root, "k1-deadline", started, deadline, 100, Some(pgid))
         .expect("test setup: create run");
     assert!(run.read_done().unwrap().is_none());
-    assert!(
-        group_member_pids(pgid).len() >= 3,
-        "run tree (shell + two sleeps) is alive before the reap"
-    );
+    assert_group_populated(pgid, 3);
 
     // Kill the server: drop the only handle without waiting. The group
     // is orphaned; nothing in this process will reap it.

@@ -244,6 +244,7 @@ fn cue_file(dir: &Path, id: &str) -> PathBuf {
 /// it. The payload is stored content-addressed first; the cue file is
 /// created with `create_new`, so an id collision fails rather than
 /// overwriting an unconsumed cue.
+#[allow(clippy::too_many_arguments)]
 pub fn write_cue(
     dir: &Path,
     kind: &str,

@@ -589,6 +589,8 @@ pub fn reap_expired_runs(
 /// Pids of every process in group `pgid`, read from `/proc` (Linux).
 /// Empty on non-Linux Unix, where the K1 kit's group assertion degrades
 /// to checking the leader only; the estate's servers run on Linux.
+/// Zombie entries (state `Z`) are not members: a zombie is a dead
+/// process awaiting its parent's wait, not a survivor of the group.
 #[cfg(target_os = "linux")]
 pub fn group_member_pids(pgid: u32) -> Vec<u32> {
     let mut members = Vec::new();
@@ -610,6 +612,7 @@ pub fn group_member_pids(pgid: u32) -> Vec<u32> {
         };
         let fields: Vec<&str> = stat[close + 1..].split_whitespace().collect();
         if fields.len() >= 3
+            && fields[0] != "Z"
             && let Ok(member_pgid) = fields[2].parse::<u32>()
             && member_pgid == pgid
         {

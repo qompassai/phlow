@@ -1745,6 +1745,7 @@ dependencies = [
  "phlow-seccomp",
  "phlow-workspace",
  "rustix",
+ "serde_json",
  "sha2 0.10.9",
 ]
 
@@ -1915,6 +1916,7 @@ dependencies = [
  "phlow-json",
  "phlow-llm",
  "phlow-mcp",
+ "phlow-self-improve",
  "phlow-workspace",
  "reqwest",
  "rmpv",
