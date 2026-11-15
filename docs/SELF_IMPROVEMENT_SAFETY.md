@@ -215,6 +215,79 @@ demotion, self-reported non-demotion, provisional floor,
 pre-PH-8 loader); `outcome` skills round-trip and migration
 tests; `safety_case::skill_trust_recomputes_from_rows_and_one_factual_failure_demotes`.
 
+### 10. A cue cannot widen the approved check set (PH-K2)
+
+PH-K2 wires the fleet cue primitives into the runtime's live run
+path: at the head of every run, the runtime drains its own cue
+directory — expired `run-this` cues reaped and listed, live ones
+answered with `run-done`. The drain adds no authority:
+
+- **Approved set only.** The handler runs named checks from the
+  operator-approved config, executed by the same pinned
+  `CheckRunner` the runtime itself uses. A cue naming a check
+  outside that set is refused *whole* — verdict `refused`, the
+  unapproved name in the evidence, and nothing runs, not even the
+  approved names beside it. A cue can ask for a subset of what the
+  operator approved; it can never add to it.
+- **Addressed work only.** Only cues addressed to `phlow` are
+  consumed; another server's cue is left pending, untouched. Only
+  cues visible under the drain's lane scope are listed or claimed
+  (the primitives' lane law), and every `run-done` carries the
+  original cue's labels from birth.
+- **Refused by name, never waited on.** A malformed cue file
+  fails the drain with the file's name, surfaced on the run
+  report as `cues_error`; the run proceeds — the fleet protocol
+  cannot take the worker down with it. Expired cues are reaped
+  and listed (`cues_expired`), never consumed and never waited
+  on. Per-run bounds: at most 8 cues drained, at most 32 checks
+  per cue, evidence bounded to 2,000 characters.
+
+Tests: `cues::tests` (payload parsing, evidence bound);
+`cue_wiring` (consume-and-answer in a real run, exactly-once;
+expired reaped and listed);
+`safety_case::cue_cannot_widen_the_approved_check_set`,
+`safety_case::malformed_cue_file_is_refused_by_name_and_the_run_proceeds`,
+`safety_case::cue_addressed_to_another_server_is_not_consumed`.
+
+### 11. An export never defaults a lane and never duplicates (PH-13)
+
+PH-13 exports outcome rows to bloch's BL-1 intake. The export is
+a mapping with refusals, not a copy:
+
+- **Lane from the capture, never the caller.** The exported
+  `origin_lane`/`content_label` come from the run's PH-7 capture,
+  where they were derived from the flowguard trajectory — the
+  export API has no lane parameter, and the outcome row's
+  placeholder labels are never read. A capture whose lane is
+  outside bloch's vocabulary (`general`/`restricted`) is refused
+  (`ExportInvalid`), never defaulted; a run with no capture has
+  no derivable lane and is refused by id.
+- **Lane law at export.** An `nsfw`-labelled record is never
+  exported into an `sfw`-scoped intake (`ExportLaneRefused`,
+  typed, reported per run). The scope is an explicit operator
+  argument to `phlow-export` — there is no default scope.
+- **Vocabulary is bloch's.** `result` is required in BL-3's
+  vocabulary (`ok`/`failed`/`abandoned`); a capture carrying
+  anything else is refused, never renamed. `asked` is the run's
+  task text, joined from its run report; a run with no joined
+  task text is refused, never fabricated from the plan.
+  `verification` is the row's own strength label.
+- **Append-only, never duplicated.** Bloch's store appends
+  without dedupe, so the stop is phlow's: an append-only
+  `outcome_exports` ledger (same UPDATE/DELETE triggers as run
+  history) plus a scan of the target file itself, so a lost
+  ledger cannot re-export what the target already holds. An
+  oversized or corrupt target is a hard refusal, never a
+  truncated guess.
+
+Tests: `export::tests` (mapping shape, lane/label/result
+refusals, scope refusal, batch dedupe, target-scan dedupe);
+`bloch_link` (a mapped row accepted by bloch's own intake gate;
+the exporter's output read back as a bloch store; refusal-vocabulary
+parity); `safety_case::export_never_defaults_a_lane_and_never_fabricates_asked`,
+`safety_case::export_refuses_nsfw_into_an_sfw_intake`,
+`safety_case::export_never_duplicates_a_run`.
+
 ## What is *not* a denial (and must not become one silently)
 
 - Recording outcomes and feedback is append-only writing by the

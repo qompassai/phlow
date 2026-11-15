@@ -76,3 +76,36 @@ outcome keys, byte-identical to pre-PH-1 behaviour.
 Recording failure never rewrites a run's verdict: the report gains
 `outcome_error` with the store's message, and a successful record
 adds `outcome_run_id`.
+
+## Export to bloch (PH-13)
+
+`phlow-export` maps outcome rows into bloch's BL-1 intake objects
+(bloch 1.0.0, `bloch::outcome`): `server` is `phlow`, `outcome_id`
+the run id, `verification` the row's own strength label, `cost`
+in **seconds** (bloch's unit — the row's `wall_ms` divided by
+1,000; tokens are not recorded per run and stay 0 rather than
+being converted from characters), `skills` from PH-8, and
+`produced` empty (phlow records no artifact hashes — bloch's
+field stays honestly empty).
+
+Two joins make the record lawful. The **lane** comes from the
+run's PH-7 capture — derived there from the flowguard trajectory,
+never asserted by the export's caller and never read from the
+row's placeholder labels; a run with no capture, or a capture
+whose lane is outside bloch's vocabulary, is refused, never
+defaulted. **`asked`** is the run's task text, joined from its
+run report by `outcome_run_id` (the row stores the plan, not the
+task); a run no report joins is refused, never fabricated.
+`result` is the capture's BL-3 word (`ok`/`failed`/`abandoned`),
+refused when outside the vocabulary. An `nsfw`-labelled record
+is never exported into an `sfw`-scoped intake — the scope is a
+required operator argument, with no default.
+
+Bloch's store appends without dedupe, so dedupe is phlow's: an
+append-only `outcome_exports` ledger in the same store file,
+plus a scan of the target file itself before appending, so a
+lost ledger cannot re-export what the target already holds.
+Re-running `phlow-export` reports already-exported runs and
+appends nothing twice. Acceptance is proven against bloch's own
+gate in `phlow-self-improve`'s `bloch_link` suite, which links
+the published `blochs` 1.0.0 crate as a dev-dependency.
