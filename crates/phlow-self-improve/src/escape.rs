@@ -682,6 +682,7 @@ mod tests {
             context_chars: None,
             wall_ms: 1,
             model_ids: Vec::new(),
+            skills: Vec::new(),
             status: "ok".to_owned(),
             verification_strength: VerificationStrength::ToolChecked,
             origin_lane: "phlow".to_owned(),

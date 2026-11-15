@@ -44,6 +44,7 @@ fn outcome(
         context_chars: None,
         wall_ms,
         model_ids: vec!["rev-model".to_owned()],
+        skills: Vec::new(),
         status: "ok".to_owned(),
         verification_strength: strength,
         origin_lane: "phlow".to_owned(),

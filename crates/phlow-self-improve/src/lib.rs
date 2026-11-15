@@ -17,6 +17,10 @@
 //! proposed checks that are validated against both revisions and
 //! queued through `phlow-approval` — proposed, never admitted.
 //!
+//! PH-8 adds skill trust from run rows ([`skill_trust`]): outcome
+//! rows record the skills a run loaded, and per-skill standing is
+//! recomputed from those rows — evidence only, nothing applied.
+//!
 //! Nothing here mutates prompts, skills, or Git history automatically.
 //! Feedback is recorded for operator review; evolution and mutation always
 //! fail with the exact Python denials.
@@ -43,6 +47,7 @@ pub mod outcome;
 pub mod prompt_evolver;
 pub mod reviewer_cal;
 pub mod skill_store;
+pub mod skill_trust;
 
 pub use budget::{
     BudgetProposal, ClassFit, CorpusLabel, LabelledRun, Margin, OutcomeRow, ReplayReport, Split,
@@ -62,3 +67,4 @@ pub use reviewer_cal::{
     CalibrationVerdict, ReliabilityRow, Verdict, VerdictChange, rederive_final_verdicts,
 };
 pub use skill_store::SkillStore;
+pub use skill_trust::{SkillEvidence, SkillState, SkillTrustRow};

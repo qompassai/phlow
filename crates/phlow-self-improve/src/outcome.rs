@@ -55,6 +55,10 @@ pub const STATUS_CHARS_MAX: usize = 64;
 pub const MODEL_ID_CHARS_MAX: usize = 256;
 /// Most model ids one row may name.
 pub const MODEL_IDS_MAX: usize = 16;
+/// One skill name longer than this is rejected (PH-8).
+pub const SKILL_NAME_CHARS_MAX: usize = 256;
+/// Most skill names one row may name (PH-8).
+pub const SKILLS_MAX: usize = 16;
 /// Evidence text longer than this is rejected.
 pub const EVIDENCE_CHARS_MAX: usize = 10_000;
 /// A lane label longer than this is rejected.
@@ -85,6 +89,7 @@ const OUTCOMES_DDL: &str = "CREATE TABLE IF NOT EXISTS run_outcomes (
                     origin_lane TEXT NOT NULL,
                     content_label TEXT NOT NULL,
                     evidence TEXT NOT NULL,
+                    skills_json TEXT NOT NULL DEFAULT '[]',
                     created_at TEXT NOT NULL
                 );
                 CREATE TRIGGER IF NOT EXISTS run_outcomes_no_update
@@ -174,6 +179,12 @@ pub struct RunOutcome {
     pub wall_ms: u64,
     /// Model ids that served the run's roles, in first-use order.
     pub model_ids: Vec<String>,
+    /// Names of the skills the run loaded, in first-use order
+    /// (PH-8): the evidence [`crate::skill_trust`] recomputes
+    /// per-skill trust from. Empty for runs that loaded no skill —
+    /// and for every row recorded before PH-8, which is most of
+    /// history; the trust report says so rather than backfilling.
+    pub skills: Vec<String>,
     /// Final run status (`ok`, `failed`, `unverified`, `error`,
     /// `abandoned`, …).
     pub status: String,
@@ -263,6 +274,21 @@ impl RunOutcome {
                 model_ids.push(model.to_owned());
             }
         }
+        // PH-8: the skills the run loaded, when the report names
+        // them (a top-level `skills` string array) — distinct, in
+        // first-use order, exactly like model ids. A report without
+        // the key records none; absence is never filled in.
+        let mut skills: Vec<String> = Vec::new();
+        if let Some(named) = report.get("skills").and_then(|v| v.as_array()) {
+            for item in named {
+                if let Some(name) = item.as_str()
+                    && !name.is_empty()
+                    && !skills.iter().any(|s| s == name)
+                {
+                    skills.push(name.to_owned());
+                }
+            }
+        }
         let checks: Vec<serde_json::Value> = report
             .get("checks")
             .and_then(|v| v.as_array())
@@ -328,6 +354,7 @@ impl RunOutcome {
             context_chars: report.get("context_chars").and_then(|v| v.as_u64()),
             wall_ms,
             model_ids,
+            skills,
             status: report
                 .get("status")
                 .and_then(|v| v.as_str())
@@ -380,6 +407,12 @@ impl RunOutcome {
         for model in &self.model_ids {
             check_chars("model_id", model, MODEL_ID_CHARS_MAX)?;
         }
+        if self.skills.len() > SKILLS_MAX {
+            return Err(invalid("skills", "exceeds SKILLS_MAX"));
+        }
+        for skill in &self.skills {
+            check_chars("skill", skill, SKILL_NAME_CHARS_MAX)?;
+        }
         check_chars("origin_lane", &self.origin_lane, LANE_LABEL_CHARS_MAX)?;
         check_chars("content_label", &self.content_label, LANE_LABEL_CHARS_MAX)?;
         check_chars("evidence", &self.evidence, EVIDENCE_CHARS_MAX)?;
@@ -419,6 +452,23 @@ impl OutcomeStore {
         std::fs::create_dir_all(parent).map_err(SelfImproveError::Io)?;
         let connection = Connection::open(db_path).map_err(SelfImproveError::Database)?;
         connection.execute_batch(OUTCOMES_DDL)?;
+        // PH-8 migration: a database written before the skills
+        // column existed gains it in place. Existing rows read the
+        // default — no recorded skills — which is the honest
+        // reading: their reports are not re-read and nothing is
+        // backfilled (the append-only triggers do not block DDL).
+        let skills_columns: i64 = connection.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('run_outcomes') \
+             WHERE name = 'skills_json'",
+            [],
+            |row| row.get(0),
+        )?;
+        if skills_columns == 0 {
+            connection.execute_batch(
+                "ALTER TABLE run_outcomes \
+                 ADD COLUMN skills_json TEXT NOT NULL DEFAULT '[]';",
+            )?;
+        }
         Ok(OutcomeStore {
             db_path: db_path.to_path_buf(),
             connection,
@@ -446,12 +496,20 @@ impl OutcomeStore {
                 .collect(),
         )
         .to_string();
+        let skills_json = serde_json::Value::Array(
+            outcome
+                .skills
+                .iter()
+                .map(|s| serde_json::Value::String(s.clone()))
+                .collect(),
+        )
+        .to_string();
         match self.connection.execute(
             "INSERT INTO run_outcomes (run_id, task_class, plan, checks_json,
              reviewer_verdict, cycles, tool_calls, model_calls, context_chars,
              wall_ms, model_ids_json, status, verification_strength,
-             origin_lane, content_label, evidence, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             origin_lane, content_label, evidence, skills_json, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 outcome.run_id,
                 outcome.task_class,
@@ -469,6 +527,7 @@ impl OutcomeStore {
                 outcome.origin_lane,
                 outcome.content_label,
                 outcome.evidence,
+                skills_json,
                 utc_now_iso(),
             ],
         ) {
@@ -501,7 +560,7 @@ impl OutcomeStore {
             "SELECT id, run_id, task_class, plan, checks_json, reviewer_verdict,
              cycles, tool_calls, model_calls, context_chars, wall_ms,
              model_ids_json, status, verification_strength, origin_lane,
-             content_label, evidence, created_at
+             content_label, evidence, created_at, skills_json
              FROM run_outcomes WHERE run_id = ?",
         )?;
         let mut rows = statement.query_map(params![run_id], row_to_recorded)?;
@@ -519,7 +578,7 @@ impl OutcomeStore {
             "SELECT id, run_id, task_class, plan, checks_json, reviewer_verdict,
              cycles, tool_calls, model_calls, context_chars, wall_ms,
              model_ids_json, status, verification_strength, origin_lane,
-             content_label, evidence, created_at
+             content_label, evidence, created_at, skills_json
              FROM run_outcomes ORDER BY created_at DESC, id DESC LIMIT ?",
         )?;
         let rows = statement.query_map(params![limit], row_to_recorded)?;
@@ -531,9 +590,11 @@ impl OutcomeStore {
     }
 }
 
-fn row_to_recorded(row: &rusqlite::Row) -> rusqlite::Result<RecordedOutcome> {
-    let model_ids_json: String = row.get(11)?;
-    let model_ids: Vec<String> = serde_json::from_str::<serde_json::Value>(&model_ids_json)
+/// Parse a stored JSON string-array column (`model_ids_json`,
+/// `skills_json`); anything malformed reads as empty — the row's
+/// other fields are the evidence, a corrupt array is no evidence.
+pub(crate) fn parse_string_array(json: &str) -> Vec<String> {
+    serde_json::from_str::<serde_json::Value>(json)
         .ok()
         .and_then(|v| {
             v.as_array().map(|items| {
@@ -543,7 +604,14 @@ fn row_to_recorded(row: &rusqlite::Row) -> rusqlite::Result<RecordedOutcome> {
                     .collect()
             })
         })
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
+
+fn row_to_recorded(row: &rusqlite::Row) -> rusqlite::Result<RecordedOutcome> {
+    let model_ids_json: String = row.get(11)?;
+    let model_ids: Vec<String> = parse_string_array(&model_ids_json);
+    let skills_json: String = row.get(18)?;
+    let skills: Vec<String> = parse_string_array(&skills_json);
     let strength_text: String = row.get(13)?;
     Ok(RecordedOutcome {
         id: row.get(0)?,
@@ -560,6 +628,7 @@ fn row_to_recorded(row: &rusqlite::Row) -> rusqlite::Result<RecordedOutcome> {
             context_chars: row.get::<_, Option<i64>>(9)?.map(|n| n as u64),
             wall_ms: row.get::<_, i64>(10)? as u64,
             model_ids,
+            skills,
             status: row.get(12)?,
             verification_strength: VerificationStrength::parse(&strength_text)
                 .unwrap_or(VerificationStrength::SelfReported),
@@ -664,6 +733,7 @@ mod tests {
             context_chars: None,
             wall_ms: 42,
             model_ids: vec!["model-a".to_owned()],
+            skills: Vec::new(),
             status: status.to_owned(),
             verification_strength: VerificationStrength::ToolChecked,
             origin_lane: "phlow".to_owned(),
@@ -735,6 +805,95 @@ mod tests {
         assert_eq!(read.outcome.origin_lane, UNKNOWN_ORIGIN_LANE);
         assert_eq!(read.outcome.content_label, UNCLASSIFIED_CONTENT_LABEL);
         cleanup(&db);
+    }
+
+    #[test]
+    fn skills_round_trip_on_the_row() {
+        // PH-8: the skills a run loaded are part of its evidence and
+        // survive the store round trip, in order.
+        let db = db_path("skills");
+        let store = OutcomeStore::open(&db).unwrap();
+        let mut row = outcome("run-skills", "ok");
+        row.skills = vec!["tiger-style-rust".to_owned(), "skill-trust".to_owned()];
+        store.record(&row).unwrap();
+        let back = store.get("run-skills").unwrap().expect("row present");
+        assert_eq!(
+            back.outcome.skills,
+            vec!["tiger-style-rust".to_owned(), "skill-trust".to_owned()]
+        );
+    }
+
+    #[test]
+    fn from_report_extracts_skills_distinct_in_order() {
+        let report = serde_json::json!({
+            "status": "ok",
+            "verified": true,
+            "roles": [],
+            "checks": [],
+            "cycles": 1,
+            "tool_calls": 0,
+            "model_calls": 0,
+            "skills": ["alpha", "beta", "alpha", "", 42]
+        });
+        let row = RunOutcome::from_report("run-fx", "flow_run", &report, 5);
+        assert_eq!(row.skills, vec!["alpha".to_owned(), "beta".to_owned()]);
+        // A report without the key records no skills — never a guess.
+        let bare = serde_json::json!({"status": "ok", "roles": [], "checks": []});
+        let row = RunOutcome::from_report("run-bare", "flow_run", &bare, 5);
+        assert!(row.skills.is_empty());
+    }
+
+    #[test]
+    fn pre_ph8_databases_gain_the_skills_column_with_empty_rows() {
+        // A database created by the pre-PH-8 DDL (no skills_json)
+        // opens under PH-8, gains the column by migration, and its
+        // existing rows read as "no recorded skills" — history is
+        // not rewritten and nothing is backfilled.
+        let db = db_path("pre-ph8");
+        {
+            let conn = Connection::open(&db).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE run_outcomes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id TEXT NOT NULL UNIQUE,
+                    task_class TEXT NOT NULL,
+                    plan TEXT NOT NULL,
+                    checks_json TEXT NOT NULL,
+                    reviewer_verdict TEXT,
+                    cycles INTEGER NOT NULL,
+                    tool_calls INTEGER NOT NULL,
+                    model_calls INTEGER NOT NULL,
+                    context_chars INTEGER,
+                    wall_ms INTEGER NOT NULL,
+                    model_ids_json TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    verification_strength TEXT NOT NULL,
+                    origin_lane TEXT NOT NULL,
+                    content_label TEXT NOT NULL,
+                    evidence TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                INSERT INTO run_outcomes (run_id, task_class, plan, checks_json,
+                    reviewer_verdict, cycles, tool_calls, model_calls,
+                    context_chars, wall_ms, model_ids_json, status,
+                    verification_strength, origin_lane, content_label,
+                    evidence, created_at)
+                VALUES ('run-old', 'flow_run', 'p', '[]', 'approved', 1, 0, 0,
+                    NULL, 7, '[\"m\"]', 'ok', 'tool_checked', 'phlow', 'nsfw',
+                    'old evidence', '2026-01-01T00:00:00');",
+            )
+            .unwrap();
+        }
+        let store = OutcomeStore::open(&db).unwrap();
+        let old = store.get("run-old").unwrap().expect("old row readable");
+        assert!(old.outcome.skills.is_empty());
+        assert_eq!(old.outcome.status, "ok");
+        // And new rows record skills into the migrated table.
+        let mut row = outcome("run-new", "ok");
+        row.skills = vec!["alpha".to_owned()];
+        store.record(&row).unwrap();
+        let back = store.get("run-new").unwrap().expect("new row present");
+        assert_eq!(back.outcome.skills, vec!["alpha".to_owned()]);
     }
 
     #[test]
