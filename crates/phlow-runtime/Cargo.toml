@@ -28,6 +28,10 @@ phlow-llm = { version = "0.2.0", path = "../phlow-llm" }
 # phlow-mcp: validate_arguments (iterative, depth/node caps) and
 # Python-compatible json.dumps for tool-result truncation accounting.
 phlow-mcp = { version = "0.2.0", path = "../phlow-mcp" }
+# phlow-self-improve: the append-only per-run outcome record (PH-1).
+# The runtime writes one row per run into the feedback store file;
+# nothing model-visible can reach this crate.
+phlow-self-improve = { version = "0.1.0", path = "../phlow-self-improve" }
 # serde_json: the report/tool value model.
 serde_json = { version = "1", features = ["preserve_order"] }
 # sha2: SHA-256 for verification fingerprints (byte-compatible with Python hashlib).
