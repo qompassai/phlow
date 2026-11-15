@@ -228,13 +228,11 @@ fn plan_sections(plan: &str) -> (Vec<String>, Vec<PlanStep>) {
                     }
                 }
             }
-            Some("steps") => {
-                if steps.len() < PLANNED_STEPS_MAX {
-                    steps.push(PlanStep {
-                        text: cap_step_text(&clean_list_line(trimmed)),
-                        raw: trimmed.to_owned(),
-                    });
-                }
+            Some("steps") if steps.len() < PLANNED_STEPS_MAX => {
+                steps.push(PlanStep {
+                    text: cap_step_text(&clean_list_line(trimmed)),
+                    raw: trimmed.to_owned(),
+                });
             }
             _ => {}
         }

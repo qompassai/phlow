@@ -835,8 +835,8 @@ mod tests {
         let validation = validate_check(&argv, &escaped, &fixed);
         assert!(!validation.gate_holds);
         // A missing program is an error, never a pass.
-        let validation =
-            validate_check(&vec!["phlow-no-such-program".to_owned()], &escaped, &fixed);
+        let missing = vec!["phlow-no-such-program".to_owned()];
+        let validation = validate_check(&missing, &escaped, &fixed);
         assert!(!validation.gate_holds);
         assert!(validation.error.is_some());
         let _ = std::fs::remove_dir_all(&dir);
