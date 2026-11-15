@@ -27,7 +27,8 @@ use crate::model::{
     AGENT_MAX_CONTEXT_CHARS_MAX, AGENT_MAX_CONTEXT_CHARS_MIN, AGENT_MAX_CYCLES_MAX,
     AGENT_MAX_CYCLES_MIN, AGENT_MAX_ITERATIONS_MAX, AGENT_MAX_ITERATIONS_MIN,
     AGENT_MAX_TASK_CHARS_MAX, AGENT_MAX_TASK_CHARS_MIN, AGENT_MAX_TOOL_CALLS_MAX,
-    AGENT_MAX_TOOL_CALLS_MIN, AgentConfig, AttentionConfig, CHECK_ARGV_MAX, CHECK_NAME_CHARS_MAX,
+    AGENT_MAX_TOOL_CALLS_MIN, AGENT_TASK_CLASS_CHARS_MAX, AgentConfig, AttentionConfig,
+    CHECK_ARGV_MAX, CHECK_NAME_CHARS_MAX,
     CHECK_TIMEOUT_MS_DEFAULT, CHECK_TIMEOUT_MS_MAX, CHECK_TIMEOUT_MS_MIN, CHECKS_MAX, CheckConfig,
     CheckKind, FlowConfig, ModelsConfig, OLLAMA_CONTEXT_LENGTH_MAX, OLLAMA_CONTEXT_LENGTH_MIN,
     OLLAMA_TEMPERATURE_MAX, OLLAMA_TEMPERATURE_MIN, OLLAMA_TIMEOUT_SECS_MAX,
@@ -606,6 +607,41 @@ fn parse_specialist(
     Ok(Some(SpecialistConfig::validated(PathBuf::from(raw))))
 }
 
+/// Parse the optional `[agent] task_class` (PH-6): the seat's class
+/// label for outcome/divergence records and lesson retrieval. A
+/// declared class must be a non-empty string of at most
+/// [`AGENT_TASK_CLASS_CHARS_MAX`] characters with no control
+/// characters — it becomes a database key and a planner-context
+/// label, so it stays plain.
+fn parse_task_class(
+    table: &toml::map::Map<String, toml::Value>,
+) -> Result<Option<String>, ConfigError> {
+    let Some(value) = table.get("task_class") else {
+        return Ok(None);
+    };
+    let text = parse_string(value, "agent.task_class")?;
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err(invalid_value(
+            "agent.task_class",
+            "must not be empty when declared",
+        ));
+    }
+    if trimmed.chars().count() > AGENT_TASK_CLASS_CHARS_MAX {
+        return Err(invalid_value(
+            "agent.task_class",
+            format!("must be at most {AGENT_TASK_CLASS_CHARS_MAX} characters"),
+        ));
+    }
+    if trimmed.chars().any(char::is_control) {
+        return Err(invalid_value(
+            "agent.task_class",
+            "must not contain control characters",
+        ));
+    }
+    Ok(Some(trimmed.to_owned()))
+}
+
 fn parse_agent(
     table: Option<&toml::map::Map<String, toml::Value>>,
 ) -> Result<AgentConfig, ConfigError> {
@@ -615,6 +651,7 @@ fn parse_agent(
         "max_tool_calls",
         "max_context_chars",
         "max_task_chars",
+        "task_class",
     ];
     let defaults = AgentConfig::default();
     let Some(table) = table else {
@@ -658,6 +695,7 @@ fn parse_agent(
             AGENT_MAX_TASK_CHARS_MAX,
             defaults.max_task_chars(),
         )?,
+        parse_task_class(table)?,
     ))
 }
 
@@ -1436,6 +1474,33 @@ mod tests {
         assert_eq!(cfg.agent().max_tool_calls(), 256);
         assert_eq!(cfg.agent().max_context_chars(), 1_000_000);
         assert_eq!(cfg.agent().max_task_chars(), 100_000);
+    }
+
+    #[test]
+    fn agent_task_class_is_optional_bounded_and_plain() {
+        // PH-6: the seat's task class is declared, trimmed, and kept.
+        let dir = test_dir("agent-task-class");
+        let cfg = load_ok(&dir, "[agent]\ntask_class = \"code_fix\"\n");
+        assert_eq!(cfg.agent().task_class(), Some("code_fix"));
+        let cfg = load_ok(&dir, "[agent]\ntask_class = \"  analysis  \"\n");
+        assert_eq!(cfg.agent().task_class(), Some("analysis"));
+        // Absent is the default: no class declared.
+        let cfg = load_ok(&dir, "[agent]\nmax_cycles = 2\n");
+        assert_eq!(cfg.agent().task_class(), None);
+        // Adversarial: empty, blank, non-string, control-bearing and
+        // over-long classes are refused at load, never defaulted.
+        load_text(&dir, "[agent]\ntask_class = \"\"\n").expect_err("empty class must fail");
+        load_text(&dir, "[agent]\ntask_class = \"   \"\n").expect_err("blank class must fail");
+        load_text(&dir, "[agent]\ntask_class = 7\n").expect_err("non-string class must fail");
+        load_text(&dir, "[agent]\ntask_class = \"a\\tb\"\n")
+            .expect_err("control character must fail");
+        let overlong = format!("[agent]\ntask_class = \"{}\"\n", "x".repeat(129));
+        load_text(&dir, &overlong).expect_err("129-char class must fail");
+        let longest = format!("[agent]\ntask_class = \"{}\"\n", "x".repeat(128));
+        assert_eq!(
+            load_ok(&dir, &longest).agent().task_class().map(str::len),
+            Some(128)
+        );
     }
 
     #[test]

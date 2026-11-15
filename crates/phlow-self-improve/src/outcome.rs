@@ -145,8 +145,9 @@ impl VerificationStrength {
 pub struct RunOutcome {
     /// Unique run id; one row per id, ever.
     pub run_id: String,
-    /// Caller classification of the task (the runtime passes its
-    /// surface name, `flow_run`, until intake classes land — PH-6).
+    /// Caller classification of the task. The runtime passes the
+    /// operator-declared `[agent] task_class` when the seat config
+    /// names one, and its surface name (`flow_run`) otherwise (PH-6).
     pub task_class: String,
     /// The plan the run executed (planner summary).
     pub plan: String,
@@ -554,7 +555,11 @@ fn invalid(field: &'static str, reason: &str) -> SelfImproveError {
 
 /// Reject over-long text fields before they reach the database (the
 /// feedback store's discipline, same error shape).
-fn check_chars(field: &'static str, value: &str, max_chars: usize) -> Result<(), SelfImproveError> {
+pub(crate) fn check_chars(
+    field: &'static str,
+    value: &str,
+    max_chars: usize,
+) -> Result<(), SelfImproveError> {
     if value.chars().count() > max_chars {
         return Err(SelfImproveError::TooLong { field, max_chars });
     }
@@ -563,7 +568,7 @@ fn check_chars(field: &'static str, value: &str, max_chars: usize) -> Result<(),
 
 /// UTC timestamp in `datetime.utcnow().isoformat()` shape, matching
 /// the feedback store so one file sorts consistently.
-fn utc_now_iso() -> String {
+pub(crate) fn utc_now_iso() -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::ZERO);

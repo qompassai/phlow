@@ -7,6 +7,11 @@
 //! operator; they read the outcome store read-only and apply
 //! nothing.
 //!
+//! PH-6 adds the plan-divergence record ([`divergence`]) and the
+//! lesson cards ([`lessons`]) built from it: append-only records,
+//! versioned cards, retrieved by the runtime as planner context —
+//! never as prompt mutation.
+//!
 //! Nothing here mutates prompts, skills, or Git history automatically.
 //! Feedback is recorded for operator review; evolution and mutation always
 //! fail with the exact Python denials.
@@ -24,8 +29,10 @@
 #![forbid(unsafe_code)]
 
 pub mod budget;
+pub mod divergence;
 pub mod error;
 pub mod feedback;
+pub mod lessons;
 pub mod outcome;
 pub mod prompt_evolver;
 pub mod reviewer_cal;
@@ -35,8 +42,10 @@ pub use budget::{
     BudgetProposal, ClassFit, CorpusLabel, LabelledRun, Margin, OutcomeRow, ReplayReport, Split,
     Truth,
 };
+pub use divergence::{DivergenceStore, PlanDivergence, RecordedDivergence, derive_divergence};
 pub use error::SelfImproveError;
 pub use feedback::{FeedbackEntry, FeedbackStore};
+pub use lessons::{LessonCard, LessonDivergence, LessonStore, render_card};
 pub use outcome::{OutcomeStore, RecordedOutcome, RunOutcome, VerificationStrength};
 pub use prompt_evolver::PromptEvolver;
 pub use reviewer_cal::{CalibrationVerdict, ReliabilityRow, Verdict};

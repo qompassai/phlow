@@ -7,6 +7,8 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use phlow_self_improve::divergence::{DivergenceStore, PlanDivergence};
+use phlow_self_improve::lessons::LessonStore;
 use phlow_self_improve::outcome::{RunOutcome, VerificationStrength};
 use phlow_self_improve::{OutcomeStore, PromptEvolver, SelfImproveError, SkillStore};
 
@@ -99,5 +101,70 @@ fn run_history_is_append_only_and_exactly_one_row() {
         Err(SelfImproveError::OutcomeDuplicate { .. })
     ));
     assert_eq!(store.count_for_run("run-1").unwrap(), 1);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn divergence(run_id: &str, content_label: &str) -> PlanDivergence {
+    PlanDivergence {
+        run_id: run_id.to_owned(),
+        task_class: "code_fix".to_owned(),
+        planned_steps: 1,
+        executed_steps: 0,
+        skipped_steps: vec!["Replace the value in `src/a.rs`.".to_owned()],
+        untracked_steps: 0,
+        planned_files_untouched: vec!["src/a.rs".to_owned()],
+        added_files: Vec::new(),
+        repair_cycles: 0,
+        origin_lane: "phlow".to_owned(),
+        content_label: content_label.to_owned(),
+    }
+}
+
+#[test]
+fn divergence_records_and_lesson_cards_are_append_only() {
+    // PH-6's append-only rule (safety case §6): plan-divergence
+    // records and lesson cards are evidence. A card is superseded
+    // by appending the next version, never by rewriting one — the
+    // triggers refuse UPDATE/DELETE through any connection.
+    let dir = temp_dir("ph6-append-only");
+    let db = dir.join("feedback.db");
+    let divergences = DivergenceStore::open(&db).unwrap();
+    divergences.record(&divergence("run-1", "nsfw")).unwrap();
+    let lessons = LessonStore::open(&db).unwrap();
+    lessons.build_card(&divergences, "code_fix").unwrap();
+    let other = rusqlite::Connection::open(&db).unwrap();
+    assert!(other
+        .execute("UPDATE plan_divergences SET repair_cycles = 9 WHERE run_id = 'run-1'", [])
+        .is_err());
+    assert!(other
+        .execute("DELETE FROM plan_divergences WHERE run_id = 'run-1'", [])
+        .is_err());
+    assert!(other
+        .execute("UPDATE lesson_cards SET version = 9 WHERE task_class = 'code_fix'", [])
+        .is_err());
+    assert!(other
+        .execute("DELETE FROM lesson_cards WHERE task_class = 'code_fix'", [])
+        .is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn nsfw_lessons_are_invisible_to_sfw_retrieval() {
+    // PH-6's lane rule (safety case §6, Bloch): a card built from
+    // nsfw-labelled records carries the nsfw label and cannot be
+    // retrieved under an sfw scope — lessons never cross the lane
+    // boundary silently.
+    let dir = temp_dir("ph6-lanes");
+    let db = dir.join("feedback.db");
+    let divergences = DivergenceStore::open(&db).unwrap();
+    divergences.record(&divergence("run-1", "nsfw")).unwrap();
+    let lessons = LessonStore::open(&db).unwrap();
+    let card = lessons
+        .build_card(&divergences, "code_fix")
+        .unwrap()
+        .expect("card builds");
+    assert_eq!(card.content_label, "nsfw");
+    assert!(lessons.current_card("code_fix", "sfw").unwrap().is_none());
+    assert!(lessons.current_card("code_fix", "nsfw").unwrap().is_some());
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -45,6 +45,20 @@ pub enum SelfImproveError {
         /// Why it was refused.
         reason: String,
     },
+    /// A plan-divergence record already exists for this run id; one
+    /// run leaves exactly one divergence record (PH-6).
+    DivergenceDuplicate {
+        /// The run that already has a divergence record.
+        run_id: String,
+    },
+    /// A plan-divergence record failed validation and was refused
+    /// (PH-6).
+    DivergenceInvalid {
+        /// Which field was refused.
+        field: &'static str,
+        /// Why it was refused.
+        reason: String,
+    },
     /// A skill mutation was requested; automatic mutation is disabled.
     SkillMutationDisabled,
     /// A Git mutation was requested; automatic Git mutation is disabled.
@@ -75,6 +89,12 @@ impl fmt::Display for SelfImproveError {
             }
             SelfImproveError::ProposalInvalid { field, reason } => {
                 write!(f, "proposal field {field} refused: {reason}")
+            }
+            SelfImproveError::DivergenceDuplicate { run_id } => {
+                write!(f, "run {run_id} already has a plan-divergence record")
+            }
+            SelfImproveError::DivergenceInvalid { field, reason } => {
+                write!(f, "divergence field {field} refused: {reason}")
             }
             SelfImproveError::SkillMutationDisabled => {
                 write!(f, "Automatic skill mutation is disabled; edit manually")

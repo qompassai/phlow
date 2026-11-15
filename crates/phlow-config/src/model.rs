@@ -72,6 +72,10 @@ pub const AGENT_MAX_CONTEXT_CHARS_MIN: u32 = 4_096;
 pub const AGENT_MAX_CONTEXT_CHARS_MAX: u32 = 1_000_000;
 pub const AGENT_MAX_TASK_CHARS_MIN: u32 = 1;
 pub const AGENT_MAX_TASK_CHARS_MAX: u32 = 100_000;
+/// Longest `[agent] task_class` label, in characters. Classes are
+/// labels (PH-6): they key the outcome record, the plan-divergence
+/// record, and lesson-card retrieval, so they stay short.
+pub const AGENT_TASK_CLASS_CHARS_MAX: usize = 128;
 
 /// Utility pre-gate bounds (`[pregate]` section). Scores are integers,
 /// never floats, so routing decisions carry no float-tolerance question.
@@ -427,7 +431,7 @@ impl SpecialistsConfig {
     }
 }
 
-/// Agent loop budgets.
+/// Agent loop budgets, plus the seat's task class (PH-6).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentConfig {
     max_iterations: u32,
@@ -435,6 +439,7 @@ pub struct AgentConfig {
     max_tool_calls: u32,
     max_context_chars: u32,
     max_task_chars: u32,
+    task_class: Option<String>,
 }
 
 impl Default for AgentConfig {
@@ -445,6 +450,7 @@ impl Default for AgentConfig {
             max_tool_calls: 64,
             max_context_chars: 100_000,
             max_task_chars: 16_000,
+            task_class: None,
         }
     }
 }
@@ -456,6 +462,7 @@ impl AgentConfig {
         max_tool_calls: u32,
         max_context_chars: u32,
         max_task_chars: u32,
+        task_class: Option<String>,
     ) -> AgentConfig {
         assert!(
             (AGENT_MAX_ITERATIONS_MIN..=AGENT_MAX_ITERATIONS_MAX).contains(&max_iterations),
@@ -478,12 +485,19 @@ impl AgentConfig {
             (AGENT_MAX_TASK_CHARS_MIN..=AGENT_MAX_TASK_CHARS_MAX).contains(&max_task_chars),
             "agent.max_task_chars out of range"
         );
+        if let Some(class) = &task_class {
+            assert!(
+                !class.trim().is_empty() && class.chars().count() <= AGENT_TASK_CLASS_CHARS_MAX,
+                "agent.task_class out of range"
+            );
+        }
         AgentConfig {
             max_iterations,
             max_cycles,
             max_tool_calls,
             max_context_chars,
             max_task_chars,
+            task_class,
         }
     }
 
@@ -506,6 +520,13 @@ impl AgentConfig {
     /// Task description cap in characters, 1–100_000.
     pub fn max_task_chars(&self) -> u32 {
         self.max_task_chars
+    }
+    /// The seat's task class (PH-6): the label recorded on every
+    /// run's outcome and plan-divergence rows and used to retrieve
+    /// that class's lesson card. `None` when the operator did not
+    /// declare one — the runtime then records its surface name.
+    pub fn task_class(&self) -> Option<&str> {
+        self.task_class.as_deref()
     }
 }
 

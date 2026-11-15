@@ -72,6 +72,7 @@ no prompt or plugin can widen them.
 | `max_tool_calls` | `64` | 1–256 | Global tool-call budget across all roles and cycles. |
 | `max_context_chars` | `100000` | 4096–1_000_000 | Context window cap, in characters. |
 | `max_task_chars` | `16000` | 1–100_000 | Task description cap, in characters. |
+| `task_class` | *(unset)* | 1–128 chars, no control characters | The seat's task class (PH-6): recorded on every run's outcome and plan-divergence rows, and the key for lesson-card retrieval. Unset seats record the surface name `flow_run`. |
 
 ## [checks.NAME]
 

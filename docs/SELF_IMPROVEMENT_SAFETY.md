@@ -93,6 +93,33 @@ Tests: `skill_store::tests`;
 `safety_case::history_is_neither_read_nor_rewritten`,
 `outcome::tests::rows_are_append_only_against_update_and_delete`.
 
+### 6. The loop may never rewrite its own lessons (PH-6)
+
+Plan-versus-actual divergence records and the lesson cards built
+from them are evidence, held to the same discipline as run history:
+
+- **Append-only.** `plan_divergences` and `lesson_cards` carry the
+  same UPDATE/DELETE triggers as `run_outcomes`. A card is
+  superseded by appending its next version; rebuilding over an
+  unchanged run set appends nothing. One run leaves exactly one
+  divergence record (`DivergenceDuplicate` refusal).
+- **Retrieved, never mutated into the prompt.** A card reaches the
+  planner as run context (the user-side message) — the planner's
+  system prompt is byte-identical with or without a card. Lessons
+  are data the planner reads, not instructions the loop wrote into
+  itself; this is denial 1's boundary applied to PH-6.
+- **Lane-bound.** A card's content label is the most restrictive
+  label among its source records (any non-`sfw` source makes the
+  card `nsfw`), and an `nsfw` card is invisible to a retrieval
+  scoped `sfw` — fail-closed, per the Bloch lane law.
+
+Tests: `divergence::tests` (derivation, append-only, one-per-run);
+`lessons::tests` (aggregation, versioning, lane labels, scope
+visibility); `safety_case::divergence_records_and_lesson_cards_are_append_only`,
+`safety_case::nsfw_lessons_are_invisible_to_sfw_retrieval`;
+runtime `lesson_cards` suite (class recording, context injection,
+prompt byte-identity, with/without status parity).
+
 ## What is *not* a denial (and must not become one silently)
 
 - Recording outcomes and feedback is append-only writing by the

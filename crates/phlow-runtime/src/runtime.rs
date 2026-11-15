@@ -2449,16 +2449,92 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
             RUN_COUNTER.fetch_add(1, Ordering::SeqCst)
         );
         let wall_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let outcome =
-            phlow_self_improve::RunOutcome::from_report(&run_id, "flow_run", report, wall_ms);
+        // PH-6: the seat's declared task class keys the record; a
+        // seat that declares none records the surface name, exactly
+        // as before PH-6.
+        let task_class = self
+            .config
+            .agent()
+            .task_class()
+            .unwrap_or("flow_run")
+            .to_owned();
+        let outcome = phlow_self_improve::RunOutcome::from_report(
+            &run_id,
+            &task_class,
+            report,
+            wall_ms,
+        );
         match phlow_self_improve::OutcomeStore::open(&db_path)
             .and_then(|store| store.record(&outcome))
         {
             Ok(_) => {
-                report_mut::set(report, "outcome_run_id", Value::String(run_id));
+                report_mut::set(report, "outcome_run_id", Value::String(run_id.clone()));
             }
             Err(error) => {
                 report_mut::set(report, "outcome_error", Value::String(error.to_string()));
+                return;
+            }
+        }
+        // PH-6: the plan-versus-actual divergence rides beside the
+        // outcome row, derived from the same report, carrying the
+        // outcome row's lane labels. A divergence failure never
+        // fails the run; it is named on the report, mirroring
+        // outcome_error.
+        let divergence = phlow_self_improve::derive_divergence(
+            &run_id,
+            &task_class,
+            report,
+            &outcome.origin_lane,
+            &outcome.content_label,
+        );
+        if let Err(error) = phlow_self_improve::DivergenceStore::open(&db_path)
+            .and_then(|store| store.record(&divergence))
+        {
+            report_mut::set(report, "divergence_error", Value::String(error.to_string()));
+        }
+    }
+
+    /// PH-6 lesson retrieval: the current lesson card for this
+    /// seat's task class, rendered as planner context.
+    ///
+    /// Lessons travel as run context (the user-side message), never
+    /// as a prompt edit: the planner's system prompt is
+    /// operator-owned and byte-identical with or without a card.
+    /// Retrieval fails open — no store, no card, or a store error
+    /// all yield the empty context a pre-PH-6 run used, with a store
+    /// error named on the report.
+    fn planner_context(&self, report: &mut Value) -> Value {
+        let Some(db_path) = self.outcome_db.clone() else {
+            return Value::Object(Map::new());
+        };
+        let task_class = self
+            .config
+            .agent()
+            .task_class()
+            .unwrap_or("flow_run")
+            .to_owned();
+        // This runtime's runs record the fail-closed `nsfw` content
+        // label (unclassified), so retrieval is scoped with that
+        // label: a run sees exactly the cards its own label admits.
+        match phlow_self_improve::LessonStore::open(&db_path)
+            .and_then(|store| store.current_card(&task_class, "nsfw"))
+        {
+            Ok(Some(card)) => {
+                report_mut::set(
+                    report,
+                    "lessons",
+                    serde_json::json!({
+                        "task_class": card.task_class,
+                        "card_version": card.version,
+                        "built_over_runs": card.built_over_runs,
+                    }),
+                );
+                serde_json::json!({"lessons": phlow_self_improve::render_card(&card)})
+            }
+            Ok(None) => Value::Object(Map::new()),
+            Err(error) => {
+                report_mut::set(report, "lessons_error", Value::String(error.to_string()));
+                Value::Object(Map::new())
             }
         }
     }
@@ -2501,7 +2577,8 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
                 }
             }
         }
-        let planner = self.role("planner", task, &Value::Object(Map::new()), report)?;
+        let planner_context = self.planner_context(report);
+        let planner = self.role("planner", task, &planner_context, report)?;
         if planner.get("status") != Some(&Value::String("ok".to_owned())) {
             report_mut::set(report, "status", planner["status"].clone());
             report_mut::set(
