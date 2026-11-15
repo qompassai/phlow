@@ -157,7 +157,9 @@ pub struct RunOutcome {
     /// the status label collapses every nonzero exit, the code does
     /// not (rung 4, investigation 2).
     pub checks_json: String,
-    /// The reviewer's verdict label, when a reviewer ran.
+    /// The reviewer's **final** verdict label, when a reviewer ran:
+    /// the verdict of the last reviewer entry in the report's roles
+    /// array (rung 5; see [`RunOutcome::from_report`]).
     pub reviewer_verdict: Option<String>,
     /// Planner→coder→reviewer cycles used.
     pub cycles: u64,
@@ -191,13 +193,24 @@ impl RunOutcome {
     ///
     /// Extraction is defensive and honest: a field the report does not
     /// carry becomes its empty/`None` value, never a guess. `plan` is
-    /// the planner role's summary; `reviewer_verdict` is the reviewer
-    /// role's `approved` flag when present, else its status;
-    /// `model_ids` are the distinct role models in first-use order;
-    /// verification strength is `tool_checked` exactly when the
-    /// report's host verification says `verified`, else
-    /// `self_reported` (PH-K3: the host gate is the strongest label an
-    /// automated run can carry).
+    /// the planner role's summary; `model_ids` are the distinct role
+    /// models in first-use order; verification strength is
+    /// `tool_checked` exactly when the report's host verification says
+    /// `verified`, else `self_reported` (PH-K3: the host gate is the
+    /// strongest label an automated run can carry).
+    ///
+    /// `reviewer_verdict` is the run's **final** reviewer verdict.
+    /// The report's `roles` array is an execution log: one entry per
+    /// role execution, appended in order, so a two-cycle run carries
+    /// two reviewer entries. The final verdict is the **last**
+    /// reviewer entry's `approved` flag when present, else that
+    /// entry's status — the verdict the run actually ended under.
+    /// (Rung 5 carried fix: this used to read the *first* reviewer
+    /// entry, so a run approved in cycle 1 and rejected in cycle 2
+    /// recorded `approved` while ending `failed`; PH-5's calibration
+    /// reads this field, and the rung-3 corpus was re-derived under
+    /// the corrected semantics — see the dated addendum beside the
+    /// rung-3 calibration proposal.)
     pub fn from_report(
         run_id: &str,
         task_class: &str,
@@ -215,13 +228,23 @@ impl RunOutcome {
                 .find(|r| r.get("role").and_then(|v| v.as_str()) == Some(name))
                 .copied()
         };
+        // The roles array is an execution log (one entry per role per
+        // cycle, in order): the final reviewer verdict is the LAST
+        // reviewer entry's, not the first (rung 5 carried fix).
+        let last_role_named = |name: &str| {
+            roles
+                .iter()
+                .rev()
+                .find(|r| r.get("role").and_then(|v| v.as_str()) == Some(name))
+                .copied()
+        };
         let plan = role_named("planner")
             .and_then(|r| r.get("summary"))
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_owned();
-        let reviewer_verdict =
-            role_named("reviewer").map(|r| match r.get("approved").and_then(|v| v.as_bool()) {
+        let reviewer_verdict = last_role_named("reviewer").map(|r| {
+            match r.get("approved").and_then(|v| v.as_bool()) {
                 Some(true) => "approved".to_owned(),
                 Some(false) => "not_approved".to_owned(),
                 None => r
@@ -229,7 +252,8 @@ impl RunOutcome {
                     .and_then(|v| v.as_str())
                     .unwrap_or("unverified")
                     .to_owned(),
-            });
+            }
+        });
         let mut model_ids: Vec<String> = Vec::new();
         for role in &roles {
             if let Some(model) = role.get("model").and_then(|v| v.as_str())
@@ -764,6 +788,71 @@ mod tests {
         // returncode key is invented for them.
         assert!(checks[0].get("returncode").is_none());
         assert!(checks[1].get("returncode").is_none());
+    }
+
+    /// A two-cycle report: the reviewer entries of both cycles, in
+    /// execution order, with the given per-cycle `approved` flags.
+    fn two_cycle_report(first: bool, second: bool, status: &str) -> serde_json::Value {
+        serde_json::json!({
+            "status": status,
+            "verified": false,
+            "roles": [
+                {"role": "planner", "model": "m-plan", "status": "ok", "summary": "plan"},
+                {"role": "coder", "model": "m-code", "status": "ok", "summary": "v1"},
+                {"role": "reviewer", "model": "m-rev", "status": "ok", "approved": first},
+                {"role": "coder", "model": "m-code", "status": "ok", "summary": "v2"},
+                {"role": "reviewer", "model": "m-rev", "status": "ok", "approved": second}
+            ],
+            "checks": [],
+            "cycles": 2,
+            "tool_calls": 4,
+            "model_calls": 5
+        })
+    }
+
+    #[test]
+    fn from_report_records_the_final_verdict_approve_then_reject() {
+        // Rung 5 carried fix: cycle 1 approved, cycle 2 rejected, the
+        // run ended failed. The row must carry the FINAL verdict —
+        // the first-entry reading recorded `approved` here, which is
+        // exactly the wart the rung-4 report flagged (corpus run F2).
+        let report = two_cycle_report(true, false, "failed");
+        let row = RunOutcome::from_report("run-2cycle-ar", "flow_run", &report, 9);
+        assert_eq!(row.reviewer_verdict.as_deref(), Some("not_approved"));
+        assert_eq!(row.status, "failed");
+        assert_eq!(row.cycles, 2);
+    }
+
+    #[test]
+    fn from_report_records_the_final_verdict_reject_then_approve() {
+        // The mirror case: an early rejection the repair cycle
+        // overturned. The final verdict is the approval the run
+        // ended under.
+        let report = two_cycle_report(false, true, "ok");
+        let row = RunOutcome::from_report("run-2cycle-ra", "flow_run", &report, 9);
+        assert_eq!(row.reviewer_verdict.as_deref(), Some("approved"));
+        assert_eq!(row.status, "ok");
+    }
+
+    #[test]
+    fn from_report_final_verdict_falls_back_to_the_last_entrys_status() {
+        // No `approved` flag on either reviewer entry: the fallback
+        // status is the LAST entry's, never the first's.
+        let report = serde_json::json!({
+            "status": "unverified",
+            "verified": false,
+            "roles": [
+                {"role": "reviewer", "model": "m-rev", "status": "ok"},
+                {"role": "coder", "model": "m-code", "status": "ok", "summary": "v2"},
+                {"role": "reviewer", "model": "m-rev", "status": "error"}
+            ],
+            "checks": [],
+            "cycles": 2,
+            "tool_calls": 0,
+            "model_calls": 0
+        });
+        let row = RunOutcome::from_report("run-fallback", "flow_run", &report, 9);
+        assert_eq!(row.reviewer_verdict.as_deref(), Some("error"));
     }
 
     #[test]
