@@ -59,9 +59,7 @@ pub use budget::{
     BudgetProposal, ClassFit, CorpusLabel, LabelledRun, Margin, OutcomeRow, ReplayReport, Split,
     Truth,
 };
-pub use capture::{
-    CaptureStore, LessonCapture, RecordedCapture, lane_labels_for_trajectory,
-};
+pub use capture::{CaptureStore, LessonCapture, RecordedCapture, lane_labels_for_trajectory};
 pub use divergence::{DivergenceStore, PlanDivergence, RecordedDivergence, derive_divergence};
 pub use error::SelfImproveError;
 pub use escape::{

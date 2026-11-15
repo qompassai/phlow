@@ -25,9 +25,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use phlow_self_improve::budget::{
-    join_labelled, load_corpus_labels, load_outcome_rows,
-};
+use phlow_self_improve::budget::{join_labelled, load_corpus_labels, load_outcome_rows};
 use phlow_self_improve::reviewer_cal::{
     CalibrationVerdict, ReliabilityRow, rederive_final_verdicts, reliability_table,
 };
@@ -120,7 +118,9 @@ fn index_reports(dir: &Path) -> Result<(BTreeMap<String, serde_json::Value>, usi
         }
         seen += 1;
         if seen > REPORT_FILES_MAX {
-            return Err(format!("reports dir exceeds {REPORT_FILES_MAX} report files"));
+            return Err(format!(
+                "reports dir exceeds {REPORT_FILES_MAX} report files"
+            ));
         }
         let path = entry.path();
         let oversize = path
@@ -242,8 +242,7 @@ fn render_addendum(
             fin.map(|f| f.false_rejections.to_string())
                 .unwrap_or_else(|| "n/a".to_owned()),
             verdict_text(row.verdict),
-            fin.map(|f| verdict_text(f.verdict))
-                .unwrap_or("(missing)"),
+            fin.map(|f| verdict_text(f.verdict)).unwrap_or("(missing)"),
         ));
     }
     out.push('\n');

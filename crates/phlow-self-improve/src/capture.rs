@@ -395,8 +395,7 @@ fn read_capture(row: &rusqlite::Row<'_>) -> rusqlite::Result<RecordedCapture> {
 /// the digest says what the run *was* and how it ended, never
 /// invents the task.
 fn lesson_digest(row: &crate::outcome::RunOutcome) -> String {
-    let checks: Vec<serde_json::Value> =
-        serde_json::from_str(&row.checks_json).unwrap_or_default();
+    let checks: Vec<serde_json::Value> = serde_json::from_str(&row.checks_json).unwrap_or_default();
     let check_summary = if checks.is_empty() {
         "none recorded".to_owned()
     } else {
@@ -493,7 +492,12 @@ mod tests {
     #[test]
     fn public_trajectory_captures_general_and_sfw() {
         let (_path, outcomes, captures) = store_pair();
-        record_run(&outcomes, "run-pub", "ok", VerificationStrength::ToolChecked);
+        record_run(
+            &outcomes,
+            "run-pub",
+            "ok",
+            VerificationStrength::ToolChecked,
+        );
         let recorded = captures
             .capture(&outcomes, "run-pub", Some(&snapshot(ReaderSet::All)))
             .expect("capture");
@@ -501,7 +505,10 @@ mod tests {
         assert_eq!(recorded.capture.content_label, CONTENT_SFW);
         assert_eq!(recorded.capture.trajectory_audience, "public");
         assert_eq!(recorded.capture.trajectory_readers, None);
-        assert_eq!(recorded.capture.trajectory_trust.as_deref(), Some("operator"));
+        assert_eq!(
+            recorded.capture.trajectory_trust.as_deref(),
+            Some("operator")
+        );
         assert!(recorded.capture.lesson_eligible);
         assert_eq!(recorded.capture.result, "ok");
     }
@@ -509,7 +516,12 @@ mod tests {
     #[test]
     fn restricted_trajectory_captures_restricted_and_nsfw() {
         let (_path, outcomes, captures) = store_pair();
-        record_run(&outcomes, "run-res", "failed", VerificationStrength::SelfReported);
+        record_run(
+            &outcomes,
+            "run-res",
+            "failed",
+            VerificationStrength::SelfReported,
+        );
         let mut set = std::collections::BTreeSet::new();
         set.insert("lane-member@example".to_owned());
         set.insert("second@example".to_owned());
@@ -529,8 +541,15 @@ mod tests {
     #[test]
     fn missing_trajectory_fails_closed_to_restricted() {
         let (_path, outcomes, captures) = store_pair();
-        record_run(&outcomes, "run-none", "ok", VerificationStrength::OwnerJudged);
-        let recorded = captures.capture(&outcomes, "run-none", None).expect("capture");
+        record_run(
+            &outcomes,
+            "run-none",
+            "ok",
+            VerificationStrength::OwnerJudged,
+        );
+        let recorded = captures
+            .capture(&outcomes, "run-none", None)
+            .expect("capture");
         assert_eq!(recorded.capture.origin_lane, LANE_RESTRICTED);
         assert_eq!(recorded.capture.content_label, CONTENT_NSFW);
         assert_eq!(recorded.capture.trajectory_audience, "none");
@@ -543,10 +562,20 @@ mod tests {
         let refused = captures.capture(&outcomes, "run-ghost", None);
         assert!(matches!(
             refused,
-            Err(SelfImproveError::CaptureInvalid { field: "run_id", .. })
+            Err(SelfImproveError::CaptureInvalid {
+                field: "run_id",
+                ..
+            })
         ));
-        record_run(&outcomes, "run-once", "ok", VerificationStrength::ToolChecked);
-        captures.capture(&outcomes, "run-once", None).expect("first");
+        record_run(
+            &outcomes,
+            "run-once",
+            "ok",
+            VerificationStrength::ToolChecked,
+        );
+        captures
+            .capture(&outcomes, "run-once", None)
+            .expect("first");
         let duplicate = captures.capture(&outcomes, "run-once", None);
         assert!(matches!(
             duplicate,
@@ -557,12 +586,24 @@ mod tests {
     #[test]
     fn nsfw_captures_are_invisible_to_an_sfw_scope() {
         let (_path, outcomes, captures) = store_pair();
-        record_run(&outcomes, "run-sfw", "ok", VerificationStrength::ToolChecked);
-        record_run(&outcomes, "run-nsfw", "ok", VerificationStrength::ToolChecked);
+        record_run(
+            &outcomes,
+            "run-sfw",
+            "ok",
+            VerificationStrength::ToolChecked,
+        );
+        record_run(
+            &outcomes,
+            "run-nsfw",
+            "ok",
+            VerificationStrength::ToolChecked,
+        );
         captures
             .capture(&outcomes, "run-sfw", Some(&snapshot(ReaderSet::All)))
             .expect("sfw capture");
-        captures.capture(&outcomes, "run-nsfw", None).expect("nsfw capture");
+        captures
+            .capture(&outcomes, "run-nsfw", None)
+            .expect("nsfw capture");
         let sfw_view = captures.list_visible(CONTENT_SFW, 10).expect("sfw view");
         assert_eq!(sfw_view.len(), 1);
         assert_eq!(sfw_view[0].capture.run_id, "run-sfw");
@@ -573,8 +614,15 @@ mod tests {
     #[test]
     fn captures_are_append_only() {
         let (path, outcomes, captures) = store_pair();
-        record_run(&outcomes, "run-lock", "ok", VerificationStrength::ToolChecked);
-        captures.capture(&outcomes, "run-lock", None).expect("capture");
+        record_run(
+            &outcomes,
+            "run-lock",
+            "ok",
+            VerificationStrength::ToolChecked,
+        );
+        captures
+            .capture(&outcomes, "run-lock", None)
+            .expect("capture");
         let conn = Connection::open(&path).expect("raw conn");
         assert!(
             conn.execute("UPDATE lesson_captures SET result = 'ok'", [])

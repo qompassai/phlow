@@ -517,7 +517,10 @@ mod tests {
         let (rederived, changes, missing) = rederive_final_verdicts(&runs, &reports);
         // "gone" has no report: kept as recorded, counted missing.
         assert_eq!(missing, 1);
-        assert_eq!(rederived[3].row.reviewer_verdict.as_deref(), Some("approved"));
+        assert_eq!(
+            rederived[3].row.reviewer_verdict.as_deref(),
+            Some("approved")
+        );
         // Both two-cycle runs moved; the one-cycle run did not.
         assert_eq!(changes.len(), 2);
         assert_eq!(changes[0].run_id, "ar");
@@ -526,9 +529,18 @@ mod tests {
         assert_eq!(changes[1].run_id, "ra");
         assert_eq!(changes[1].recorded.as_deref(), Some("not_approved"));
         assert_eq!(changes[1].final_verdict.as_deref(), Some("approved"));
-        assert_eq!(rederived[0].row.reviewer_verdict.as_deref(), Some("not_approved"));
-        assert_eq!(rederived[1].row.reviewer_verdict.as_deref(), Some("approved"));
-        assert_eq!(rederived[2].row.reviewer_verdict.as_deref(), Some("approved"));
+        assert_eq!(
+            rederived[0].row.reviewer_verdict.as_deref(),
+            Some("not_approved")
+        );
+        assert_eq!(
+            rederived[1].row.reviewer_verdict.as_deref(),
+            Some("approved")
+        );
+        assert_eq!(
+            rederived[2].row.reviewer_verdict.as_deref(),
+            Some("approved")
+        );
     }
 
     #[test]

@@ -80,8 +80,7 @@ enum Command {
 /// arguments are usage errors, never guesses.
 fn parse_args(argv: &[String]) -> Result<Command, String> {
     let (mode, rest) = argv.split_first().ok_or_else(|| {
-        "a subcommand is required: build | show | import-report | capture | captures"
-            .to_owned()
+        "a subcommand is required: build | show | import-report | capture | captures".to_owned()
     })?;
     let mut db: Option<PathBuf> = None;
     let mut class: Option<String> = None;

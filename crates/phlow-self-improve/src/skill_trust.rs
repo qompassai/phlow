@@ -114,8 +114,7 @@ pub fn wilson_interval(successes: usize, trials: usize) -> (f64, f64) {
     let z2 = WILSON_Z * WILSON_Z;
     let denominator = 1.0 + z2 / n;
     let centre = phat + z2 / (2.0 * n);
-    let margin = WILSON_Z
-        * ((phat * (1.0 - phat) + z2 / (4.0 * n)) / n).sqrt();
+    let margin = WILSON_Z * ((phat * (1.0 - phat) + z2 / (4.0 * n)) / n).sqrt();
     (
         (centre - margin) / denominator,
         (centre + margin) / denominator,
@@ -234,10 +233,7 @@ pub fn skill_evidence(rows: &[SkillTrustRow]) -> Vec<SkillEvidence> {
 
 /// Render the trust report: method, the empty-evidence gap, and
 /// the per-skill table. Pure — the caller owns the write.
-pub fn render_trust_report(
-    rows: &[SkillTrustRow],
-    evidence: &[SkillEvidence],
-) -> String {
+pub fn render_trust_report(rows: &[SkillTrustRow], evidence: &[SkillEvidence]) -> String {
     let with_skills = rows.iter().filter(|row| !row.skills.is_empty()).count();
     let mut out = String::new();
     out.push_str("# Skill trust from run rows\n\n");
@@ -302,7 +298,12 @@ pub fn render_trust_report(
 mod tests {
     use super::*;
 
-    fn row(run_id: &str, status: &str, strength: VerificationStrength, skills: &[&str]) -> SkillTrustRow {
+    fn row(
+        run_id: &str,
+        status: &str,
+        strength: VerificationStrength,
+        skills: &[&str],
+    ) -> SkillTrustRow {
         SkillTrustRow {
             run_id: run_id.to_owned(),
             status: status.to_owned(),
@@ -325,9 +326,21 @@ mod tests {
     #[test]
     fn one_factual_failure_demotes_despite_many_successes() {
         let mut rows: Vec<SkillTrustRow> = (0..9)
-            .map(|i| row(&format!("run-ok-{i}"), "ok", VerificationStrength::ToolChecked, &["good"]))
+            .map(|i| {
+                row(
+                    &format!("run-ok-{i}"),
+                    "ok",
+                    VerificationStrength::ToolChecked,
+                    &["good"],
+                )
+            })
             .collect();
-        rows.push(row("run-bad", "failed", VerificationStrength::ToolChecked, &["good"]));
+        rows.push(row(
+            "run-bad",
+            "failed",
+            VerificationStrength::ToolChecked,
+            &["good"],
+        ));
         let evidence = skill_evidence(&rows);
         assert_eq!(evidence.len(), 1);
         assert_eq!(evidence[0].runs, 10);
@@ -339,7 +352,14 @@ mod tests {
     #[test]
     fn a_self_reported_failure_does_not_demote() {
         let mut rows: Vec<SkillTrustRow> = (0..9)
-            .map(|i| row(&format!("run-ok-{i}"), "ok", VerificationStrength::ToolChecked, &["good"]))
+            .map(|i| {
+                row(
+                    &format!("run-ok-{i}"),
+                    "ok",
+                    VerificationStrength::ToolChecked,
+                    &["good"],
+                )
+            })
             .collect();
         rows.push(row(
             "run-unproven",
@@ -356,7 +376,14 @@ mod tests {
     #[test]
     fn too_few_runs_stays_provisional() {
         let rows: Vec<SkillTrustRow> = (0..4)
-            .map(|i| row(&format!("run-{i}"), "ok", VerificationStrength::ToolChecked, &["new"]))
+            .map(|i| {
+                row(
+                    &format!("run-{i}"),
+                    "ok",
+                    VerificationStrength::ToolChecked,
+                    &["new"],
+                )
+            })
             .collect();
         let evidence = skill_evidence(&rows);
         assert_eq!(evidence[0].state, SkillState::Provisional);
@@ -365,8 +392,18 @@ mod tests {
     #[test]
     fn abandoned_runs_are_neither_success_nor_failure() {
         let rows = vec![
-            row("run-ok", "ok", VerificationStrength::ToolChecked, &["mixed"]),
-            row("run-set-aside", "abandoned", VerificationStrength::ToolChecked, &["mixed"]),
+            row(
+                "run-ok",
+                "ok",
+                VerificationStrength::ToolChecked,
+                &["mixed"],
+            ),
+            row(
+                "run-set-aside",
+                "abandoned",
+                VerificationStrength::ToolChecked,
+                &["mixed"],
+            ),
         ];
         let evidence = skill_evidence(&rows);
         assert_eq!(evidence[0].runs, 2);
@@ -376,10 +413,8 @@ mod tests {
 
     #[test]
     fn loader_reads_a_pre_ph8_database_with_empty_skills() {
-        let dir = std::env::temp_dir().join(format!(
-            "phlow-skill-trust-test-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("phlow-skill-trust-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("test setup: create temp dir");
         let path = dir.join("feedback.db");
         {

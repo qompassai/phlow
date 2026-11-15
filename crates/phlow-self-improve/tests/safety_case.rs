@@ -10,12 +10,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use phlow_flowguard::label::{LabelSnapshot, ReaderSet};
 use phlow_self_improve::capture::CaptureStore;
 use phlow_self_improve::divergence::{DivergenceStore, PlanDivergence};
-use phlow_self_improve::skill_trust::{SkillState, load_skill_rows, skill_evidence};
 use phlow_self_improve::escape::{
     Escape, EscapeStore, cluster_escapes, queue_check_proposal, validate_check,
 };
 use phlow_self_improve::lessons::LessonStore;
 use phlow_self_improve::outcome::{RunOutcome, VerificationStrength};
+use phlow_self_improve::skill_trust::{SkillState, load_skill_rows, skill_evidence};
 use phlow_self_improve::{OutcomeStore, PromptEvolver, SelfImproveError, SkillStore};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -407,9 +407,9 @@ fn capture_lane_comes_from_the_trajectory_never_the_row() {
         trust: "operator".to_owned(),
     };
     let restricted = LabelSnapshot {
-        readers: ReaderSet::Only(std::collections::BTreeSet::from([
-            "lane@example".to_owned()
-        ])),
+        readers: ReaderSet::Only(std::collections::BTreeSet::from(
+            ["lane@example".to_owned()],
+        )),
         trust: "operator".to_owned(),
     };
     let pub_cap = captures
@@ -484,7 +484,7 @@ fn skill_trust_recomputes_from_rows_and_one_factual_failure_demotes() {
     let dir = temp_dir("skill-trust");
     let db = dir.join("feedback.db");
     let outcomes = OutcomeStore::open(&db).unwrap();
-    let mut record = |run_id: &str, status: &str, strength, skills: Vec<String>| {
+    let record = |run_id: &str, status: &str, strength, skills: Vec<String>| {
         let mut row = labelled_row(run_id, status, strength);
         row.skills = skills;
         outcomes.record(&row).unwrap();
