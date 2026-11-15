@@ -210,9 +210,13 @@ pub fn intake_object(
             "the outcome row's store timestamp does not parse",
         )
     })?;
+    // A reader count is recorded only for a named-reader
+    // trajectory; a public one reads as "all", an absent one as
+    // "none" — the audience word beside it carries which.
     let readers = match capture.trajectory_readers {
         Some(count) => count.to_string(),
-        None => "all".to_owned(),
+        None if capture.trajectory_audience == "public" => "all".to_owned(),
+        None => "none".to_owned(),
     };
     let evidence = format!(
         "phlow PH-7 capture: flowguard trajectory audience={}, readers={}, trust={}; \
