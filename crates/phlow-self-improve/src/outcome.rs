@@ -151,7 +151,10 @@ pub struct RunOutcome {
     /// The plan the run executed (planner summary).
     pub plan: String,
     /// Per-check results as a JSON array of `{name, status}` objects,
-    /// serialized by [`RunOutcome::from_report`] or the caller.
+    /// serialized by [`RunOutcome::from_report`] or the caller. An
+    /// entry also carries `returncode` when the check ran a process:
+    /// the status label collapses every nonzero exit, the code does
+    /// not (rung 4, investigation 2).
     pub checks_json: String,
     /// The reviewer's verdict label, when a reviewer ran.
     pub reviewer_verdict: Option<String>,
@@ -242,10 +245,43 @@ impl RunOutcome {
                 checks
                     .iter()
                     .map(|check| {
-                        serde_json::json!({
-                            "name": check.get("name").and_then(|v| v.as_str()).unwrap_or(""),
-                            "status": check.get("status").and_then(|v| v.as_str()).unwrap_or(""),
-                        })
+                        let mut entry = serde_json::Map::new();
+                        entry.insert(
+                            "name".to_owned(),
+                            serde_json::Value::String(
+                                check
+                                    .get("name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_owned(),
+                            ),
+                        );
+                        entry.insert(
+                            "status".to_owned(),
+                            serde_json::Value::String(
+                                check
+                                    .get("status")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_owned(),
+                            ),
+                        );
+                        // The check's process exit code survives the
+                        // recording (rung 4, investigation 2): the
+                        // status string collapses every nonzero exit
+                        // to one label, but exit 2 ("unproven", e.g.
+                        // the theodolite fleet check) and exit 1 (a
+                        // plain failure) are different evidence, and
+                        // PH-2/PH-3 read this row. Entries for checks
+                        // that never ran a process carry no code —
+                        // absent, never invented.
+                        if let Some(code) = check.get("returncode").and_then(|v| v.as_i64()) {
+                            entry.insert(
+                                "returncode".to_owned(),
+                                serde_json::Value::Number(code.into()),
+                            );
+                        }
+                        serde_json::Value::Object(entry)
                     })
                     .collect()
             })
@@ -719,6 +755,51 @@ mod tests {
         let checks: serde_json::Value = serde_json::from_str(&row.checks_json).unwrap();
         assert_eq!(checks.as_array().unwrap().len(), 2);
         assert_eq!(checks[1]["status"], "failed");
+        // Neither check ran with a recorded process exit: no
+        // returncode key is invented for them.
+        assert!(checks[0].get("returncode").is_none());
+        assert!(checks[1].get("returncode").is_none());
+    }
+
+    #[test]
+    fn from_report_preserves_check_returncodes() {
+        // Rung 4, investigation 2: the per-check report carries the
+        // process exit code; the outcome row must keep it, so an exit
+        // 2 ("unproven") stays distinguishable from an exit 1
+        // (failed) after the status labels collapse both to text.
+        let report = serde_json::json!({
+            "status": "unverified",
+            "verified": false,
+            "roles": [],
+            "checks": [
+                {"name": "theodolite_zero", "status": "failed", "returncode": 2},
+                {"name": "tree_freeze", "status": "failed", "returncode": 1},
+                {"name": "toolchain_pin", "status": "ok", "returncode": 0},
+                {"name": "never_ran", "status": "unavailable"}
+            ],
+            "cycles": 1,
+            "tool_calls": 0,
+            "model_calls": 0
+        });
+        let row = RunOutcome::from_report("run-rc", "flow_run", &report, 7);
+        let checks: serde_json::Value = serde_json::from_str(&row.checks_json).unwrap();
+        let checks = checks.as_array().unwrap();
+        assert_eq!(checks.len(), 4);
+        assert_eq!(checks[0]["status"], "failed");
+        assert_eq!(checks[0]["returncode"], 2);
+        assert_eq!(checks[1]["status"], "failed");
+        assert_eq!(checks[1]["returncode"], 1);
+        assert_eq!(checks[2]["status"], "ok");
+        assert_eq!(checks[2]["returncode"], 0);
+        // A check that never ran a process keeps no code.
+        assert!(checks[3].get("returncode").is_none());
+        // The recorded row round-trips through the store unchanged.
+        let db = db_path("returncode");
+        let store = OutcomeStore::open(&db).unwrap();
+        store.record(&row).unwrap();
+        let read = store.get("run-rc").unwrap().unwrap();
+        assert_eq!(read.outcome.checks_json, row.checks_json);
+        cleanup(&db);
     }
 
     #[test]

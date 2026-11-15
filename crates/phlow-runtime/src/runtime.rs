@@ -241,7 +241,17 @@ fn apply_coverage_gate(verification: &mut Value, coverage: &[Value], revision: u
 }
 
 /// Names of required, passing static checks covering a path's language.
+///
+/// A configured filetype covers the path when it names the language
+/// (`"rust"`), the extension with or without its dot (`".rs"` or
+/// `"rs"`), or the wildcard `"*"`. All three spellings appear in real
+/// operator configs — the rung-3 corpus seat declared `["rs", "toml"]`
+/// and silently matched nothing, so every run on that seat failed the
+/// coverage gate despite green checks (rung 4, investigation 1). The
+/// matcher accepts every natural spelling rather than leaving one
+/// spelling as a silent no-evidence trap.
 fn check_evidence(checks: &[Value], language: &str, extension: &str) -> Vec<String> {
+    let undotted = extension.strip_prefix('.').unwrap_or(extension);
     checks
         .iter()
         .filter(|check| {
@@ -257,7 +267,10 @@ fn check_evidence(checks: &[Value], language: &str, extension: &str) -> Vec<Stri
                     .is_some_and(|filetypes| {
                         filetypes.iter().any(|filetype| {
                             filetype.as_str().is_some_and(|filetype| {
-                                filetype == language || filetype == extension || filetype == "*"
+                                filetype == language
+                                    || filetype == extension
+                                    || filetype == undotted
+                                    || filetype == "*"
                             })
                         })
                     })
@@ -3210,5 +3223,69 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
                 backend.close();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn static_check(name: &str, filetypes: &[&str]) -> Value {
+        serde_json::json!({
+            "name": name,
+            "required": true,
+            "status": "ok",
+            "kind": "diagnostics",
+            "filetypes": filetypes,
+        })
+    }
+
+    #[test]
+    fn evidence_accepts_language_dotted_and_undotted_spellings() {
+        // Validation: every natural spelling of a filetype covers the
+        // path — the language name, the dotted extension, the undotted
+        // extension, and the wildcard.
+        for filetypes in [["rust"], [".rs"], ["rs"], ["*"]] {
+            let checks = vec![static_check("diag", &filetypes)];
+            assert_eq!(
+                check_evidence(&checks, "rust", ".rs"),
+                vec!["diag".to_owned()],
+                "filetypes {filetypes:?} must cover a .rs path"
+            );
+        }
+        // The rung-3 corpus seat's exact shape: undotted extensions
+        // for two languages in one check.
+        let checks = vec![static_check("theodolite_zero", &["rs", "toml"])];
+        assert_eq!(
+            check_evidence(&checks, "rust", ".rs"),
+            vec!["theodolite_zero".to_owned()]
+        );
+    }
+
+    #[test]
+    fn evidence_rejects_non_covering_or_unqualified_checks() {
+        // Adversarial: a filetype for another language covers nothing.
+        let checks = vec![static_check("diag", &["python"])];
+        assert!(check_evidence(&checks, "rust", ".rs").is_empty());
+        // A check that is not required is not evidence.
+        let mut check = static_check("diag", &["rs"]);
+        check["required"] = Value::Bool(false);
+        assert!(check_evidence(&[check], "rust", ".rs").is_empty());
+        // A check that did not pass is not evidence.
+        let mut check = static_check("diag", &["rs"]);
+        check["status"] = Value::String("failed".to_owned());
+        assert!(check_evidence(&[check], "rust", ".rs").is_empty());
+        // A passing required check of a non-static kind is not
+        // evidence: the gate is about static analysis specifically.
+        let mut check = static_check("diag", &["rs"]);
+        check["kind"] = Value::String("test".to_owned());
+        assert!(check_evidence(&[check], "rust", ".rs").is_empty());
+        // A check with no filetypes array covers nothing.
+        let mut check = static_check("diag", &["rs"]);
+        check
+            .as_object_mut()
+            .expect("check object")
+            .remove("filetypes");
+        assert!(check_evidence(&[check], "rust", ".rs").is_empty());
     }
 }
