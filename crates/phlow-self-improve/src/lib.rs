@@ -12,6 +12,11 @@
 //! versioned cards, retrieved by the runtime as planner context —
 //! never as prompt mutation.
 //!
+//! PH-3 adds escapes and check proposals ([`escape`]): defects the
+//! approved checks passed, recorded append-only and clustered into
+//! proposed checks that are validated against both revisions and
+//! queued through `phlow-approval` — proposed, never admitted.
+//!
 //! Nothing here mutates prompts, skills, or Git history automatically.
 //! Feedback is recorded for operator review; evolution and mutation always
 //! fail with the exact Python denials.
@@ -31,6 +36,7 @@
 pub mod budget;
 pub mod divergence;
 pub mod error;
+pub mod escape;
 pub mod feedback;
 pub mod lessons;
 pub mod outcome;
@@ -44,6 +50,10 @@ pub use budget::{
 };
 pub use divergence::{DivergenceStore, PlanDivergence, RecordedDivergence, derive_divergence};
 pub use error::SelfImproveError;
+pub use escape::{
+    CheckValidation, Escape, EscapeCluster, EscapeStore, ProposalSection, RecordedEscape,
+    cluster_escapes, queue_check_proposal, render_check_proposals, validate_check,
+};
 pub use feedback::{FeedbackEntry, FeedbackStore};
 pub use lessons::{LessonCard, LessonDivergence, LessonStore, render_card};
 pub use outcome::{OutcomeStore, RecordedOutcome, RunOutcome, VerificationStrength};

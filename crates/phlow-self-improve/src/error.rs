@@ -59,6 +59,21 @@ pub enum SelfImproveError {
         /// Why it was refused.
         reason: String,
     },
+    /// An escape record already exists for this escape id; escapes
+    /// are recorded once, ever (PH-3).
+    EscapeDuplicate {
+        /// The escape that already has a record.
+        escape_id: String,
+    },
+    /// An escape record failed validation and was refused (PH-3):
+    /// unknown run, a run whose checks were not all green (not an
+    /// escape), or an out-of-bounds field.
+    EscapeInvalid {
+        /// Which field was refused.
+        field: &'static str,
+        /// Why it was refused.
+        reason: String,
+    },
     /// A skill mutation was requested; automatic mutation is disabled.
     SkillMutationDisabled,
     /// A Git mutation was requested; automatic Git mutation is disabled.
@@ -95,6 +110,12 @@ impl fmt::Display for SelfImproveError {
             }
             SelfImproveError::DivergenceInvalid { field, reason } => {
                 write!(f, "divergence field {field} refused: {reason}")
+            }
+            SelfImproveError::EscapeDuplicate { escape_id } => {
+                write!(f, "escape {escape_id} already has a record")
+            }
+            SelfImproveError::EscapeInvalid { field, reason } => {
+                write!(f, "escape field {field} refused: {reason}")
             }
             SelfImproveError::SkillMutationDisabled => {
                 write!(f, "Automatic skill mutation is disabled; edit manually")

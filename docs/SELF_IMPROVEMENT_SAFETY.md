@@ -120,6 +120,39 @@ visibility); `safety_case::divergence_records_and_lesson_cards_are_append_only`,
 runtime `lesson_cards` suite (class recording, context injection,
 prompt byte-identity, with/without status parity).
 
+### 7. A proposed check never admits itself (PH-3)
+
+Denial 2 says the loop may never change its own checks. PH-3's
+check proposals are the proposal side of that denial, held to
+three rules:
+
+- **Escapes are evidence-checked and append-only.** An escape
+  records only against a PH-1 outcome row whose recorded checks
+  are non-empty and all `ok` — a defect a check caught is not an
+  escape and the store refuses to call it one. The `escapes`
+  table carries the same UPDATE/DELETE triggers as run history,
+  and the record copies the escaped run's task class and lane
+  labels from its outcome row; they cannot be re-labelled at
+  record time.
+- **Validation before queueing.** A proposal queues only when its
+  exact argv fails on the escaped revision and passes on the
+  fixed one, run directly (no shell) under a deadline by the
+  operator-supplied revision pair. An unvalidated or
+  gate-failing proposal is rendered as such and never queued.
+- **Pending is the end of the pipeline.** Queueing admits the
+  proposal to `phlow-approval` as a pending record (no permission
+  change: admitting a check grants the loop nothing). No code
+  path in the proposal pipeline decides a record, writes a
+  config, or adds a check; admission takes an operator's verdict
+  on the record plus the operator's own config edit.
+
+Tests: `escape::tests` (clean-run requirement, append-only,
+clustering, validation gate);
+`safety_case::escapes_are_append_only_and_require_a_clean_run`,
+`safety_case::a_check_proposal_never_admits_itself` (pending
+state, non-operator and reserved-actor refusals, bystander
+config byte-identical).
+
 ## What is *not* a denial (and must not become one silently)
 
 - Recording outcomes and feedback is append-only writing by the

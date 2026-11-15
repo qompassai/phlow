@@ -8,6 +8,9 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use phlow_self_improve::divergence::{DivergenceStore, PlanDivergence};
+use phlow_self_improve::escape::{
+    Escape, EscapeStore, cluster_escapes, queue_check_proposal, validate_check,
+};
 use phlow_self_improve::lessons::LessonStore;
 use phlow_self_improve::outcome::{RunOutcome, VerificationStrength};
 use phlow_self_improve::{OutcomeStore, PromptEvolver, SelfImproveError, SkillStore};
@@ -145,6 +148,158 @@ fn divergence_records_and_lesson_cards_are_append_only() {
     assert!(other
         .execute("DELETE FROM lesson_cards WHERE task_class = 'code_fix'", [])
         .is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn escapes_are_append_only_and_require_a_clean_run() {
+    // PH-3's recording rule (safety case §7): an escape exists only
+    // where the approved checks all passed. A run with a failed
+    // check caught its defect — recording it as an escape is
+    // refused — and a recorded escape cannot be rewritten.
+    let dir = temp_dir("ph3-recording");
+    let db = dir.join("feedback.db");
+    let outcomes = OutcomeStore::open(&db).unwrap();
+    let mut row = RunOutcome {
+        run_id: "run-caught".to_owned(),
+        task_class: "code_fix".to_owned(),
+        plan: "plan".to_owned(),
+        checks_json: "[{\"name\":\"tests\",\"status\":\"failed\",\"returncode\":1}]".to_owned(),
+        reviewer_verdict: Some("not_approved".to_owned()),
+        cycles: 1,
+        tool_calls: 1,
+        model_calls: 1,
+        context_chars: None,
+        wall_ms: 1,
+        model_ids: Vec::new(),
+        status: "failed".to_owned(),
+        verification_strength: VerificationStrength::SelfReported,
+        origin_lane: "phlow".to_owned(),
+        content_label: "nsfw".to_owned(),
+        evidence: "safety case".to_owned(),
+    };
+    outcomes.record(&row).unwrap();
+    let escapes = EscapeStore::open(&db).unwrap();
+    let escape = Escape {
+        escape_id: "esc-1".to_owned(),
+        run_id: "run-caught".to_owned(),
+        defect: "wrong constant".to_owned(),
+        found_by: "reviewer".to_owned(),
+        check_name: "osc_bounds".to_owned(),
+        check_argv: vec!["sh".to_owned(), "check.sh".to_owned()],
+    };
+    assert!(matches!(
+        escapes.record(&outcomes, &escape),
+        Err(SelfImproveError::EscapeInvalid {
+            field: "checks_json",
+            ..
+        })
+    ));
+    // The same escape against a clean run records — and is then
+    // append-only against any connection.
+    row.run_id = "run-clean".to_owned();
+    row.checks_json = "[{\"name\":\"tests\",\"status\":\"ok\",\"returncode\":0}]".to_owned();
+    outcomes.record(&row).unwrap();
+    let mut escape = escape.clone();
+    escape.run_id = "run-clean".to_owned();
+    escapes.record(&outcomes, &escape).unwrap();
+    let other = rusqlite::Connection::open(&db).unwrap();
+    assert!(other
+        .execute("UPDATE escapes SET defect = 'rewritten' WHERE escape_id = 'esc-1'", [])
+        .is_err());
+    assert!(other
+        .execute("DELETE FROM escapes WHERE escape_id = 'esc-1'", [])
+        .is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_check_proposal_never_admits_itself() {
+    // PH-3's admission rule (safety case §7): the whole proposal
+    // path — record, cluster, validate, queue — ends at a PENDING
+    // approval record and a proposal file. It writes no config,
+    // admits no check, and no actor but an allowlisted operator can
+    // move the record.
+    let dir = temp_dir("ph3-admission");
+    let db = dir.join("feedback.db");
+    // A bystander config file the pipeline must never touch.
+    let config = dir.join("config.toml");
+    let config_bytes = b"[checks.tests]\ncmd = [\"true\"]\n".to_vec();
+    std::fs::write(&config, &config_bytes).unwrap();
+
+    let outcomes = OutcomeStore::open(&db).unwrap();
+    outcomes
+        .record(&RunOutcome {
+            run_id: "run-1".to_owned(),
+            task_class: "code_fix".to_owned(),
+            plan: "plan".to_owned(),
+            checks_json: "[{\"name\":\"tests\",\"status\":\"ok\",\"returncode\":0}]".to_owned(),
+            reviewer_verdict: Some("approved".to_owned()),
+            cycles: 1,
+            tool_calls: 1,
+            model_calls: 1,
+            context_chars: None,
+            wall_ms: 1,
+            model_ids: Vec::new(),
+            status: "ok".to_owned(),
+            verification_strength: VerificationStrength::ToolChecked,
+            origin_lane: "phlow".to_owned(),
+            content_label: "nsfw".to_owned(),
+            evidence: "safety case".to_owned(),
+        })
+        .unwrap();
+    let escapes = EscapeStore::open(&db).unwrap();
+    escapes
+        .record(
+            &outcomes,
+            &Escape {
+                escape_id: "esc-1".to_owned(),
+                run_id: "run-1".to_owned(),
+                defect: "wrong constant shipped".to_owned(),
+                found_by: "reviewer".to_owned(),
+                check_name: "osc_bounds".to_owned(),
+                check_argv: vec!["sh".to_owned(), "check.sh".to_owned()],
+            },
+        )
+        .unwrap();
+    let clusters = cluster_escapes(&escapes.list(10).unwrap());
+    assert_eq!(clusters.len(), 1);
+
+    // Validate against the bracketing revisions.
+    let escaped = dir.join("escaped");
+    let fixed = dir.join("fixed");
+    std::fs::create_dir_all(&escaped).unwrap();
+    std::fs::create_dir_all(&fixed).unwrap();
+    std::fs::write(escaped.join("check.sh"), "exit 1\n").unwrap();
+    std::fs::write(fixed.join("check.sh"), "exit 0\n").unwrap();
+    let validation = validate_check(&clusters[0].check_argv, &escaped, &fixed);
+    assert!(validation.gate_holds);
+
+    // Queue it: the record is pending, and stays pending.
+    let mut queue = phlow_approval::ApprovalQueue::new(&["matt"]).unwrap();
+    let record = queue_check_proposal(&mut queue, &clusters[0], &validation).unwrap();
+    assert_eq!(record.state, phlow_approval::State::Pending);
+    // A non-operator cannot decide it; a reserved actor name
+    // cannot decide it; the loop itself holds no decision path.
+    assert!(matches!(
+        queue.decide(&record.id, phlow_approval::HumanVerdict::Approve, Some("mallory")),
+        Err(phlow_approval::Error::ActorRefused)
+    ));
+    assert!(matches!(
+        queue.decide(&record.id, phlow_approval::HumanVerdict::Approve, Some("phlow")),
+        Err(phlow_approval::Error::ActorRefused)
+    ));
+    assert!(matches!(
+        queue.decide(&record.id, phlow_approval::HumanVerdict::Approve, None),
+        Err(phlow_approval::Error::ActorRefused)
+    ));
+    assert_eq!(
+        queue.get(&record.id).unwrap().state,
+        phlow_approval::State::Pending
+    );
+    // The bystander config is byte-identical: nothing was admitted
+    // anywhere by the pipeline.
+    assert_eq!(std::fs::read(&config).unwrap(), config_bytes);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

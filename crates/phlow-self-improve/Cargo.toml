@@ -17,3 +17,7 @@ rusqlite = { version = "=0.37.0", features = ["bundled"] }
 # phlow-workspace: root-pinned, read-only skill directory listing/reads for
 # the read-only skill store compatibility layer.
 phlow-workspace = { version = "0.2.0", path = "../phlow-workspace" }
+# phlow-approval: the operator approval queue PH-3 check proposals are
+# admitted to as pending records. The queue is in-memory and
+# fail-closed; nothing here decides a record.
+phlow-approval = { version = "0.1.0", path = "../phlow-approval" }
