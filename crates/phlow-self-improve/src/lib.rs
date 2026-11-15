@@ -26,6 +26,12 @@
 //! rows record the skills a run loaded, and per-skill standing is
 //! recomputed from those rows — evidence only, nothing applied.
 //!
+//! PH-13 adds outcome export ([`export`]): a recorded run becomes
+//! a bloch BL-1/BL-3 intake record through one tested mapping —
+//! the capture's lane labels, the report's task text as `asked`,
+//! seconds not milliseconds — with phlow-side dedupe, because
+//! bloch's append-only store does not dedupe.
+//!
 //! Nothing here mutates prompts, skills, or Git history automatically.
 //! Feedback is recorded for operator review; evolution and mutation always
 //! fail with the exact Python denials.
@@ -47,6 +53,7 @@ pub mod capture;
 pub mod divergence;
 pub mod error;
 pub mod escape;
+pub mod export;
 pub mod feedback;
 pub mod lessons;
 pub mod outcome;
@@ -65,6 +72,9 @@ pub use error::SelfImproveError;
 pub use escape::{
     CheckValidation, Escape, EscapeCluster, EscapeStore, ProposalSection, RecordedEscape,
     cluster_escapes, queue_check_proposal, render_check_proposals, validate_check,
+};
+pub use export::{
+    ExportScope, ExportStore, ExportSummary, check_export_scope, export_outcomes, intake_object,
 };
 pub use feedback::{FeedbackEntry, FeedbackStore};
 pub use lessons::{LessonCard, LessonDivergence, LessonStore, render_card};

@@ -88,6 +88,30 @@ pub enum SelfImproveError {
         /// Why it was refused.
         reason: String,
     },
+    /// An outcome export already exists for this run and target;
+    /// exports are recorded once per (run, target), ever (PH-13).
+    ExportDuplicate {
+        /// The run that already has an export record.
+        run_id: String,
+    },
+    /// An outcome export failed validation and was refused
+    /// (PH-13): an underivable or unknown lane, an out-of-vocabulary
+    /// label or result, missing task text, or an unusable target.
+    ExportInvalid {
+        /// Which field was refused.
+        field: &'static str,
+        /// Why it was refused.
+        reason: String,
+    },
+    /// An `nsfw`-labelled record was refused export into an
+    /// sfw-scoped intake (PH-13): lane law is enforced on the
+    /// export side too, not only at bloch's read gate.
+    ExportLaneRefused {
+        /// The run whose record was refused.
+        run_id: String,
+        /// The record's content label.
+        content_label: String,
+    },
     /// A skill mutation was requested; automatic mutation is disabled.
     SkillMutationDisabled,
     /// A Git mutation was requested; automatic Git mutation is disabled.
@@ -136,6 +160,25 @@ impl fmt::Display for SelfImproveError {
             }
             SelfImproveError::CaptureInvalid { field, reason } => {
                 write!(f, "capture field {field} refused: {reason}")
+            }
+            SelfImproveError::ExportDuplicate { run_id } => {
+                write!(
+                    f,
+                    "run {run_id} already has an export record for this target"
+                )
+            }
+            SelfImproveError::ExportInvalid { field, reason } => {
+                write!(f, "export field {field} refused: {reason}")
+            }
+            SelfImproveError::ExportLaneRefused {
+                run_id,
+                content_label,
+            } => {
+                write!(
+                    f,
+                    "run {run_id} refused: content_label {content_label} is never exported \
+                     into an sfw-scoped intake"
+                )
             }
             SelfImproveError::SkillMutationDisabled => {
                 write!(f, "Automatic skill mutation is disabled; edit manually")
