@@ -2488,6 +2488,23 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
         {
             report_mut::set(report, "divergence_error", Value::String(error.to_string()));
         }
+        // PH-7: the run's lesson capture for bloch rides beside the
+        // outcome row too. The main planner→coder→reviewer loop
+        // folds no flowguard trajectory (trajectories exist only in
+        // the multi-agent session path, which writes no PH-1 rows),
+        // so the capture is taken with no trajectory evidence and
+        // lands in the restricted lane by the fail-closed rule —
+        // the lane is derived inside the capture from the
+        // trajectory, never from the outcome row's own labels. A
+        // capture failure never fails the run; it is named on the
+        // report, mirroring divergence_error.
+        let capture_result = phlow_self_improve::CaptureStore::open(&db_path).and_then(|store| {
+            let outcomes = phlow_self_improve::OutcomeStore::open(&db_path)?;
+            store.capture(&outcomes, &run_id, None)
+        });
+        if let Err(error) = capture_result {
+            report_mut::set(report, "capture_error", Value::String(error.to_string()));
+        }
     }
 
     /// PH-6 lesson retrieval: the current lesson card for this

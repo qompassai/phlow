@@ -1938,6 +1938,7 @@ name = "phlow-self-improve"
 version = "0.1.0"
 dependencies = [
  "phlow-approval",
+ "phlow-flowguard",
  "phlow-workspace",
  "rusqlite",
  "serde_json",

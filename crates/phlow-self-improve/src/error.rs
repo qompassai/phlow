@@ -74,6 +74,20 @@ pub enum SelfImproveError {
         /// Why it was refused.
         reason: String,
     },
+    /// A lesson capture already exists for this run id; one run
+    /// leaves exactly one capture (PH-7).
+    CaptureDuplicate {
+        /// The run that already has a capture.
+        run_id: String,
+    },
+    /// A lesson capture failed validation and was refused (PH-7):
+    /// the run has no outcome row, so there is nothing to capture.
+    CaptureInvalid {
+        /// Which field was refused.
+        field: &'static str,
+        /// Why it was refused.
+        reason: String,
+    },
     /// A skill mutation was requested; automatic mutation is disabled.
     SkillMutationDisabled,
     /// A Git mutation was requested; automatic Git mutation is disabled.
@@ -116,6 +130,12 @@ impl fmt::Display for SelfImproveError {
             }
             SelfImproveError::EscapeInvalid { field, reason } => {
                 write!(f, "escape field {field} refused: {reason}")
+            }
+            SelfImproveError::CaptureDuplicate { run_id } => {
+                write!(f, "run {run_id} already has a lesson capture")
+            }
+            SelfImproveError::CaptureInvalid { field, reason } => {
+                write!(f, "capture field {field} refused: {reason}")
             }
             SelfImproveError::SkillMutationDisabled => {
                 write!(f, "Automatic skill mutation is disabled; edit manually")

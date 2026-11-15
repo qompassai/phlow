@@ -21,3 +21,7 @@ phlow-workspace = { version = "0.2.0", path = "../phlow-workspace" }
 # admitted to as pending records. The queue is in-memory and
 # fail-closed; nothing here decides a record.
 phlow-approval = { version = "0.1.0", path = "../phlow-approval" }
+# phlow-flowguard: PH-7 lesson capture derives its lane labels from
+# flowguard's own trajectory label type (LabelSnapshot). Types only —
+# no flowguard runtime, no policy evaluation.
+phlow-flowguard = { version = "0.1.0", path = "../phlow-flowguard" }

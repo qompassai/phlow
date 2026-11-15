@@ -17,6 +17,11 @@
 //! proposed checks that are validated against both revisions and
 //! queued through `phlow-approval` — proposed, never admitted.
 //!
+//! PH-7 adds lesson capture ([`capture`]): a finished run becomes a
+//! labelled lesson record for bloch, with the lane derived from
+//! flowguard's own trajectory label inside the capture — never
+//! caller-asserted, never copied from the outcome row.
+//!
 //! PH-8 adds skill trust from run rows ([`skill_trust`]): outcome
 //! rows record the skills a run loaded, and per-skill standing is
 //! recomputed from those rows — evidence only, nothing applied.
@@ -38,6 +43,7 @@
 #![forbid(unsafe_code)]
 
 pub mod budget;
+pub mod capture;
 pub mod divergence;
 pub mod error;
 pub mod escape;
@@ -52,6 +58,9 @@ pub mod skill_trust;
 pub use budget::{
     BudgetProposal, ClassFit, CorpusLabel, LabelledRun, Margin, OutcomeRow, ReplayReport, Split,
     Truth,
+};
+pub use capture::{
+    CaptureStore, LessonCapture, RecordedCapture, lane_labels_for_trajectory,
 };
 pub use divergence::{DivergenceStore, PlanDivergence, RecordedDivergence, derive_divergence};
 pub use error::SelfImproveError;

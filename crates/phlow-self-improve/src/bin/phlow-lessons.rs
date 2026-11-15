@@ -6,6 +6,8 @@
 //!     phlow-lessons show --db PATH --class CLASS [--scope LABEL]
 //!     phlow-lessons import-report --db PATH --report FILE
 //!                   --run-id ID --class CLASS
+//!     phlow-lessons capture --db PATH --run-id ID [--trajectory FILE]
+//!     phlow-lessons captures --db PATH [--scope LABEL]
 //!
 //! - `build` (re)builds the current lesson card for one class, or
 //!   for every class with divergence records. Building over an
@@ -22,12 +24,25 @@
 //!   the command's output says so: a backfill store is lesson
 //!   evidence, not a budget-fitting corpus.
 //!
+//! - `capture` records one run's PH-7 lesson capture. The lane is
+//!   derived inside the capture from the run's flowguard
+//!   trajectory label — `--trajectory` names a file holding the
+//!   label snapshot in flowguard's own JSON shape (a multi-agent
+//!   session report's `final_label`); without one, the capture
+//!   fails closed to the restricted lane. There is no lane flag:
+//!   a caller-asserted lane is exactly what PH-7 forbids.
+//! - `captures` lists the captures visible under `--scope`
+//!   (default `nsfw`): an `nsfw` capture is invisible — and
+//!   uncounted — to an `sfw` scope.
+//!
 //! The tool writes only store rows (append-only) and stdout. It
 //! never edits config, prompts, or cards in place.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use phlow_flowguard::label::LabelSnapshot;
+use phlow_self_improve::capture::CaptureStore;
 use phlow_self_improve::divergence::DivergenceStore;
 use phlow_self_improve::lessons::LessonStore;
 use phlow_self_improve::outcome::OutcomeStore;
@@ -50,19 +65,30 @@ enum Command {
         run_id: String,
         class: String,
     },
+    Capture {
+        db: PathBuf,
+        run_id: String,
+        trajectory: Option<PathBuf>,
+    },
+    Captures {
+        db: PathBuf,
+        scope: String,
+    },
 }
 
 /// Parse argv by hand (bounded, explicit): unknown or missing
 /// arguments are usage errors, never guesses.
 fn parse_args(argv: &[String]) -> Result<Command, String> {
-    let (mode, rest) = argv
-        .split_first()
-        .ok_or_else(|| "a subcommand is required: build | show | import-report".to_owned())?;
+    let (mode, rest) = argv.split_first().ok_or_else(|| {
+        "a subcommand is required: build | show | import-report | capture | captures"
+            .to_owned()
+    })?;
     let mut db: Option<PathBuf> = None;
     let mut class: Option<String> = None;
     let mut scope: Option<String> = None;
     let mut report: Option<PathBuf> = None;
     let mut run_id: Option<String> = None;
+    let mut trajectory: Option<PathBuf> = None;
     let mut index = 0;
     while index < rest.len() {
         let flag = rest[index].as_str();
@@ -78,6 +104,7 @@ fn parse_args(argv: &[String]) -> Result<Command, String> {
             "--scope" => scope = Some(value(&mut index)?),
             "--report" => report = Some(PathBuf::from(value(&mut index)?)),
             "--run-id" => run_id = Some(value(&mut index)?),
+            "--trajectory" => trajectory = Some(PathBuf::from(value(&mut index)?)),
             other => return Err(format!("unknown argument: {other}")),
         }
         index += 1;
@@ -95,6 +122,15 @@ fn parse_args(argv: &[String]) -> Result<Command, String> {
             report: report.ok_or_else(|| "--report is required".to_owned())?,
             run_id: run_id.ok_or_else(|| "--run-id is required".to_owned())?,
             class: class.ok_or_else(|| "--class is required".to_owned())?,
+        }),
+        "capture" => Ok(Command::Capture {
+            db,
+            run_id: run_id.ok_or_else(|| "--run-id is required".to_owned())?,
+            trajectory,
+        }),
+        "captures" => Ok(Command::Captures {
+            db,
+            scope: scope.unwrap_or_else(|| "nsfw".to_owned()),
         }),
         other => Err(format!("unknown subcommand: {other}")),
     }
@@ -172,6 +208,70 @@ fn run(command: &Command) -> Result<String, String> {
                 "planned_files_untouched": divergence.planned_files_untouched.len(),
                 "added_files": divergence.added_files.len(),
                 "repair_cycles": divergence.repair_cycles,
+            })
+            .to_string())
+        }
+        Command::Capture {
+            db,
+            run_id,
+            trajectory,
+        } => {
+            let snapshot: Option<LabelSnapshot> = match trajectory {
+                Some(path) => {
+                    let text = std::fs::read_to_string(path)
+                        .map_err(|e| format!("read {}: {e}", path.display()))?;
+                    Some(
+                        serde_json::from_str(&text)
+                            .map_err(|e| format!("parse trajectory label: {e}"))?,
+                    )
+                }
+                None => None,
+            };
+            let outcomes = OutcomeStore::open(db).map_err(|e| e.to_string())?;
+            let captures = CaptureStore::open(db).map_err(|e| e.to_string())?;
+            let recorded = captures
+                .capture(&outcomes, run_id, snapshot.as_ref())
+                .map_err(|e| e.to_string())?;
+            let capture = &recorded.capture;
+            Ok(serde_json::json!({
+                "run_id": capture.run_id,
+                "task_class": capture.task_class,
+                "result": capture.result,
+                "verification_strength": capture.verification_strength,
+                "lesson_eligible": capture.lesson_eligible,
+                "origin_lane": capture.origin_lane,
+                "content_label": capture.content_label,
+                "trajectory_audience": capture.trajectory_audience,
+                "trajectory_readers": capture.trajectory_readers,
+                "trajectory_trust": capture.trajectory_trust,
+                "lesson_text": capture.lesson_text,
+            })
+            .to_string())
+        }
+        Command::Captures { db, scope } => {
+            let captures = CaptureStore::open(db).map_err(|e| e.to_string())?;
+            let visible = captures
+                .list_visible(scope, phlow_self_improve::capture::CAPTURE_LIST_LIMIT_MAX)
+                .map_err(|e| e.to_string())?;
+            let entries: Vec<serde_json::Value> = visible
+                .iter()
+                .map(|recorded| {
+                    let capture = &recorded.capture;
+                    serde_json::json!({
+                        "run_id": capture.run_id,
+                        "task_class": capture.task_class,
+                        "result": capture.result,
+                        "lesson_eligible": capture.lesson_eligible,
+                        "origin_lane": capture.origin_lane,
+                        "content_label": capture.content_label,
+                        "trajectory_audience": capture.trajectory_audience,
+                    })
+                })
+                .collect();
+            Ok(serde_json::json!({
+                "scope": scope,
+                "visible": entries.len(),
+                "captures": entries,
             })
             .to_string())
         }
