@@ -1912,7 +1912,7 @@ dependencies = [
 
 [[package]]
 name = "phlow-mcp"
-version = "0.2.2"
+version = "1.0.0"
 dependencies = [
  "phlow-attention",
  "phlow-json",

@@ -58,7 +58,7 @@ phlow-inference = { version = "0.1.0", path = "../phlow-inference" }
 # phlow-mcp: the real MCP argument validator under test for task-77
 # (validate_arguments on the tool schema). Path dependency, same
 # workspace.
-phlow-mcp = { version = "0.2.0", path = "../phlow-mcp" }
+phlow-mcp = { version = "1.0.0", path = "../phlow-mcp" }
 # phlow-approval: the real policy/approval/delta/event subsystem under test
 # for the task-209..232 and task-239..249 rescope (formerly Diver Lua
 # probes). Path dependency, same workspace.

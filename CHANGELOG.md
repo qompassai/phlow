@@ -5,7 +5,89 @@ All notable changes to phlow are documented here. Format follows
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-15
+
+The self-improvement programme release (plan D-1266, packages PH-1
+through PH-13 plus PH-K2/PH-K3). Phlow now records what every run did,
+learns bounded lessons from it, and exports the record — while every
+self-modification path stays proposal-only behind operator approval.
+
 ### Added
+
+- Run outcomes (PH-1 + PH-K3): every run — completed, failed, or
+  killed — leaves exactly one append-only outcome row carrying a typed
+  verification-strength label and, since PH-8, the distinct skills the
+  run used. The run-contract reference implementation (PH-11) defines
+  the report shape those rows derive from.
+- Safety case (PH-9): one test per denial in
+  `docs/SELF_IMPROVEMENT_SAFETY.md`, extended per package as the
+  programme landed (§10 cues, §11 export).
+- Live cues (PH-K2): the bounded cue primitives are wired into the
+  runtime run path. `Runtime::run` drains phlow's cue directory before
+  the run's own work; a `run-this` cue naming any check outside the
+  operator-approved config is refused whole (nothing runs), verdicts
+  are answered with `run-done` cues carrying the original labels, and
+  consumption is exactly-once. Bounds: 8 cues per run, 32 checks per
+  cue. Operator surface and semantics in `docs/CUES.md`.
+- Operator seat + fleet checks (PH-10 + PH-12): a real external
+  worktree (torogao) driven end-to-end through the trio with checks
+  green and an outcome row written; three stdlib fleet checks
+  (theodolite-zero, toolchain-pin, tree-freeze) pinned by tests.
+  Record in `docs/FLEET_CHECKS.md`.
+- Iteration budgets from evidence (PH-2): per-task-class budgets
+  derived from a 24-run recorded corpus (nearest-rank p95 of fit-split
+  successes × 5/4); validation refuses any budget that would cut a
+  held-out success. Operator tool `phlow-propose`.
+- Reviewer calibration (PH-5): reviewer verdicts scored against
+  independently assigned ground truth. Verdicts use final-reviewer
+  semantics (the last reviewer entry in the append-only roles log);
+  recalibration under those semantics: granite 1.00 (calibrated),
+  gpt-oss 0.88 (calibrated; an earlier demotion reversed), devstral
+  0.62 (demote-to-advisory proposed). Addendum of record in
+  `tools/corpus-rung3/results/reviewer-calibration-addendum-2026-11-15.md`.
+- Escape proposals (PH-3): a run that escapes its iteration budget can
+  propose a budget change, evidence-checked against its outcome row;
+  passing proposals queue as Pending only — no decide path, no config
+  writes, a proposal never admits itself. Operator tool `phlow-escapes`.
+- Lesson cards (PH-6): plan divergences are recorded append-only and
+  distilled into per-task-class versioned lesson cards, retrieved into
+  the planner's user-message context (the system prompt is
+  byte-identical with and without a card). Operator tool `phlow-lessons`.
+- Lesson captures (PH-7): one capture per run, evidence-checked
+  against its outcome row. The capture API takes no lane parameter —
+  the lane is derived from the run's flowguard trajectory and fails
+  closed to restricted/nsfw; nsfw captures are invisible and uncounted
+  to sfw scope.
+- Skill-trust evidence (PH-8): per-skill runs/successes/failures with
+  factual-failure tracking (failed AND tool-checked); one factual
+  failure demotes a skill. Operator tool `phlow-skill-trust`.
+- Outcome export (PH-13): run outcomes export to bloch 1.0.0's intake
+  format (`phlow-export`), joining PH-7 captures to task text. Lane
+  law is enforced phlow-side — an nsfw record into an sfw-scoped
+  intake is a typed refusal; dedupe is phlow's (append-only export
+  ledger plus a scan of the target file). Acceptance is linked against
+  bloch's real intake gate. Contract in `docs/OUTCOMES.md`.
+
+### Fixed
+
+- Coverage-evidence matcher accepted only the dotted file extension
+  (`.rs`); seats declaring undotted extensions (`rs`, `toml`) silently
+  produced empty evidence and burned repair cycles. All spellings are
+  now accepted and pinned by tests.
+- `RunOutcome::from_report` now carries each check's return code
+  distinctly (0/1/2 survive the round-trip) and takes the reviewer
+  verdict from the last reviewer entry rather than the first.
+
+### Release identity
+
+- The binary and the MCP server report the release they ship in:
+  `phlow-cli`'s `VERSION` and `phlow-mcp`'s `SERVER_VERSION` are
+  `1.0.0`, the `phlow-mcp` package version is 1.0.0, and the shipped
+  `.mcpb` is freshly built from this tree, its binary reporting
+  `Phlow 1.0.0` and `serverInfo.version` `1.0.0`. The feature entries
+  below (best-of-k, the experiment scaffolding, the solpi mechanisms,
+  the config-path rename) accumulated under [Unreleased] since 0.2.2
+  and ship in this release.
 
 - Best-of-k candidate selection in `phlow-runtime` (NCM S1, D-1050):
   `Runtime::set_best_of_k(k)` (1..=8, default 1 = single-sample) makes

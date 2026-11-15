@@ -27,7 +27,7 @@ phlow-flowguard = { version = "0.1.0", path = "../phlow-flowguard" }
 phlow-llm = { version = "0.2.0", path = "../phlow-llm" }
 # phlow-mcp: validate_arguments (iterative, depth/node caps) and
 # Python-compatible json.dumps for tool-result truncation accounting.
-phlow-mcp = { version = "0.2.0", path = "../phlow-mcp" }
+phlow-mcp = { version = "1.0.0", path = "../phlow-mcp" }
 # phlow-self-improve: the append-only per-run outcome record (PH-1).
 # The runtime writes one row per run into the feedback store file;
 # nothing model-visible can reach this crate.

@@ -37,7 +37,7 @@ fn stdout_lines(output: &std::process::Output) -> Vec<String> {
 fn version_prints_phlow_0_2_2_and_exits_0() {
     let output = phlow().arg("--version").output().expect("spawn phlow");
     assert!(output.status.success());
-    assert_eq!(output.stdout, b"Phlow 0.2.2\n");
+    assert_eq!(output.stdout, b"Phlow 1.0.0\n");
 }
 
 #[test]

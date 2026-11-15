@@ -17,7 +17,7 @@ serde = "1"
 serde_json = { version = "1", features = ["preserve_order"] }
 # phlow-mcp: canonical JSON Schema argument validation shared with the MCP
 # server, so registry dispatch enforces the same contracts as the wire.
-phlow-mcp = { version = "0.2.0", path = "../phlow-mcp" }
+phlow-mcp = { version = "1.0.0", path = "../phlow-mcp" }
 # phlow-checks: canonical fail-closed denial texts for the removed shell and
 # LSP execution paths. Byte-identical to the Python implementation.
 phlow-checks = { version = "0.2.0", path = "../phlow-checks" }
