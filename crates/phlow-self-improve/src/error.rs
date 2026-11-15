@@ -37,6 +37,14 @@ pub enum SelfImproveError {
         /// Why it was refused.
         reason: String,
     },
+    /// A proposal input (corpus manifest, margin, fitted budget)
+    /// failed validation and was refused (PH-2/PH-5).
+    ProposalInvalid {
+        /// Which field was refused.
+        field: &'static str,
+        /// Why it was refused.
+        reason: String,
+    },
     /// A skill mutation was requested; automatic mutation is disabled.
     SkillMutationDisabled,
     /// A Git mutation was requested; automatic Git mutation is disabled.
@@ -64,6 +72,9 @@ impl fmt::Display for SelfImproveError {
             }
             SelfImproveError::OutcomeInvalid { field, reason } => {
                 write!(f, "outcome field {field} refused: {reason}")
+            }
+            SelfImproveError::ProposalInvalid { field, reason } => {
+                write!(f, "proposal field {field} refused: {reason}")
             }
             SelfImproveError::SkillMutationDisabled => {
                 write!(f, "Automatic skill mutation is disabled; edit manually")
