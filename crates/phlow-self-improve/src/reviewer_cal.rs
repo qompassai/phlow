@@ -36,6 +36,7 @@
 use std::collections::BTreeMap;
 
 use crate::budget::{LabelledRun, Truth};
+use crate::outcome::RunOutcome;
 
 /// Ground-truth agreement a reviewer must reach to keep gating.
 pub const CALIBRATION_FLOOR_AGREEMENT: f64 = 0.80;
@@ -223,6 +224,81 @@ fn calibration_verdict(row: &ReliabilityRow) -> CalibrationVerdict {
     }
 }
 
+/// One run whose recorded verdict differs from its final verdict
+/// under the rung-5 semantics (see [`rederive_final_verdicts`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerdictChange {
+    /// The run whose verdict moved.
+    pub run_id: String,
+    /// The reviewer model the corpus label attributes the run to.
+    pub reviewer_model: Option<String>,
+    /// Independently verified ground truth for the run.
+    pub truth: Truth,
+    /// The verdict the outcome row recorded (first reviewer entry,
+    /// pre-rung-5 semantics).
+    pub recorded: Option<String>,
+    /// The run's final verdict (last reviewer entry).
+    pub final_verdict: Option<String>,
+}
+
+/// Re-derive each run's reviewer verdict from its run report under
+/// the rung-5 **final-verdict** semantics, leaving every other field
+/// of the row untouched.
+///
+/// The rung-3 corpus rows were recorded by a runtime whose
+/// `from_report` read the *first* reviewer entry of a multi-cycle
+/// run; rung 5 corrected the recording to the *last* entry (the
+/// verdict the run ended under). The reports themselves carry the
+/// full roles log, so the calibration can be re-derived exactly:
+/// each run's verdict is recomputed by the same production
+/// [`RunOutcome::from_report`] the runtime now uses — never by a
+/// second implementation of the rule.
+///
+/// `reports` maps run id → the run's report JSON (the report's own
+/// `outcome_run_id`). A run with no report in the map keeps its
+/// recorded verdict and is counted in the returned `missing` tally:
+/// absent evidence is disclosed, never filled in.
+///
+/// Returns the re-derived runs (input order), the verdict changes
+/// (input order), and the count of runs without a report.
+pub fn rederive_final_verdicts(
+    runs: &[LabelledRun],
+    reports: &BTreeMap<String, serde_json::Value>,
+) -> (Vec<LabelledRun>, Vec<VerdictChange>, usize) {
+    let mut rederived = Vec::with_capacity(runs.len());
+    let mut changes = Vec::new();
+    let mut missing = 0usize;
+    for run in runs {
+        let Some(report) = reports.get(&run.row.run_id) else {
+            missing += 1;
+            rederived.push(run.clone());
+            continue;
+        };
+        let final_verdict = RunOutcome::from_report(
+            &run.row.run_id,
+            &run.label.task_class,
+            report,
+            run.row.wall_ms,
+        )
+        .reviewer_verdict;
+        if final_verdict != run.row.reviewer_verdict {
+            changes.push(VerdictChange {
+                run_id: run.row.run_id.clone(),
+                reviewer_model: run.label.reviewer_model.clone(),
+                truth: run.label.truth,
+                recorded: run.row.reviewer_verdict.clone(),
+                final_verdict: final_verdict.clone(),
+            });
+            let mut replaced = run.clone();
+            replaced.row.reviewer_verdict = final_verdict;
+            rederived.push(replaced);
+        } else {
+            rederived.push(run.clone());
+        }
+    }
+    (rederived, changes, missing)
+}
+
 /// Render the PH-5 report: method, the per-model reliability table,
 /// and any demotion proposals as operator-applied config guidance.
 /// Rendering is pure — the caller owns the write.
@@ -397,6 +473,95 @@ mod tests {
         let table = reliability_table(&runs);
         assert_eq!(table[0].agreement, 0.0);
         assert_eq!(table[0].verdict, CalibrationVerdict::InsufficientEvidence);
+    }
+
+    fn two_cycle_report(first: bool, second: bool) -> serde_json::Value {
+        serde_json::json!({
+            "status": "failed",
+            "verified": false,
+            "roles": [
+                {"role": "planner", "model": "plan", "status": "ok", "summary": "p"},
+                {"role": "coder", "model": "code", "status": "ok", "summary": "v1"},
+                {"role": "reviewer", "model": "rev", "status": "ok", "approved": first},
+                {"role": "coder", "model": "code", "status": "ok", "summary": "v2"},
+                {"role": "reviewer", "model": "rev", "status": "ok", "approved": second}
+            ],
+            "checks": [],
+            "cycles": 2,
+            "tool_calls": 0,
+            "model_calls": 0
+        })
+    }
+
+    #[test]
+    fn rederive_reads_the_final_verdict_from_the_report() {
+        // Rows as the pre-rung-5 runtime recorded them (first-entry
+        // semantics): run "ar" approved, run "ra" not approved.
+        let runs = vec![
+            labelled("ar", "rev", Some("approved"), Truth::Success, false),
+            labelled("ra", "rev", Some("not_approved"), Truth::Success, true),
+            labelled("same", "rev", Some("approved"), Truth::Success, true),
+            labelled("gone", "rev", Some("approved"), Truth::Success, true),
+        ];
+        let mut reports = BTreeMap::new();
+        reports.insert("ar".to_owned(), two_cycle_report(true, false));
+        reports.insert("ra".to_owned(), two_cycle_report(false, true));
+        reports.insert(
+            "same".to_owned(),
+            serde_json::json!({
+                "status": "ok", "verified": true,
+                "roles": [{"role": "reviewer", "model": "rev", "status": "ok", "approved": true}],
+                "checks": [], "cycles": 1, "tool_calls": 0, "model_calls": 0
+            }),
+        );
+        let (rederived, changes, missing) = rederive_final_verdicts(&runs, &reports);
+        // "gone" has no report: kept as recorded, counted missing.
+        assert_eq!(missing, 1);
+        assert_eq!(rederived[3].row.reviewer_verdict.as_deref(), Some("approved"));
+        // Both two-cycle runs moved; the one-cycle run did not.
+        assert_eq!(changes.len(), 2);
+        assert_eq!(changes[0].run_id, "ar");
+        assert_eq!(changes[0].recorded.as_deref(), Some("approved"));
+        assert_eq!(changes[0].final_verdict.as_deref(), Some("not_approved"));
+        assert_eq!(changes[1].run_id, "ra");
+        assert_eq!(changes[1].recorded.as_deref(), Some("not_approved"));
+        assert_eq!(changes[1].final_verdict.as_deref(), Some("approved"));
+        assert_eq!(rederived[0].row.reviewer_verdict.as_deref(), Some("not_approved"));
+        assert_eq!(rederived[1].row.reviewer_verdict.as_deref(), Some("approved"));
+        assert_eq!(rederived[2].row.reviewer_verdict.as_deref(), Some("approved"));
+    }
+
+    #[test]
+    fn rederive_can_flip_a_models_calibration_verdict() {
+        // Five successful runs, each approved in cycle 1 and rejected
+        // in cycle 2 (the corpus F2 pattern): under first-entry
+        // semantics the reviewer looks perfect; under final-verdict
+        // semantics every verdict is a false rejection and demotion
+        // is proposed. The semantics are the measurement.
+        let runs: Vec<LabelledRun> = (0..5)
+            .map(|i| {
+                labelled(
+                    &format!("run-{i}"),
+                    "rev",
+                    Some("approved"),
+                    Truth::Success,
+                    false,
+                )
+            })
+            .collect();
+        let reports: BTreeMap<String, serde_json::Value> = (0..5)
+            .map(|i| (format!("run-{i}"), two_cycle_report(true, false)))
+            .collect();
+        let before = reliability_table(&runs);
+        assert_eq!(before[0].agreement, 1.0);
+        assert_eq!(before[0].verdict, CalibrationVerdict::Calibrated);
+        let (rederived, changes, missing) = rederive_final_verdicts(&runs, &reports);
+        assert_eq!(changes.len(), 5);
+        assert_eq!(missing, 0);
+        let after = reliability_table(&rederived);
+        assert_eq!(after[0].agreement, 0.0);
+        assert_eq!(after[0].false_rejections, 5);
+        assert_eq!(after[0].verdict, CalibrationVerdict::DemoteToAdvisory);
     }
 
     #[test]

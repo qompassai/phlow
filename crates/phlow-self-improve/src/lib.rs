@@ -58,5 +58,7 @@ pub use feedback::{FeedbackEntry, FeedbackStore};
 pub use lessons::{LessonCard, LessonDivergence, LessonStore, render_card};
 pub use outcome::{OutcomeStore, RecordedOutcome, RunOutcome, VerificationStrength};
 pub use prompt_evolver::PromptEvolver;
-pub use reviewer_cal::{CalibrationVerdict, ReliabilityRow, Verdict};
+pub use reviewer_cal::{
+    CalibrationVerdict, ReliabilityRow, Verdict, VerdictChange, rederive_final_verdicts,
+};
 pub use skill_store::SkillStore;
