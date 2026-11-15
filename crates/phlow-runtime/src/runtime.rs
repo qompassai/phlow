@@ -581,6 +581,21 @@ pub struct Runtime<L: LlmTransport, E: EditorTransport> {
     /// while the CLI/MCP wiring always sets it, so every production
     /// run leaves exactly one append-only outcome row.
     outcome_db: Option<PathBuf>,
+    /// Cue directory for the PH-K2 live drain (INDEX §2.2), set by
+    /// the embedder via [`Runtime::set_cue_dir`]. `None` (the
+    /// default) resolves to phlow's own default cue home at drain
+    /// time; when neither resolves, runs behave exactly as before
+    /// PH-K2 — no cue keys on the report.
+    cue_dir: Option<PathBuf>,
+    /// Lane scope the cue drain enforces (PH-K2): which labelled
+    /// cues this runtime will consume. The default,
+    /// [`phlow_checks::cue::LaneScope::Unrestricted`], fits phlow's
+    /// own posture — its records fail closed to the restricted lane
+    /// (PH-7) — and every `run-done` answer carries the original
+    /// cue's labels, so a general-scope reader never sees a
+    /// restricted answer. An embedder serving a general-only seat
+    /// narrows it via [`Runtime::set_cue_scope`].
+    cue_scope: phlow_checks::cue::LaneScope,
     /// Best-of-k candidate count for the first coder cycle, set by the
     /// embedder via [`Runtime::set_best_of_k`]. `1` (the default) is the
     /// current single-sample behaviour, byte-for-byte.
@@ -646,6 +661,8 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
             run_model_override: None,
             run_max_cycles: None,
             outcome_db: None,
+            cue_dir: None,
+            cue_scope: phlow_checks::cue::LaneScope::Unrestricted,
             best_of_k: 1,
             planner_contract_variant: ContractVariant::Canonical,
             reviewer_contract_variant: ContractVariant::Canonical,
@@ -2385,6 +2402,7 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
             Err(_) => return error_report("Runtime busy: single writer"),
         };
         let mut report = new_report(task);
+        self.drain_cues_into(&mut report);
         let run_started = Instant::now();
         match self.run_inner(task, &mut report) {
             Ok(()) => {}
@@ -2428,6 +2446,86 @@ impl<L: LlmTransport, E: EditorTransport> Runtime<L, E> {
     /// The configured outcome-store path, if any.
     pub fn outcome_db(&self) -> Option<&Path> {
         self.outcome_db.as_deref()
+    }
+
+    /// Set the cue directory for the PH-K2 live drain. Every later
+    /// [`Runtime::run`] first reaps expired cues there and answers
+    /// live `run-this` cues addressed to phlow — see
+    /// [`crate::cues`]. Embedders that never call this get the
+    /// default cue home ([`phlow_checks::cue::phlow_cue_dir`]).
+    pub fn set_cue_dir(&mut self, path: PathBuf) {
+        self.cue_dir = Some(path);
+    }
+
+    /// The configured cue directory, if one was set explicitly.
+    pub fn cue_dir(&self) -> Option<&Path> {
+        self.cue_dir.as_deref()
+    }
+
+    /// Set the lane scope the cue drain enforces (PH-K2).
+    pub fn set_cue_scope(&mut self, scope: phlow_checks::cue::LaneScope) {
+        self.cue_scope = scope;
+    }
+
+    /// Drain this runtime's cue directory into the run report
+    /// (PH-K2). No-op when no directory resolves. Consumed cues land
+    /// on the report as `cues` (cue id, sender, verdict, answer id),
+    /// reaped expiries as `cues_expired`, and a drain failure —
+    /// including a malformed cue file, refused by name — as
+    /// `cues_error`. A drain failure never fails the run: the fleet
+    /// protocol must not be able to take the worker down with it.
+    fn drain_cues_into(&mut self, report: &mut Value) {
+        let Some(dir) = self
+            .cue_dir
+            .clone()
+            .or_else(phlow_checks::cue::phlow_cue_dir)
+        else {
+            return;
+        };
+        match crate::cues::drain_cues(
+            &self.workspace,
+            self.config.checks(),
+            &self.check_pins,
+            &dir,
+            self.cue_scope,
+        ) {
+            Ok(drain) => {
+                if !drain.expired.is_empty() {
+                    report_mut::set(
+                        report,
+                        "cues_expired",
+                        Value::Array(
+                            drain
+                                .expired
+                                .iter()
+                                .map(|id| Value::String(id.clone()))
+                                .collect(),
+                        ),
+                    );
+                }
+                if !drain.consumed.is_empty() {
+                    let entries: Vec<Value> = drain
+                        .consumed
+                        .iter()
+                        .map(|cue| {
+                            let mut entry = Map::new();
+                            entry.insert("cue_id".to_owned(), Value::String(cue.cue_id.clone()));
+                            entry.insert("from".to_owned(), Value::String(cue.from.clone()));
+                            entry.insert("verdict".to_owned(), Value::String(cue.verdict.clone()));
+                            entry.insert(
+                                "done_cue_id".to_owned(),
+                                Value::String(cue.done_cue_id.clone()),
+                            );
+                            Value::Object(entry)
+                        })
+                        .collect();
+                    report_mut::set(report, "cues", Value::Array(entries));
+                }
+            }
+            Err(error) => {
+                report_mut::set(report, "cues_error", Value::String(error.to_string()));
+            }
+        }
     }
 
     /// Append this run's outcome row (PH-1). No-op when no store is

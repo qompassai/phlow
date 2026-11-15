@@ -27,6 +27,7 @@
 #![forbid(unsafe_code)]
 
 pub mod attention;
+pub mod cues;
 pub mod error;
 pub mod intake;
 pub mod multiagent;
