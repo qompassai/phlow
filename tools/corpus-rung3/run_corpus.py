@@ -147,10 +147,47 @@ def setup_configs(args, reviewer_models):
     print(f"configs written under {config_dir}")
 
 
+# Repo-config hardening for every git invocation (CVE-2026-129128
+# shape): command-line -c values override the target tree's own config,
+# so a hostile scratch/seat tree cannot turn diff.external,
+# core.fsmonitor, core.pager or core.hooksPath into code execution.
+GIT_CONFIG_OVERRIDES = [
+    "-c", "core.fsmonitor=false",
+    "-c", "core.pager=cat",
+    "-c", "diff.external=",
+    "-c", "core.hooksPath=/dev/null",
+]
+GIT_DIFF_FAMILY = ("diff", "log", "show")
+GIT_ENV_SCRUB = (
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_EXTERNAL_DIFF",
+    "GIT_CONFIG", "GIT_CONFIG_COUNT",
+)
+
+
+def _git_env():
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in GIT_ENV_SCRUB
+        and not key.startswith("GIT_CONFIG_KEY_")
+        and not key.startswith("GIT_CONFIG_VALUE_")
+    }
+    env["GIT_PAGER"] = "cat"
+    env["PAGER"] = "cat"
+    return env
+
+
+def _git_argv(args_list, cwd):
+    argv = ["git", "--no-pager", "-C", cwd] + GIT_CONFIG_OVERRIDES
+    if args_list and args_list[0] in GIT_DIFF_FAMILY:
+        return argv + [args_list[0], "--no-ext-diff"] + list(args_list[1:])
+    return argv + list(args_list)
+
+
 def git(args_list, cwd):
     result = subprocess.run(
-        ["git", "-C", cwd] + args_list,
-        capture_output=True, text=True, timeout=120,
+        _git_argv(args_list, cwd),
+        capture_output=True, text=True, timeout=120, env=_git_env(),
     )
     if result.returncode != 0:
         raise HarnessError(f"git {' '.join(args_list)} failed: {result.stderr.strip()}")
@@ -203,8 +240,8 @@ def reset_scratch(scratch):
     the build target)."""
     git(["checkout", "--", "."], scratch)
     result = subprocess.run(
-        ["git", "-C", scratch, "clean", "-fd", "-e", ".bacon-locations", "-e", "target"],
-        capture_output=True, text=True, timeout=120,
+        _git_argv(["clean", "-fd", "-e", ".bacon-locations", "-e", "target"], scratch),
+        capture_output=True, text=True, timeout=120, env=_git_env(),
     )
     if result.returncode != 0:
         raise HarnessError(f"git clean failed: {result.stderr.strip()}")
