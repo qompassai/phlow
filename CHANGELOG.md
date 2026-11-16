@@ -5,6 +5,19 @@ All notable changes to phlow are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- Kev-4B routing/triage in phlow-system1 (D-1622): a `KevBackend`
+  `System1Decider` for llama.cpp's `/v1/systemone` endpoint running
+  Kev-4B (the estate's `kev-serve` unit, loopback, RTX 4070), and a
+  `TriageScorer` that accepts a triage verdict only at confidence
+  >= 0.75 - the cutoff derived from the D-1594 probe artefacts (the
+  three wrong answers sit at 0.549/0.594/0.712; the least confident
+  correct answer above them is 0.802). Below the cutoff, or on any
+  backend failure, items escalate to the caller's existing path
+  unchanged. The scorer holds no policy capability: approval
+  decisions stay with the decide() gate (`RiskScorer` untouched).
+
 ## [1.0.0] - 2026-11-15
 
 The self-improvement programme release (plan D-1266, packages PH-1
