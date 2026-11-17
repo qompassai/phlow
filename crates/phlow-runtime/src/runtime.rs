@@ -1797,21 +1797,42 @@ fn record_tool_event(
 
 /// Encode a tool result, replacing oversized payloads with a bounded
 /// preview so one tool cannot blow the model's context budget.
+///
+/// The preview is a prefix of the encoding, and re-encoding it escapes
+/// again (`\` and `"` double), so a raw-char preview budget can overshoot
+/// the cap. Sizing is therefore done on the re-encoded length in at most
+/// two encodes: string escaping is per char and every char encodes to at
+/// least one char, so dropping the first attempt's `excess` trailing
+/// preview chars removes at least `excess` encoded chars and the second
+/// attempt fits by construction.
 fn truncate_tool_result(result: &Value) -> String {
-    let mut encoded = must_dumps(result);
-    if encoded.chars().count() > TOOL_RESULT_CHARS_MAX {
-        let preview: String = encoded.chars().take(TOOL_RESULT_PREVIEW_CHARS).collect();
-        let mut truncated = Map::new();
-        truncated.insert("status".to_owned(), Value::String("unverified".to_owned()));
-        truncated.insert("truncated".to_owned(), Value::Bool(true));
-        truncated.insert("preview".to_owned(), Value::String(preview));
-        encoded = must_dumps(&Value::Object(truncated));
+    let encoded = must_dumps(result);
+    if encoded.chars().count() <= TOOL_RESULT_CHARS_MAX {
+        return encoded;
     }
+    let first = encode_truncated(&encoded, TOOL_RESULT_PREVIEW_CHARS);
+    let excess = first.chars().count().saturating_sub(TOOL_RESULT_CHARS_MAX);
+    if excess == 0 {
+        return first;
+    }
+    // Saturating: an empty preview leaves only the fixed ~55-char wrapper.
+    let second = encode_truncated(&encoded, TOOL_RESULT_PREVIEW_CHARS.saturating_sub(excess));
     assert!(
-        encoded.chars().count() <= TOOL_RESULT_CHARS_MAX,
+        second.chars().count() <= TOOL_RESULT_CHARS_MAX,
         "truncated tool result still exceeds the cap"
     );
-    encoded
+    second
+}
+
+/// Encode the `{status, truncated, preview}` replacement whose preview is
+/// the first `preview_chars` chars of `encoded`.
+fn encode_truncated(encoded: &str, preview_chars: usize) -> String {
+    let preview: String = encoded.chars().take(preview_chars).collect();
+    let mut truncated = Map::new();
+    truncated.insert("status".to_owned(), Value::String("unverified".to_owned()));
+    truncated.insert("truncated".to_owned(), Value::Bool(true));
+    truncated.insert("preview".to_owned(), Value::String(preview));
+    must_dumps(&Value::Object(truncated))
 }
 
 /// Extract the validated `path` argument (schemas guarantee a string).
@@ -3475,5 +3496,112 @@ mod tests {
             .expect("check object")
             .remove("filetypes");
         assert!(check_evidence(&[check], "rust", ".rs").is_empty());
+    }
+
+    /// The pre-fix truncated encoding: a fixed 38,000-char preview. The
+    /// fix must reproduce it byte-for-byte whenever it already fit.
+    fn legacy_truncated(encoded: &str) -> String {
+        let preview: String = encoded.chars().take(TOOL_RESULT_PREVIEW_CHARS).collect();
+        must_dumps(&serde_json::json!({
+            "status": "unverified",
+            "truncated": true,
+            "preview": preview,
+        }))
+    }
+
+    /// Truncate `value` and assert the contract: within the cap, the
+    /// `{status, truncated, preview}` shape, and a preview that is a
+    /// prefix of the full encoding. Returns the encoded result.
+    fn assert_truncated_within_cap(value: &Value) -> String {
+        let full = must_dumps(value);
+        assert!(
+            full.chars().count() > TOOL_RESULT_CHARS_MAX,
+            "fixture must be over the cap"
+        );
+        let encoded = truncate_tool_result(value);
+        assert!(encoded.chars().count() <= TOOL_RESULT_CHARS_MAX);
+        let decoded: Value = serde_json::from_str(&encoded).expect("truncated result is JSON");
+        let object = decoded.as_object().expect("truncated result is an object");
+        let keys: Vec<&str> = object.keys().map(String::as_str).collect();
+        assert_eq!(keys, ["status", "truncated", "preview"]);
+        assert_eq!(object["status"], Value::String("unverified".to_owned()));
+        assert_eq!(object["truncated"], Value::Bool(true));
+        let preview = object["preview"].as_str().expect("preview is a string");
+        assert!(!preview.is_empty(), "preview must carry content");
+        assert!(
+            full.starts_with(preview),
+            "preview must be a prefix of the encoding"
+        );
+        encoded
+    }
+
+    #[test]
+    fn tool_result_under_cap_passes_through_byte_identical() {
+        // Validation: an under-cap result is exactly its encoding.
+        let value = serde_json::json!({"status": "ok", "text": "caf\u{e9} \"q\" \\ \u{4e00}"});
+        assert_eq!(truncate_tool_result(&value), must_dumps(&value));
+    }
+
+    #[test]
+    fn tool_result_at_the_cap_boundary() {
+        // Validation: a string encodes to its chars plus two quotes, so
+        // this encodes to exactly the cap and passes through untouched.
+        let at_cap = Value::String("a".repeat(TOOL_RESULT_CHARS_MAX - 2));
+        assert_eq!(must_dumps(&at_cap).chars().count(), TOOL_RESULT_CHARS_MAX);
+        assert_eq!(truncate_tool_result(&at_cap), must_dumps(&at_cap));
+        // One more char crosses the cap and truncates.
+        let over_cap = Value::String("a".repeat(TOOL_RESULT_CHARS_MAX - 1));
+        assert_truncated_within_cap(&over_cap);
+    }
+
+    #[test]
+    fn tool_result_plain_ascii_over_cap_matches_legacy_bytes() {
+        // Validation: escape-free over-cap payloads already fit with the
+        // fixed preview; their bytes must not change.
+        let value = serde_json::json!({"status": "ok", "text": "abc ".repeat(30_000)});
+        let encoded = assert_truncated_within_cap(&value);
+        assert_eq!(encoded, legacy_truncated(&must_dumps(&value)));
+    }
+
+    #[test]
+    fn tool_result_all_cjk_fits_the_cap() {
+        // Adversarial: every char encodes to `\uXXXX`, whose backslash
+        // re-escapes inside the preview.
+        assert_truncated_within_cap(&Value::String("\u{4e00}".repeat(20_000)));
+    }
+
+    #[test]
+    fn tool_result_quote_and_backslash_dense_fits_the_cap() {
+        // Adversarial: maximal re-escape inflation (each encoded char is
+        // a `\` or `"`, which re-encodes to two chars).
+        assert_truncated_within_cap(&Value::String("\"".repeat(50_000)));
+        assert_truncated_within_cap(&Value::String("\\".repeat(50_000)));
+        assert_truncated_within_cap(&Value::String("\\\"".repeat(30_000)));
+    }
+
+    #[test]
+    fn tool_result_mixed_scripts_and_huge_payload_fit_the_cap() {
+        // Adversarial: mixed scripts, astral chars (surrogate pairs) and
+        // control chars, then the same mix past 1 MB.
+        let unit = "a\"\\\u{4e00}\u{3042}\u{416}\u{1f600}\t\n\u{1}\u{7f}";
+        assert_truncated_within_cap(&Value::String(unit.repeat(5_000)));
+        let huge = Value::String(unit.repeat(120_000));
+        assert!(must_dumps(&huge).len() > 1_000_000);
+        assert_truncated_within_cap(&huge);
+    }
+
+    #[test]
+    fn tool_result_diff_shaped_payload_fits_the_cap() {
+        // Adversarial: mirrors the 2026-11-16 repro (a ~130 KB diff,
+        // quote and escape dense) inside a tool-result object.
+        let hunk = concat!(
+            "@@ -1,4 +1,4 @@\n",
+            "-    let path = \"C:\\\\tmp\\\\out.json\";\n",
+            "+    let path = format!(\"{}\\\\{}\", dir, \"out.json\");\n",
+            "     assert_eq!(s, \"\\\"quoted\\\"\\t\\n\");\n",
+        );
+        let diff = hunk.repeat(131_698 / hunk.len() + 1);
+        assert!(diff.len() >= 131_698);
+        assert_truncated_within_cap(&serde_json::json!({"status": "ok", "diff": diff}));
     }
 }
