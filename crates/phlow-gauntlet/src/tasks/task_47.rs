@@ -348,7 +348,11 @@ fn cfg_test_line(text: &str) -> Option<usize> {
 /// child per check, captured synchronously); the phlow-mcp client
 /// connect spawn is the transport class (one configured server child
 /// per client connection, spawned under the client's own runtime —
-/// a client transport, not a fan-out). No other acquisition
+/// a client transport, not a fan-out); the phlow-self-improve
+/// check-validation spawn (escape.rs `run_bounded`) is the bounded
+/// single-child class — one proposed check's argv executed directly
+/// per call under the CHECK_VALIDATION_TIMEOUT deadline, killed and
+/// reaped past the deadline, stdio null. No other acquisition
 /// path may exist — a new spawn site fails this case.
 fn case_spawn_paths_go_through_limiter() -> Result<CaseReport, DriverError> {
     const CASE: &str = "spawn_paths_go_through_limiter";
@@ -606,6 +610,38 @@ fn case_spawn_paths_go_through_limiter() -> Result<CaseReport, DriverError> {
             if is_test {
                 test_only += 1;
             }
+        } else if site.contains("phlow-self-improve/src/escape.rs") {
+            // PH-3 check-validation spawn: `run_bounded` executes one
+            // proposed check's exact argv directly (no shell) per
+            // call, bounded by CHECK_VALIDATION_TIMEOUT; a run past
+            // the deadline is killed and reaped (kill + wait), stdio
+            // null — the bounded single-child class, like the
+            // trainlab reward executor. Anchors: the deadline
+            // constant, the kill, and the reap must all be present
+            // in the file before the site classifies.
+            let (path, lineno) = parse_site(site)?;
+            let text = std::fs::read_to_string(&path)
+                .map_err(|e| fixture_error("self-improve escape source", format!("{path}: {e}")))?;
+            let has_deadline = text.contains("CHECK_VALIDATION_TIMEOUT");
+            let has_kill = text.contains("child.kill()");
+            let has_reap = text.contains("child.wait()");
+            evidence.push(format!(
+                "phlow-self-improve escape.rs:{lineno}: validation deadline present={has_deadline}, kill-on-deadline present={has_kill}, reap-after-kill present={has_reap}"
+            ));
+            if !has_deadline || !has_kill || !has_reap {
+                return Ok(CaseReport::fail(
+                    CASE,
+                    format!(
+                        "self-improve validation spawn at {site} lost its bounds (deadline={has_deadline}, kill={has_kill}, reap={has_reap})"
+                    ),
+                    evidence,
+                ));
+            }
+            synchronous_single += 1;
+            evidence.push(
+                "phlow-self-improve escape.rs: run_bounded runs ONE check-validation child synchronously per call under CHECK_VALIDATION_TIMEOUT (killed and reaped past the deadline, stdio null) — no queue, no fan-out, nothing to limit"
+                    .to_string(),
+            );
         } else {
             return Ok(CaseReport::fail(
                 CASE,
@@ -624,7 +660,7 @@ fn case_spawn_paths_go_through_limiter() -> Result<CaseReport, DriverError> {
         ));
     }
     evidence.push(
-        "every acquisition path is accounted for: the fan-out path is semaphore-gated (queue slot + run permit precede spawn; excess recorded as dropped); the other production spawners are sequential single-child (checks runner, trainlab reward executor, trainer-mojo GPU residency probe, phlow-mcp client transport); the remaining sites are test-only".to_string(),
+        "every acquisition path is accounted for: the fan-out path is semaphore-gated (queue slot + run permit precede spawn; excess recorded as dropped); the other production spawners are sequential single-child (checks runner, trainlab reward executor, trainer-mojo GPU residency probe, phlow-mcp client transport, phlow-self-improve check validation); the remaining sites are test-only".to_string(),
     );
     Ok(CaseReport::pass(
         CASE,

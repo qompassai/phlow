@@ -437,6 +437,29 @@ fn case_plain_counters_have_no_labels() -> Result<CaseReport, DriverError> {
     ))
 }
 
+/// Classify one label-API scan hit (`{path}: {token}`) as the
+/// calibration-corpus loader: the token is `labels(`, the file is
+/// in phlow-self-improve, and EVERY `labels(` occurrence in the
+/// file is the tail of `load_corpus_labels(` — the PH-2 loader
+/// that reads a corpus manifest's ground-truth labels from a file
+/// (budget.rs; called by the phlow-propose and phlow-recalibrate
+/// drivers). It registers nothing. Anything else — another token,
+/// another crate, or a `labels(` that is not the loader's tail —
+/// is not the loader and stays unclassified.
+fn is_corpus_loader_hit(hit: &str) -> bool {
+    let Some((path, token)) = hit.rsplit_once(": ") else {
+        return false;
+    };
+    if token != "labels(" || !path.contains("phlow-self-improve/src/") {
+        return false;
+    }
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    let loader = text.matches("load_corpus_labels(").count();
+    loader > 0 && text.matches("labels(").count() == loader
+}
+
 /// A1: the per-run-id label weapon has no target — there is no label
 /// registration API to feed the attack into. The label-API vocabulary
 /// scan finds zero registration surface.
@@ -455,10 +478,28 @@ fn case_per_run_label_attack_has_no_target() -> Result<CaseReport, DriverError> 
     for hit in hits.iter().take(8) {
         evidence.push(format!("  hit: {hit}"));
     }
-    if !hits.is_empty() {
+    // Per-hit classification: a hit classifies only as the
+    // calibration-corpus loader (see is_corpus_loader_hit); any
+    // other hit is registration surface and fails the case.
+    let mut classified_loader = 0usize;
+    let mut unclassified = Vec::new();
+    for hit in &hits {
+        if is_corpus_loader_hit(hit) {
+            classified_loader += 1;
+            evidence.push(format!(
+                "classified (calibration-corpus loader — every `labels(` in the file is the tail of `load_corpus_labels(`, a corpus-manifest file read, not a label-registration API): {hit}"
+            ));
+        } else {
+            unclassified.push(hit.clone());
+        }
+    }
+    if !unclassified.is_empty() {
         return Ok(CaseReport::fail(
             CASE,
-            format!("label-registration surface found: {}", hits.join("; ")),
+            format!(
+                "label-registration surface found: {}",
+                unclassified.join("; ")
+            ),
             evidence,
         ));
     }
@@ -470,7 +511,7 @@ fn case_per_run_label_attack_has_no_target() -> Result<CaseReport, DriverError> 
     );
     Ok(CaseReport::pass(
         CASE,
-        serde_json::json!({"label_api_hits": 0}),
+        serde_json::json!({"label_api_hits": 0, "classified_loader_hits": classified_loader}),
         evidence,
     ))
 }

@@ -422,7 +422,9 @@ fn case_config_does_not_disseminate() -> Result<CaseReport, DriverError> {
 /// transport and phlow-tuios is RPC framing (a client/server peer that
 /// must not make the daemon echo unbounded text) — point-to-point
 /// transport, not a membership set — and "member" is the workspace
-/// SKIP_DIRS list and the scoring pool. None is a join/leave primitive.
+/// SKIP_DIRS list and the scoring pool. `EscapeCluster`
+/// (phlow-self-improve/src/escape.rs) is a grouping of check-escape
+/// records by proposed check name. None is a join/leave primitive.
 fn case_no_membership_primitive() -> Result<CaseReport, DriverError> {
     const CASE: &str = "no_membership_primitive";
     let root = workspace_root()?;
@@ -432,15 +434,29 @@ fn case_no_membership_primitive() -> Result<CaseReport, DriverError> {
         &["member", "cluster"],
         &["member", "cluster", "join_cluster", "leave_cluster"],
     )?;
+    // False friend, verified unrelated: `EscapeCluster`
+    // (phlow-self-improve/src/escape.rs) groups recorded check
+    // escapes by proposed check name — a cluster OF escape records,
+    // not a cluster OF workers: no join/leave, no peer set, nothing
+    // that can be partitioned. Classified by name and file; any
+    // other hit still fails the case.
+    let total_hits = hits.len();
+    let (classified, hits): (Vec<String>, Vec<String>) = hits.into_iter().partition(|h| {
+        h.contains("phlow-self-improve/src/escape.rs") && h.contains("EscapeCluster")
+    });
     evidence.push(format!(
-        "module/type-level membership-seam hits across phlow crates: {}",
-        hits.len()
+        "module/type-level membership-seam hits across phlow crates: {total_hits}"
     ));
     for hit in &hits {
         evidence.push(format!("hit: {hit}"));
     }
+    for hit in &classified {
+        evidence.push(format!(
+            "classified false friend (EscapeCluster — recorded check escapes grouped by proposed check name; no membership, no join/leave, no peer set): {hit}"
+        ));
+    }
     evidence.push(
-        "false friends, verified unrelated: 'peer' in phlow-runtime/src/transport/msgpack.rs and phlow-tuios is msgpack-RPC framing (client/server peers; 'a hostile peer cannot make the daemon echo unbounded text') — transport, not cluster membership; 'member' in phlow-workspace/src/workspace.rs is the SKIP_DIRS list and in phlow-inference the scoring pool — neither is a join/leave primitive"
+        "false friends, verified unrelated: 'peer' in phlow-runtime/src/transport/msgpack.rs and phlow-tuios is msgpack-RPC framing (client/server peers; 'a hostile peer cannot make the daemon echo unbounded text') — transport, not cluster membership; 'member' in phlow-workspace/src/workspace.rs is the SKIP_DIRS list and in phlow-inference the scoring pool — neither is a join/leave primitive; 'EscapeCluster' in phlow-self-improve/src/escape.rs groups check-escape records by proposed check name — a record grouping, not a worker set"
             .to_string(),
     );
     if !hits.is_empty() {

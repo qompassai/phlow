@@ -394,7 +394,12 @@ fn case_decompose_vocabulary_absent() -> Result<CaseReport, DriverError> {
 /// not a routine), and the runtime multiagent session loop describes
 /// its SessionAgent implementations as planner-driven (the planner
 /// role driving an agent's step choices inside a session the
-/// orchestrator owns — no subgoal decomposition). And no planner-hit
+/// orchestrator owns — no subgoal decomposition). The PH-6 lesson
+/// cards name the planner as the role that CONSUMES them: rendered
+/// cards are handed to the planner as run context (retrieved data,
+/// never prompt mutation) — a role consumer in
+/// phlow-self-improve/src/lessons.rs, classified by its lesson-card
+/// anchors. And no planner-hit
 /// file contains any real decomposition-token hit
 /// (no planner-decomposer coupling). A file failing every check is an
 /// unclassified routine hit.
@@ -449,6 +454,16 @@ fn case_planner_is_role_not_routine() -> Result<CaseReport, DriverError> {
         // decomposition vocabulary appears.
         let is_multiagent_driver = file.contains("phlow-runtime/src/multiagent.rs")
             && text.contains("planner-driven in production");
+        // The PH-6 lesson-card consumer: lessons.rs names the
+        // planner as the role that consumes rendered lesson cards
+        // as run context — retrieved data handed to the planner,
+        // never a planner routine and never prompt mutation. The
+        // classification requires the file's lesson-card anchors
+        // and holds only while no real decomposition vocabulary
+        // appears there (fail-closed, like the proposer binding).
+        let is_lesson_card_consumer = file.contains("phlow-self-improve/src/lessons.rs")
+            && text.contains("per-task-class planner feedback")
+            && text.contains("hands the rendered card to the planner as run");
         if is_label_example && !has_decompose {
             evidence.push(format!(
                 "classified label example (the planner token is an illustrative audience label in the flowguard policy docs — not a role, not a routine; no decomposition vocabulary): {file}"
@@ -456,6 +471,10 @@ fn case_planner_is_role_not_routine() -> Result<CaseReport, DriverError> {
         } else if is_multiagent_driver && !has_decompose {
             evidence.push(format!(
                 "classified role driver (the planner role drives SessionAgent step choices in the runtime multiagent session loop; the orchestrator owns the loop, no decomposition vocabulary): {file}"
+            ));
+        } else if is_lesson_card_consumer && !has_decompose {
+            evidence.push(format!(
+                "classified role consumer (PH-6 lesson cards — the planner token names the role that consumes rendered lesson cards as run context in phlow-self-improve; retrieved data, never prompt mutation, no decomposition vocabulary): {file}"
             ));
         } else if is_proposer_binding && !has_decompose {
             evidence.push(format!(
@@ -487,8 +506,8 @@ fn case_planner_is_role_not_routine() -> Result<CaseReport, DriverError> {
         "every 'planner' hit is the planner ROLE (LLM role in the planner->coder->reviewer \
          loop: role prompts, model config, pipeline prose, and the autoresearch \
          proposer's binding of the planner specialist) — verified per file by the \
-         coder/reviewer sibling check or the Proposer-binding check; no routine \
-         splits goals into subgoals"
+         coder/reviewer sibling check, the Proposer-binding check, or the \
+         lesson-card consumer check; no routine splits goals into subgoals"
             .to_string(),
     );
     Ok(CaseReport::pass(

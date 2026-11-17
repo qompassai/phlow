@@ -28,6 +28,17 @@ use std::sync::Mutex;
 /// its own semaphore pair.
 static SUBPROCESS_LOCK: Mutex<()> = Mutex::new(());
 
+/// Lock [`SUBPROCESS_LOCK`], recovering the guard if a previous
+/// test panicked while holding it. The lock is measurement hygiene
+/// only — it sequences the /proc-measuring tests against each
+/// other — so a poisoned lock must not cascade one test's panic
+/// into every later test in the binary.
+fn subprocess_guard() -> std::sync::MutexGuard<'static, ()> {
+    SUBPROCESS_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// Build a `Ctx` from the live crate directory, like the other gauntlet
 /// tests do.
 fn test_ctx() -> Ctx {
@@ -43,7 +54,7 @@ fn test_ctx() -> Ctx {
 
 #[test]
 fn bounded_fanout_stays_under_the_cap() {
-    let _guard = SUBPROCESS_LOCK.lock().expect("subprocess lock poisoned");
+    let _guard = subprocess_guard();
     let report = task_47::run_case("normal_fanout_runs").expect("V1 case must run to completion");
     assert!(report.passed, "V1 failed: {:?}", report.failures);
     assert_eq!(report.metrics["dropped"], serde_json::json!(0));
@@ -72,7 +83,7 @@ fn every_spawn_path_is_accounted_for() {
 
 #[test]
 fn adversarial_storm_cannot_open_a_thousand_handles() {
-    let _guard = SUBPROCESS_LOCK.lock().expect("subprocess lock poisoned");
+    let _guard = subprocess_guard();
     let report =
         task_47::run_case("storm_10000_spawns_capped").expect("A1 case must run to completion");
     assert!(report.passed, "A1 failed: {:?}", report.failures);
@@ -88,7 +99,7 @@ fn adversarial_storm_cannot_open_a_thousand_handles() {
 
 #[test]
 fn adversarial_crashing_tools_leave_no_zombies() {
-    let _guard = SUBPROCESS_LOCK.lock().expect("subprocess lock poisoned");
+    let _guard = subprocess_guard();
     let report = task_47::run_case("crashed_tools_return_to_baseline")
         .expect("A2 case must run to completion");
     assert!(report.passed, "A2 failed: {:?}", report.failures);

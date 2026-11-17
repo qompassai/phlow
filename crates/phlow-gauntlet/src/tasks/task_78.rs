@@ -341,9 +341,13 @@ fn case_no_snapshot_revision_cache() -> Result<CaseReport, DriverError> {
     // flowguard label snapshots (a LabelSnapshot is a trajectory's
     // label value captured at a handoff boundary — policy data, not
     // model data), a2a task snapshots (the A2A protocol's Task state
-    // returned by a peer — protocol data, not model data) — plus the
-    // gauntlet harness's own probe vocabulary.
-    const CLASSIFIED_CRATES: [&str; 15] = [
+    // returned by a peer — protocol data, not model data),
+    // self-improve capture snapshots (a capture carries flowguard's
+    // LabelSnapshot as run evidence — the same label-snapshot sense
+    // — and its check-validation prose names escaped/fixed source
+    // revisions, not model revisions) — plus the gauntlet harness's
+    // own probe vocabulary.
+    const CLASSIFIED_CRATES: [&str; 16] = [
         "phlow-workspace",
         "phlow-editor",
         "phlow-runtime",
@@ -359,6 +363,7 @@ fn case_no_snapshot_revision_cache() -> Result<CaseReport, DriverError> {
         "phlow-mcp",
         "phlow-flowguard",
         "phlow-a2a",
+        "phlow-self-improve",
     ];
     let root = workspace_root()?;
     let hits = scan_sources(&root, &["snapshot", "blob", "revision"])?;
