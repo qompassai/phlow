@@ -898,6 +898,7 @@ mod tests {
             question: Question::Choice {
                 instructions: "Pick.".to_string(),
                 options: vec!["a".to_string(), "b".to_string()],
+                option_descriptions: Vec::new(),
             },
             question_id: "q".to_string(),
             state: "state".to_string(),

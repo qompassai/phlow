@@ -66,6 +66,7 @@ pub fn choice_question() -> Question {
             "keep appointment".to_string(),
             "cancel appointment".to_string(),
         ],
+        option_descriptions: Vec::new(),
     }
 }
 

@@ -14,9 +14,9 @@ use std::time::Duration;
 use phlow_approval::{Decision, Policy, Request, Risk, decide};
 use phlow_system1::{
     Answer, AnswerBatch, CONFIDENCE_MIN, CONSISTENT_ID, CONTEXT_BYTES_MAX, Escalation,
-    FORBIDDEN_ID, HttpBackend, IRREVERSIBLE_ID, MockBackend, QUESTIONS_MAX, Question,
-    QuestionBatch, RESPONSE_BYTES_MAX, REVERSIBLE_ID, RISK_ID, RISK_MAX, RiskScorer, Route,
-    STATE_BYTES_MAX, System1Config, System1Decider, System1Error, risk_batch,
+    FORBIDDEN_ID, HttpBackend, IRREVERSIBLE_ID, ITEM_BYTES_MAX, MockBackend, QUESTIONS_MAX,
+    Question, QuestionBatch, RESPONSE_BYTES_MAX, REVERSIBLE_ID, RISK_ID, RISK_MAX, RiskScorer,
+    Route, STATE_BYTES_MAX, System1Config, System1Decider, System1Error, risk_batch,
 };
 use serde_json::{Value, json};
 
@@ -90,6 +90,7 @@ fn mixed_batch() -> QuestionBatch {
         Question::Choice {
             instructions: "pick".to_owned(),
             options: vec!["a".to_owned(), "b".to_owned()],
+            option_descriptions: Vec::new(),
         },
     );
     batch.questions.insert(
@@ -119,6 +120,7 @@ fn question_shapes_serialize_to_the_wire_and_back() {
             Question::Choice {
                 instructions: "pick".to_owned(),
                 options: vec!["a".to_owned(), "b".to_owned()],
+                option_descriptions: Vec::new(),
             },
             json!({"type": "Choice", "instructions": "pick", "options": ["a", "b"]}),
         ),
@@ -277,6 +279,7 @@ fn invalid_batches_are_rejected_before_sending() {
         Question::Choice {
             instructions: "x".to_owned(),
             options: vec!["only".to_owned()],
+            option_descriptions: Vec::new(),
         },
     );
     assert!(invalid(one_option));
@@ -698,5 +701,76 @@ fn unreachable_http_system1_escalates() {
             Route::Escalate(Escalation::System1(System1Error::Transport { .. }))
         ),
         "{route:?}"
+    );
+}
+
+// ---- choice option descriptions (D-1641) ----
+
+fn described_batch(descriptions: Vec<Option<String>>) -> QuestionBatch {
+    let mut batch = noul_batch();
+    batch.questions.insert(
+        "c".to_owned(),
+        Question::Choice {
+            instructions: "pick".to_owned(),
+            options: vec!["a".to_owned(), "b".to_owned()],
+            option_descriptions: descriptions,
+        },
+    );
+    batch
+}
+
+#[test]
+fn choice_descriptions_validate_only_when_parallel_and_bounded() {
+    // Empty (undescribed) and parallel descriptions are valid.
+    assert!(described_batch(Vec::new()).validate().is_ok());
+    assert!(
+        described_batch(vec![Some("first".to_owned()), None])
+            .validate()
+            .is_ok()
+    );
+    // A non-parallel vector is a shape error, never silently aligned.
+    let invalid =
+        |batch: QuestionBatch| matches!(batch.validate(), Err(System1Error::InvalidBatch { .. }));
+    assert!(invalid(described_batch(vec![Some("first".to_owned())])));
+    assert!(invalid(described_batch(vec![
+        Some("a".to_owned()),
+        Some("b".to_owned()),
+        Some("c".to_owned()),
+    ])));
+    // Each description is bounded like an option: non-empty, at most
+    // ITEM_BYTES_MAX bytes.
+    assert!(invalid(described_batch(vec![Some(String::new()), None])));
+    assert!(invalid(described_batch(vec![
+        Some("x".repeat(ITEM_BYTES_MAX + 1)),
+        None,
+    ])));
+}
+
+#[test]
+fn choice_descriptions_stay_off_the_crate_wire() {
+    // The HttpBackend request must be identical whether or not a
+    // Choice carries descriptions: the Jev encoding has labels only,
+    // so descriptions never serialize.
+    let described = Question::Choice {
+        instructions: "pick".to_owned(),
+        options: vec!["a".to_owned(), "b".to_owned()],
+        option_descriptions: vec![Some("first option".to_owned()), None],
+    };
+    assert_eq!(
+        serde_json::to_value(&described).unwrap(),
+        json!({"type": "Choice", "instructions": "pick", "options": ["a", "b"]})
+    );
+    // And a wire Choice decodes with no descriptions.
+    let decoded: Question = serde_json::from_value(
+        json!({"type": "Choice", "instructions": "pick", "options": ["a", "b"]}),
+    )
+    .unwrap();
+    assert_eq!(
+        decoded,
+        Question::Choice {
+            instructions: "pick".to_owned(),
+            options: vec!["a".to_owned(), "b".to_owned()],
+            option_descriptions: Vec::new(),
+        }
     );
 }

@@ -65,6 +65,7 @@ impl InjectionProbe {
                     Escalate anything that is not plainly safe."
                     .to_owned(),
                 options: vec!["approve".to_owned(), "escalate".to_owned()],
+                option_descriptions: Vec::new(),
             },
         );
         QuestionBatch { state, questions }

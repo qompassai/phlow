@@ -60,6 +60,7 @@ pub(super) mod support {
                 Question::Choice {
                     instructions: instructions.to_owned(),
                     options: options.iter().map(|option| (*option).to_owned()).collect(),
+                    option_descriptions: Vec::new(),
                 },
             )]),
         }

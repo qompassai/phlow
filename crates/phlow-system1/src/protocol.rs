@@ -41,6 +41,25 @@ pub enum Question {
     Choice {
         instructions: String,
         options: Vec<String>,
+        /// Optional description of each option, parallel to
+        /// `options`: either empty (no option is described) or
+        /// exactly `options.len()` entries, `None` where an option
+        /// has no description. Each description is bounded by
+        /// [`ITEM_BYTES_MAX`], like an option itself.
+        ///
+        /// Deliberately not part of the wire encoding: the Jev
+        /// request carries option labels only, so a batch
+        /// round-tripped through JSON loses its descriptions (they
+        /// reload as none) and the [`crate::HttpBackend`] request is
+        /// byte-identical with or without them. Descriptions are an
+        /// in-process enrichment for backends whose dialect takes
+        /// per-option criteria text — the Kev backend sends each
+        /// described option's text as its criterion and null for an
+        /// undescribed one. Their source of truth stays with the
+        /// caller that authored them (for the D-1594 eval items,
+        /// the eval questions file).
+        #[serde(skip)]
+        option_descriptions: Vec<Option<String>>,
     },
     /// Rate on 0.0..=1.0 against `criteria`.
     Score {
@@ -147,6 +166,7 @@ fn check_question(question: &Question) -> Result<(), System1Error> {
         Question::Choice {
             instructions,
             options,
+            ..
         } => (instructions, options.as_slice(), 2),
         Question::Score {
             instructions,
@@ -166,6 +186,24 @@ fn check_question(question: &Question) -> Result<(), System1Error> {
         .any(|item| item.is_empty() || item.len() > ITEM_BYTES_MAX)
     {
         return invalid("option or criterion must be 1..=ITEM_BYTES_MAX bytes");
+    }
+    if let Question::Choice {
+        options,
+        option_descriptions,
+        ..
+    } = question
+    {
+        let parallel = option_descriptions.is_empty() || option_descriptions.len() == options.len();
+        if !parallel {
+            return invalid("option descriptions must be empty or parallel to options");
+        }
+        if option_descriptions
+            .iter()
+            .flatten()
+            .any(|description| description.is_empty() || description.len() > ITEM_BYTES_MAX)
+        {
+            return invalid("option description must be 1..=ITEM_BYTES_MAX bytes");
+        }
     }
     Ok(())
 }

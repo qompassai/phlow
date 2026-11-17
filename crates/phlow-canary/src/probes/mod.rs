@@ -37,6 +37,7 @@ pub fn classify_batch(inputs: &[String], tag: &str) -> QuestionBatch {
                 "neutral".to_owned(),
                 "positive".to_owned(),
             ],
+            option_descriptions: Vec::new(),
         };
         questions.insert(format!("{tag}-{index}"), question);
     }

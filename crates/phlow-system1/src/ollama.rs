@@ -157,6 +157,7 @@ impl OllamaBackend {
             Question::Choice {
                 instructions,
                 options,
+                ..
             } => (instructions, options.clone()),
             Question::Noul { instructions } => {
                 (instructions, vec!["no".to_owned(), "yes".to_owned()])

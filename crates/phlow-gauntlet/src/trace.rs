@@ -761,6 +761,7 @@ mod tests {
                     "keep appointment".to_string(),
                     "cancel appointment".to_string(),
                 ],
+                option_descriptions: Vec::new(),
             },
             Answer::Choice {
                 selected: 0,
@@ -789,6 +790,7 @@ mod tests {
             Question::Choice {
                 instructions: "Pick one.".to_string(),
                 options: vec!["x".to_string(), "y".to_string()],
+                option_descriptions: Vec::new(),
             },
         );
         questions.insert("b_noul".to_string(), noul_question());
@@ -1014,6 +1016,7 @@ mod tests {
             Question::Choice {
                 instructions: "Pick one.".to_string(),
                 options: vec!["x".to_string(), "y".to_string()],
+                option_descriptions: Vec::new(),
             },
             Answer::Choice {
                 selected: 0,
@@ -1079,6 +1082,7 @@ mod tests {
             Question::Choice {
                 instructions: "Pick one.".to_string(),
                 options: vec!["x".to_string(), "y".to_string()],
+                option_descriptions: Vec::new(),
             },
             Answer::Choice {
                 selected: 0,
