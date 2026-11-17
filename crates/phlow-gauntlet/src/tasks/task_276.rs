@@ -34,6 +34,7 @@ fn case() -> Result<bool, String> {
             Question::Choice {
                 instructions: "Select the requested option.".to_owned(),
                 options,
+                option_descriptions: Vec::new(),
             },
         )]),
     };

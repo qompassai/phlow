@@ -32,6 +32,7 @@ fn case() -> Result<bool, String> {
             Question::Choice {
                 instructions: format!("Select {index}."),
                 options: (0..10).map(|option| format!("option-{option}")).collect(),
+                option_descriptions: Vec::new(),
             },
         );
         answers.insert(

@@ -14,6 +14,7 @@ fn choice_question() -> Question {
             "neutral".to_owned(),
             "positive".to_owned(),
         ],
+        option_descriptions: Vec::new(),
     }
 }
 

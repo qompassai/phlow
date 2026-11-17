@@ -257,6 +257,7 @@ mod tests {
                     Question::Choice {
                         instructions: "Which queue should own this ticket?".to_owned(),
                         options: vec!["bug-queue".to_owned(), "feature-queue".to_owned()],
+                        option_descriptions: Vec::new(),
                     },
                 ),
                 (
@@ -379,6 +380,7 @@ mod tests {
                         "needs-engineer".to_owned(),
                         "needs-info".to_owned(),
                     ],
+                    option_descriptions: Vec::new(),
                 },
             )]),
         };

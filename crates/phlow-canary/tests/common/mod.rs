@@ -362,6 +362,7 @@ impl ProbeBackend for StubBackend {
                 Question::Choice {
                     instructions,
                     options,
+                    ..
                 } => {
                     if self.kind == StubKind::Malformed {
                         RichAnswer {

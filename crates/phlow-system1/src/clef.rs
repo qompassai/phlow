@@ -337,6 +337,7 @@ mod tests {
                     "technical".to_string(),
                     "sales".to_string(),
                 ],
+                option_descriptions: Vec::new(),
             },
         );
         QuestionBatch {
@@ -451,6 +452,7 @@ mod tests {
                 "technical".to_string(),
                 "sales".to_string(),
             ],
+            option_descriptions: Vec::new(),
         }
     }
 

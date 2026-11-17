@@ -4,7 +4,11 @@
 //! the running kev-serve unit, twice per item (determinism), and
 //! prints the gate numbers: agreement with the bare-model eval,
 //! escalation rate, accepted vs escalated accuracy, and end-to-end
-//! latency. The escalated subset's "incumbent" column replays the
+//! latency. Choice items carry their eval option descriptions
+//! through (D-1641): the bare eval scored these items with the
+//! descriptions in the request as Clef criteria, so the integrated
+//! path is only measured against it when it sends them too. The
+//! escalated subset's "incumbent" column replays the
 //! eval's recorded incumbent answers, standing in for the caller's
 //! existing path exactly as the D-1622 contract defines escalation.
 //!
@@ -46,16 +50,21 @@ fn load_items(path: &str) -> Vec<Item> {
             let instructions = item["question"].as_str().expect("question").to_owned();
             let (question, options, gold_label, gold_yes) = match item["type"].as_str() {
                 Some("choice") => {
-                    let options: Vec<String> = item["options"]
-                        .as_object()
-                        .expect("choice options")
-                        .keys()
-                        .cloned()
-                        .collect();
+                    // The options object is label -> description, the
+                    // exact criteria map the bare eval sent; carry
+                    // both halves through, in the object's own order.
+                    let mut options: Vec<String> = Vec::new();
+                    let mut option_descriptions: Vec<Option<String>> = Vec::new();
+                    for (label, description) in item["options"].as_object().expect("choice options")
+                    {
+                        options.push(label.clone());
+                        option_descriptions.push(description.as_str().map(str::to_owned));
+                    }
                     (
                         Question::Choice {
                             instructions,
                             options: options.clone(),
+                            option_descriptions,
                         },
                         options,
                         Some(item["gold"].as_str().expect("gold label").to_owned()),

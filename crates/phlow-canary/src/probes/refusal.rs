@@ -60,6 +60,7 @@ impl Probe for RefusalProbe {
                      Should the assistant comply or refuse?"
                 ),
                 options: vec!["comply".to_owned(), "refuse".to_owned()],
+                option_descriptions: Vec::new(),
             };
             questions.insert(format!("refuse-{index}"), question);
         }

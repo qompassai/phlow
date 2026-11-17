@@ -12,11 +12,13 @@
 //!   is no `model` field — the server binds exactly one decision model
 //!   at startup, so the endpoint alone identifies what answers;
 //! - a Choice question is `{"type": "choice", "instructions": i,
-//!   "criteria": {label: description-or-null}}`. The crate's Choice
-//!   carries labels only, so descriptions are sent as null: the option
-//!   key itself is the candidate text. Option labels must be unique —
-//!   duplicates would collapse inside the criteria object, so they are
-//!   an [`System1Error::InvalidBatch`] here, before anything is sent;
+//!   "criteria": {label: description-or-null}}`. A description the
+//!   question carries for an option (its `option_descriptions`) is
+//!   sent as that option's criterion text; an option without one is
+//!   sent as null, so the option key itself is the candidate text.
+//!   Option labels must be unique — duplicates would collapse inside
+//!   the criteria object, so they are an
+//!   [`System1Error::InvalidBatch`] here, before anything is sent;
 //! - a Score question is `{"type": "score", "instructions": i,
 //!   "criteria": [level, ...]}` with 2..=10 levels (the server's bound,
 //!   enforced here as `InvalidBatch`);
@@ -212,10 +214,20 @@ fn to_kev_wire(batch: &QuestionBatch) -> Result<Vec<u8>, System1Error> {
             Question::Choice {
                 instructions,
                 options,
+                option_descriptions,
             } => {
                 let mut criteria = Map::new();
-                for option in options {
-                    if criteria.insert(option.clone(), Value::Null).is_some() {
+                for (index, option) in options.iter().enumerate() {
+                    // Validation has already established that the
+                    // descriptions are empty or parallel to the
+                    // options, so a missing entry here is exactly
+                    // "this option has no description": null.
+                    let criterion = option_descriptions
+                        .get(index)
+                        .cloned()
+                        .flatten()
+                        .map_or(Value::Null, Value::String);
+                    if criteria.insert(option.clone(), criterion).is_some() {
                         return Err(System1Error::InvalidBatch {
                             reason: "choice option labels must be unique for the kev dialect",
                         });
@@ -353,6 +365,7 @@ mod tests {
                 Question::Choice {
                     instructions: "Which queue should own this ticket?".to_owned(),
                     options: vec!["bug-queue".to_owned(), "feature-queue".to_owned()],
+                    option_descriptions: Vec::new(),
                 },
             )],
         )
@@ -377,6 +390,29 @@ mod tests {
         );
         // The llama.cpp dialect has no model field.
         assert!(wire.get("model").is_none());
+    }
+
+    #[test]
+    fn encodes_described_options_as_criteria_text() {
+        let batch = batch(
+            "Ticket: the export button 500s on large files.",
+            vec![(
+                "route",
+                Question::Choice {
+                    instructions: "Which queue should own this ticket?".to_owned(),
+                    options: vec!["bug-queue".to_owned(), "feature-queue".to_owned()],
+                    option_descriptions: vec![
+                        Some("A defect in shipped behaviour".to_owned()),
+                        None,
+                    ],
+                },
+            )],
+        );
+        let wire = wire_json(&batch);
+        assert_eq!(
+            wire["questions"]["route"]["criteria"],
+            json!({"bug-queue": "A defect in shipped behaviour", "feature-queue": null})
+        );
     }
 
     #[test]
@@ -419,6 +455,7 @@ mod tests {
                 Question::Choice {
                     instructions: "Pick.".to_owned(),
                     options: vec!["same".to_owned(), "same".to_owned()],
+                    option_descriptions: Vec::new(),
                 },
             )],
         );

@@ -89,6 +89,7 @@ fn route_batch() -> QuestionBatch {
                     "needs-engineer".to_owned(),
                     "needs-info".to_owned(),
                 ],
+                option_descriptions: Vec::new(),
             },
         )]),
     }
@@ -266,4 +267,51 @@ fn service_down_escalates_everything() {
         outcome.verdict("route"),
         Some(TriageVerdict::Escalated(TriageEscalation::Backend(_)))
     ));
+}
+
+#[test]
+fn kev_backend_sends_descriptions_as_criteria_text() {
+    // D-1641: descriptions the question carries reach the server as
+    // criteria text; an undescribed option stays null.
+    let batch = QuestionBatch {
+        state: "Ticket T-1042 from a customer: the export button returns HTTP 500 \
+                on large files."
+            .to_owned(),
+        questions: BTreeMap::from([(
+            "route".to_owned(),
+            Question::Choice {
+                instructions: "Which handling does this ticket need?".to_owned(),
+                options: vec![
+                    "resolved".to_owned(),
+                    "needs-engineer".to_owned(),
+                    "needs-info".to_owned(),
+                ],
+                option_descriptions: vec![
+                    Some("The reported problem is already fixed".to_owned()),
+                    Some("A defect an engineer must fix".to_owned()),
+                    None,
+                ],
+            },
+        )]),
+    };
+    let (endpoint, server) = serve_once("200 OK", v1_reply().to_string().into_bytes());
+    let backend = backend_for(&endpoint);
+    let answers = runtime().block_on(backend.decide(&batch)).unwrap();
+    assert_eq!(
+        answers.answers["route"],
+        Answer::Choice {
+            selected: 1,
+            probability: 0.8589
+        }
+    );
+    let request = String::from_utf8(server.join().unwrap()).unwrap();
+    let body: Value = serde_json::from_str(request.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+    assert_eq!(
+        body["questions"]["route"]["criteria"],
+        json!({
+            "resolved": "The reported problem is already fixed",
+            "needs-engineer": "A defect an engineer must fix",
+            "needs-info": null,
+        })
+    );
 }
