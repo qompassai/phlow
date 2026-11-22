@@ -1967,6 +1967,7 @@ dependencies = [
  "blochs",
  "phlow-approval",
  "phlow-flowguard",
+ "phlow-seccomp",
  "phlow-workspace",
  "rusqlite",
  "serde_json",
@@ -2000,6 +2001,7 @@ dependencies = [
 name = "phlow-trainlab"
 version = "0.1.0"
 dependencies = [
+ "phlow-seccomp",
  "serde",
  "serde_json",
  "sha2 0.10.9",

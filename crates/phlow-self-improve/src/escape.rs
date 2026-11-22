@@ -464,12 +464,19 @@ fn run_bounded(argv: &[String], dir: &Path) -> Result<i32, String> {
     let Some((program, args)) = argv.split_first() else {
         return Err("empty argv".to_owned());
     };
-    let mut child = Command::new(program)
+    let mut command = Command::new(program);
+    command
         .args(args)
         .current_dir(dir)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+    // A proposed check runs before any operator verdict, so it gets the
+    // approved-checks egress filter. Fail closed — never run it unfiltered.
+    #[cfg(target_os = "linux")]
+    phlow_seccomp::apply_egress_filter(&mut command)
+        .map_err(|e| format!("egress filter unavailable for {program}: {e}"))?;
+    let mut child = command
         .spawn()
         .map_err(|e| format!("spawn {program}: {e}"))?;
     let deadline = Instant::now() + CHECK_VALIDATION_TIMEOUT;
@@ -840,6 +847,36 @@ mod tests {
         let validation = validate_check(&missing, &escaped, &fixed);
         assert!(!validation.gate_holds);
         assert!(validation.error.is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn proposed_check_cannot_open_ip_sockets() {
+        // Adversarial: a recorded argv runs before any operator verdict,
+        // so it gets the same egress filter as an approved check. With
+        // the filter, socket(AF_INET) fails and python3 exits 1.
+        let dir = temp_dir("egress");
+        std::fs::create_dir_all(&dir).unwrap();
+        let argv = vec![
+            "python3".to_owned(),
+            "-c".to_owned(),
+            "import socket; socket.socket(socket.AF_INET)".to_owned(),
+        ];
+        let validation = validate_check(&argv, &dir, &dir);
+        // Skip only on a missing interpreter; an unavailable egress filter
+        // is also an error, and must fail this test rather than skip it.
+        if validation
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("spawn python3"))
+        {
+            eprintln!("SKIP: python3 not available: {:?}", validation.error);
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        }
+        assert_eq!(validation.fixed_exit, Some(1), "{validation:?}");
+        assert!(!validation.gate_holds);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

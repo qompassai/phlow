@@ -250,6 +250,12 @@ impl Executor {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        // Model-generated code gets at least the approved-checks boundary:
+        // no IP sockets. Fail closed — never run the completion unfiltered.
+        #[cfg(target_os = "linux")]
+        phlow_seccomp::apply_egress_filter(&mut command).map_err(|err| {
+            TrainlabError::Executor(format!("reward egress filter unavailable: {err}"))
+        })?;
         let mut child = command.spawn()?;
         let stdout = take_pipe(child.stdout.take(), self.config.output_bytes_max);
         let stderr = take_pipe(child.stderr.take(), self.config.output_bytes_max);
@@ -472,5 +478,49 @@ mod tests {
             .expect("evaluation");
         assert_eq!(evaluation.status, EvalStatus::Invalid);
         assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn completion_cannot_open_ip_sockets() {
+        if !python3_available() {
+            eprintln!("SKIP: python3 not available for executor integration test");
+            return;
+        }
+        // Adversarial: model-generated code must not reach the network.
+        // Top-level code after the body runs at exec time; under the
+        // egress filter socket(AF_INET) fails with EPERM -> invalid.
+        let executor = acknowledged_executor();
+        let task = dev_task();
+        let completion = "\n    return x\nimport socket\nsocket.socket(socket.AF_INET)\n";
+        let evaluation = executor.evaluate(&task, completion).expect("evaluation");
+        assert_eq!(evaluation.status, EvalStatus::Invalid, "{evaluation:?}");
+        assert!(
+            evaluation.message.contains("Operation not permitted"),
+            "{evaluation:?}"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn completion_grandchild_cannot_open_ip_sockets() {
+        if !python3_available() {
+            eprintln!("SKIP: python3 not available for executor integration test");
+            return;
+        }
+        // Adversarial: the filter is inherited across exec, so a process
+        // the completion spawns is denied too.
+        let executor = acknowledged_executor();
+        let task = dev_task();
+        let completion = "\n    return x\nimport subprocess, sys\n\
+            r = subprocess.run([sys.executable, '-c', \
+            'import socket; socket.socket(socket.AF_INET6)'], capture_output=True)\n\
+            if r.returncode != 0:\n    raise RuntimeError('grandchild-denied')\n";
+        let evaluation = executor.evaluate(&task, completion).expect("evaluation");
+        assert_eq!(evaluation.status, EvalStatus::Invalid, "{evaluation:?}");
+        assert!(
+            evaluation.message.contains("grandchild-denied"),
+            "{evaluation:?}"
+        );
     }
 }
