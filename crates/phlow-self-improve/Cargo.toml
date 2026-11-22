@@ -26,9 +26,7 @@ phlow-approval = { version = "0.1.0", path = "../phlow-approval" }
 # no flowguard runtime, no policy evaluation.
 phlow-flowguard = { version = "0.1.0", path = "../phlow-flowguard" }
 
-# phlow-seccomp: the Linux egress filter installed in every proposed-check
-# validation child, the same filter phlow-checks installs on approved checks.
-[target.'cfg(target_os = "linux")'.dependencies]
+# Fail-closed model-code confinement, including the existing Linux egress filter.
 phlow-seccomp = { version = "0.1.0", path = "../phlow-seccomp" }
 
 [dev-dependencies]

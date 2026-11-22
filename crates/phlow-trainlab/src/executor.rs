@@ -2,14 +2,9 @@
 //!
 //! # Trust boundary
 //!
-//! This module **executes model-generated code**. Phlow is not an OS
-//! sandbox and this executor does not claim to be one: it runs the
-//! completion with the operator's own interpreter, in a fresh
-//! temporary directory, under a deadline, with bounded output, and
-//! only when the operator explicitly acknowledged code execution in
-//! [`ExecutorConfig`]. That acknowledgment is the phlow contract —
-//! the same one the approved-checks system uses — not a sandbox
-//! promise.
+//! This module executes model-generated code after operator acknowledgment.
+//! The child runs with filesystem confinement and egress filtering in a
+//! fresh work directory, with a deadline and bounded captured output.
 //!
 //! The harness protocol: the executor writes `source.py` (prompt +
 //! completion), `cases.json`, and a fixed `harness.py`, then runs
@@ -20,7 +15,9 @@
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+#[cfg(test)]
+use std::process::Command;
+use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -171,7 +168,13 @@ impl TempDirGuard {
     fn create(root: &Path) -> Result<TempDirGuard, TrainlabError> {
         let unique = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
         let path = root.join(format!("phlow-trainlab-{}-{unique}", std::process::id()));
-        fs::create_dir(&path)?;
+        let mut builder = fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder.create(&path)?;
         Ok(TempDirGuard { path })
     }
 }
@@ -237,25 +240,16 @@ impl Executor {
             .interpreter_argv
             .split_first()
             .expect("validated non-empty interpreter argv");
-        let mut command = Command::new(program);
+        let mut command =
+            phlow_seccomp::confined_command(program, phlow_seccomp::RunDirectory::Writable(dir))?;
         command
             .args(leading)
-            .arg(dir.join("harness.py"))
-            .arg(dir.join("source.py"))
-            .arg(dir.join("cases.json"))
+            .arg("harness.py")
+            .arg("source.py")
+            .arg("cases.json")
             .arg(entry_point)
-            .current_dir(dir)
-            .env_clear()
-            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        // Model-generated code gets at least the approved-checks boundary:
-        // no IP sockets. Fail closed — never run the completion unfiltered.
-        #[cfg(target_os = "linux")]
-        phlow_seccomp::apply_egress_filter(&mut command).map_err(|err| {
-            TrainlabError::Executor(format!("reward egress filter unavailable: {err}"))
-        })?;
         let mut child = command.spawn()?;
         let stdout = take_pipe(child.stdout.take(), self.config.output_bytes_max);
         let stderr = take_pipe(child.stderr.take(), self.config.output_bytes_max);
@@ -418,6 +412,24 @@ mod tests {
         let huge = " ".repeat(COMPLETION_BYTES_MAX + 1);
         let evaluation = executor.evaluate(&task, &huge).expect("evaluation");
         assert_eq!(evaluation.status, EvalStatus::Invalid);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn completion_can_write_only_in_its_work_directory() {
+        let executor = acknowledged_executor();
+        let task = dev_task();
+        let completion = format!(
+            r#"
+    from pathlib import Path
+    Path("result.txt").write_text("result")
+    if Path("/etc/passwd").exists():
+        raise AssertionError("host filesystem visible")
+{}"#,
+            task.reference_completion,
+        );
+        let evaluation = executor.evaluate(&task, &completion).expect("evaluation");
+        assert_eq!(evaluation.status, EvalStatus::Passed, "{evaluation:?}");
     }
 
     #[test]

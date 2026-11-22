@@ -22,8 +22,5 @@ serde_json = "1"
 # match phlow-experiment's pin.
 sha2 = "=0.10.9"
 
-# phlow-seccomp: the Linux egress filter (socket(AF_INET/AF_INET6) and
-# io_uring_setup -> EPERM) installed in every reward-executor child, the
-# same filter phlow-checks installs. Its one unsafe pre_exec lives there.
-[target.'cfg(target_os = "linux")'.dependencies]
+# Fail-closed model-code confinement, including the existing Linux egress filter.
 phlow-seccomp = { version = "0.1.0", path = "../phlow-seccomp" }

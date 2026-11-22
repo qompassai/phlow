@@ -40,14 +40,9 @@
 //! riscv64), it returns an error, so the check does not run unfiltered;
 //! big-endian Linux does not build (seccompiler is little-endian only).
 //!
-//! # Unsafe boundary
-//!
-//! The crate's only `unsafe` is the [`CommandExt::pre_exec`] registration
-//! in `register`. The BPF program is compiled in the parent; after fork the
-//! child only calls `prctl(PR_SET_NO_NEW_PRIVS)` and
-//! `seccomp(SECCOMP_SET_MODE_FILTER)` on that already-built program — raw
-//! syscalls, no allocation, no locks (see `install`). Real-child tests of
-//! the public API live in `tests/egress.rs`.
+//! The egress filter is compiled before fork. The confinement API also
+//! prepares its paths before fork and performs namespace and Landlock setup
+//! using syscalls before the child executes its program.
 //!
 //! [`CommandExt::pre_exec`]: std::os::unix::process::CommandExt::pre_exec
 
@@ -55,6 +50,50 @@
 
 use std::io;
 use std::process::Command;
+
+#[cfg(target_os = "linux")]
+#[allow(unsafe_code)]
+mod filesystem;
+
+/// Host directory to expose to a model-code child.
+pub enum RunDirectory<'a> {
+    /// Fresh, private per-run directory, exposed as `/work` and used as cwd.
+    /// The caller must provide only staged inputs with no external hard links.
+    Writable(&'a std::path::Path),
+    /// Input checkout, exposed read-only as `/input` and used as cwd.
+    /// A private tmpfs mounted at `/work` supplies writable scratch.
+    ReadOnly(&'a std::path::Path),
+}
+
+/// Construct a fail-closed model-code command with Landlock, a private
+/// mount namespace and the existing egress filter. The system runtime
+/// lives under `/usr/bin` and `/usr/lib`. Only standard I/O crosses exec.
+pub fn confined_command(
+    program: impl AsRef<std::ffi::OsStr>,
+    directory: RunDirectory<'_>,
+) -> io::Result<Command> {
+    #[cfg(target_os = "linux")]
+    {
+        let mut command = Command::new(program);
+        command
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("HOME", "/work")
+            .env("TMPDIR", "/work")
+            .stdin(std::process::Stdio::null());
+        apply_egress_filter(&mut command)?;
+        filesystem::register(&mut command, directory)?;
+        Ok(command)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (program, directory);
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "model-code confinement requires Linux",
+        ))
+    }
+}
 
 /// Arrange for `command`'s child to run under the egress filter.
 ///
