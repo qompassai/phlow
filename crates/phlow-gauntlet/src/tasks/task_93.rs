@@ -12,12 +12,9 @@
 //! isolated workspace and snapshots" — is implemented as
 //! `self.advance(EvalStage::Prepare)`: order enforcement only, with the
 //! doc comment "Skeleton: order only". The [`Lifecycle::Isolated`]
-//! state exists, but nothing creates a real isolated workspace, no
-//! network isolation exists anywhere in the workspace, and no
-//! write-containment exists either. Bounded exact-token scans over every
-//! product crate's `src/**/*.rs` (the gauntlet crate itself excluded,
-//! per the harness-probe principle) confirm zero hits for
-//! network-isolation and write-containment vocabulary.
+//! state exists, but this evaluator creates no isolated workspace.
+//! Bounded exact-token scans over phlow-experiment's source look for
+//! isolation primitives and the model-code confinement entry point.
 //!
 //! Four cases: two validation, two adversarial — each a bounded source
 //! recon that fails closed (premise changed) if sandbox vocabulary ever
@@ -171,22 +168,13 @@ fn workspace_root() -> Result<PathBuf, DriverError> {
     Ok(root.to_path_buf())
 }
 
-/// The gauntlet's own crate root, excluded from the product scan: the
-/// harness's own probes use the design vocabulary.
-fn excluded_crate_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
-}
-
-/// Exact-token (case-insensitive) hits for `token` over every product
-/// crate's `src/**/*.rs` — the gauntlet crate itself excluded. Bounded
-/// like task_48.
-fn scan_workspace(root: &Path, token: &str) -> Result<Vec<String>, DriverError> {
-    let excluded = excluded_crate_root();
+/// Exact-token (case-insensitive) hits in the candidate evaluator crate.
+fn scan_evaluator(root: &Path, token: &str) -> Result<Vec<String>, DriverError> {
     let wanted = token.to_lowercase();
-    let crates_dir = root.join("crates");
+    let source_dir = root.join("crates/phlow-experiment/src");
     let mut hits = Vec::new();
     let mut files_seen = 0usize;
-    let mut stack = vec![crates_dir];
+    let mut stack = vec![source_dir];
     while let Some(dir) = stack.pop() {
         let entries = std::fs::read_dir(&dir)
             .map_err(|e| fixture_error("source walk", format!("{}: {e}", dir.display())))?;
@@ -194,12 +182,8 @@ fn scan_workspace(root: &Path, token: &str) -> Result<Vec<String>, DriverError> 
             let entry = entry.map_err(|e| fixture_error("source walk", e))?;
             let path = entry.path();
             if path.is_dir() {
-                if path != excluded {
-                    stack.push(path);
-                }
-            } else if path.extension().is_some_and(|e| e == "rs")
-                && path.components().any(|c| c.as_os_str() == "src")
-            {
+                stack.push(path);
+            } else if path.extension().is_some_and(|e| e == "rs") {
                 files_seen += 1;
                 if files_seen > SOURCE_FILES_MAX {
                     return Err(probe_error(
@@ -259,9 +243,9 @@ fn assert_absent(
     let mut evidence = Vec::new();
     let mut total_hits = 0usize;
     for token in tokens {
-        let hits = scan_workspace(root, token)?;
+        let hits = scan_evaluator(root, token)?;
         evidence.push(format!(
-            "exact-token scan for '{token}' over crates/*/src/**/*.rs: {} hit(s)",
+            "exact-token scan for '{token}' over crates/phlow-experiment/src/**/*.rs: {} hit(s)",
             hits.len()
         ));
         for hit in &hits {
@@ -365,7 +349,7 @@ fn case_prepare_is_skeleton() -> Result<CaseReport, DriverError> {
     ))
 }
 
-/// V2: no network-isolation vocabulary exists in any product crate —
+/// V2: no network-isolation vocabulary exists in the candidate evaluator —
 /// there is no `unshare`, no network namespace, no firewall rule, no
 /// offline-sandbox flag for candidate evaluation.
 fn case_no_network_isolation() -> Result<CaseReport, DriverError> {
@@ -380,10 +364,11 @@ fn case_no_network_isolation() -> Result<CaseReport, DriverError> {
             "no_network",
             "netns",
             "sandbox_network",
+            "confined_command",
         ],
     )?;
     report.evidence.push(
-        "no product crate isolates candidate evaluation from the network: \
+        "phlow-experiment does not isolate candidate evaluation from the network: \
          a network-dependent proposal's tests would run with full network \
          access, and the design's 'no network' assertion has nothing to \
          assert against"
@@ -392,7 +377,7 @@ fn case_no_network_isolation() -> Result<CaseReport, DriverError> {
     Ok(report)
 }
 
-/// A1: no write-containment vocabulary exists in any product crate —
+/// A1: no write-containment vocabulary exists in the candidate evaluator —
 /// no chroot, no read-only bind mount, no write-allowlist for the
 /// candidate workspace. A proposal writing outside its dir during
 /// validation would not be denied by any sandbox layer.
@@ -408,10 +393,11 @@ fn case_no_write_containment() -> Result<CaseReport, DriverError> {
             "readonly_mount",
             "pivot_root",
             "sandbox_dir",
+            "confined_command",
         ],
     )?;
     report.evidence.push(
-        "no product crate contains candidate-evaluation writes: an \
+        "phlow-experiment does not contain candidate-evaluation writes: an \
          escaping proposal's writes are not denied by any sandbox, so \
          the design's 'policy violation, not test failure' distinction \
          has no mechanism behind it"
@@ -447,7 +433,7 @@ fn case_isolation_advertised_but_unimplemented() -> Result<CaseReport, DriverErr
     );
     // The only transition into Isolated is a state change: no isolation
     // primitive is invoked. Confirm no sandbox module backs it.
-    let hits = scan_workspace(&root, "isolated_workspace")?;
+    let hits = scan_evaluator(&root, "isolated_workspace")?;
     evidence.push(format!(
         "exact-token scan for 'isolated_workspace': {} hit(s)",
         hits.len()
@@ -531,11 +517,8 @@ fn run_inner() -> Result<Vec<String>, TaskFailure> {
         how: "seam absent: the improvement sandbox is a documented skeleton, not an isolation \
          mechanism. Evaluator::prepare() ('Prepares the isolated workspace and snapshots') is \
          `self.advance(EvalStage::Prepare)` — order enforcement only, honestly labeled 'Skeleton: \
-         order only'. Bounded exact-token scans over every product crate's src/**/*.rs (gauntlet \
-         crate excluded per the harness-probe principle) find zero hits for network-isolation \
-         vocabulary (unshare, network_isolation, no_network, netns, sandbox_network) and zero \
-         hits for write-containment vocabulary (chroot, write_containment, readonly_mount, \
-         pivot_root, sandbox_dir). Lifecycle::Isolated advertises 'Candidate workspace created \
+         order only'. Bounded exact-token scans of phlow-experiment find no network or filesystem \
+         isolation primitives and no call to the model-code confinement entry point. Lifecycle::Isolated advertises 'Candidate workspace created \
          in isolation', but the transition performs no isolation and no isolated_workspace \
          implementation exists. A network-dependent proposal's tests would run with full \
          network; an escaping proposal's writes would not be denied — the design's \

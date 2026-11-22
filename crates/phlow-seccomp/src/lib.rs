@@ -65,16 +65,13 @@ pub enum RunDirectory<'a> {
     ReadOnly(&'a std::path::Path),
 }
 
-/// Construct a fail-closed model-code command with Landlock, a private
+/// Take ownership of a model-code command and install Landlock, a private
 /// mount namespace and the existing egress filter. The system runtime
 /// lives under `/usr/bin` and `/usr/lib`. Only standard I/O crosses exec.
-pub fn confined_command(
-    program: impl AsRef<std::ffi::OsStr>,
-    directory: RunDirectory<'_>,
-) -> io::Result<Command> {
+/// The command is returned only if setup has been registered successfully.
+pub fn confined_command(mut command: Command, directory: RunDirectory<'_>) -> io::Result<Command> {
     #[cfg(target_os = "linux")]
     {
-        let mut command = Command::new(program);
         command
             .env_clear()
             .env("PATH", "/usr/bin:/bin")
@@ -87,7 +84,7 @@ pub fn confined_command(
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (program, directory);
+        let _ = (&mut command, directory);
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "model-code confinement requires Linux",

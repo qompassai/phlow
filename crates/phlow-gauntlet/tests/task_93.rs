@@ -5,13 +5,13 @@
 //! implemented as `self.advance(EvalStage::Prepare)` with the source
 //! comment "Skeleton: order only". `Lifecycle::Isolated` exists only as
 //! state vocabulary ("Candidate workspace created in isolation"). No
-//! network isolation exists anywhere in the workspace, no
+//! network isolation exists in this evaluator, no
 //! write-containment exists, and no typed policy-violation reporting
 //! exists.
 //!
 //! Four cases — 2 validation, 2 adversarial — each a bounded source
 //! recon that fails closed (premise changed) if sandbox vocabulary ever
-//! appears in a product crate. The driver reports the honest `fail` at
+//! appears in phlow-experiment. The driver reports the honest `fail` at
 //! `"seam"`.
 //!
 //! Product decision banked for Matt: whether to build a genuine
@@ -71,7 +71,7 @@ fn prepare_is_skeleton() {
     );
 }
 
-/// V2: no network-isolation vocabulary exists in any product crate —
+/// V2: no network-isolation vocabulary exists in the candidate evaluator —
 /// no `unshare`, no network namespace, no firewall rule, no
 /// offline-sandbox flag for candidate evaluation. The task-level
 /// driver then fails at the seam, and the `how` banks the product
@@ -102,7 +102,7 @@ fn no_network_isolation() {
 
 // --- adversarial ---
 
-/// A1: no write-containment vocabulary exists in any product crate —
+/// A1: no write-containment vocabulary exists in the candidate evaluator —
 /// no chroot, no read-only bind mount, no write-allowlist for the
 /// candidate workspace. An escaping proposal's writes are not denied
 /// by any sandbox layer.

@@ -32,7 +32,7 @@
 //!   [`ESCAPE_LIST_LIMIT_MAX`], [`CHECK_VALIDATION_TIMEOUT`].
 
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use rusqlite::{Connection, ErrorCode, params};
@@ -464,14 +464,16 @@ fn run_bounded(argv: &[String], dir: &Path) -> Result<i32, String> {
     let Some((program, args)) = argv.split_first() else {
         return Err("empty argv".to_owned());
     };
-    let mut child =
-        phlow_seccomp::confined_command(program, phlow_seccomp::RunDirectory::ReadOnly(dir))
-            .map_err(|e| format!("confinement unavailable for {program}: {e}"))?
-            .args(args)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|e| format!("spawn {program}: {e}"))?;
+    let mut child = phlow_seccomp::confined_command(
+        Command::new(program),
+        phlow_seccomp::RunDirectory::ReadOnly(dir),
+    )
+    .map_err(|e| format!("confinement unavailable for {program}: {e}"))?
+    .args(args)
+    .stdout(Stdio::null())
+    .stderr(Stdio::null())
+    .spawn()
+    .map_err(|e| format!("spawn {program}: {e}"))?;
     let deadline = Instant::now() + CHECK_VALIDATION_TIMEOUT;
     loop {
         match child.try_wait() {

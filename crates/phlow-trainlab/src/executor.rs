@@ -15,9 +15,7 @@
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-#[cfg(test)]
-use std::process::Command;
-use std::process::{Child, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -240,8 +238,10 @@ impl Executor {
             .interpreter_argv
             .split_first()
             .expect("validated non-empty interpreter argv");
-        let mut command =
-            phlow_seccomp::confined_command(program, phlow_seccomp::RunDirectory::Writable(dir))?;
+        let mut command = phlow_seccomp::confined_command(
+            Command::new(program),
+            phlow_seccomp::RunDirectory::Writable(dir),
+        )?;
         command
             .args(leading)
             .arg("harness.py")

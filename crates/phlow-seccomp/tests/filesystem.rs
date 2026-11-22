@@ -4,6 +4,7 @@ use std::fs::{self, File};
 use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::fs::{DirBuilderExt, symlink};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use phlow_seccomp::{RunDirectory, confined_command};
@@ -28,7 +29,7 @@ impl Drop for Fixture {
 }
 
 fn python(directory: RunDirectory<'_>, body: &str, args: &[&str]) {
-    let output = confined_command("/usr/bin/python3", directory)
+    let output = confined_command(Command::new("/usr/bin/python3"), directory)
         .unwrap()
         .args(["-c", body])
         .args(args)
@@ -140,7 +141,10 @@ for family in (socket.AF_INET, socket.AF_INET6):
 #[test]
 fn missing_input_fails_before_child_can_start() {
     let parent = Fixture::new(Path::new("/tmp"));
-    let result = confined_command("true", RunDirectory::ReadOnly(&parent.0.join("missing")));
+    let result = confined_command(
+        Command::new("true"),
+        RunDirectory::ReadOnly(&parent.0.join("missing")),
+    );
     assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::NotFound);
 }
 
@@ -149,7 +153,8 @@ fn replaced_input_fails_at_spawn() {
     let parent = Fixture::new(Path::new("/tmp"));
     let path = parent.0.join("input");
     fs::create_dir(&path).unwrap();
-    let mut command = confined_command("/usr/bin/true", RunDirectory::ReadOnly(&path)).unwrap();
+    let mut command =
+        confined_command(Command::new("/usr/bin/true"), RunDirectory::ReadOnly(&path)).unwrap();
     fs::rename(&path, parent.0.join("old-input")).unwrap();
     fs::create_dir(&path).unwrap();
     assert_eq!(
