@@ -1,1 +1,79 @@
-{"capabilities":{"extensions":[{"description":"This agent's interface is MCP over stdio, not A2A. The card is a capability manifest and discovery record, not an A2A endpoint declaration; no A2A endpoint exists for this agent. The params carry the invocation facts a client config generator needs to wire this server from the card alone.","params":{"implementation":"rmcp","interface":"mcp","invocation":{"args":["serve"],"command":"~/.local/bin/phlow","protocolEra":"2026-07-28","transport":"stdio"},"registryName":"ai.qompass/phlow"},"required":false,"uri":"https://qompass.ai/extensions/mcp-interface/v1"}],"pushNotifications":false,"streaming":false},"defaultInputModes":["application/json"],"defaultOutputModes":["application/json"],"description":"MCP server for the phlow agent runtime: bounded planner-coder-reviewer agent workflows under one shared safe runtime for CLI, TUI, and MCP, with operator-approved checks and a joint-attention coordination board for concurrent agents. This card is a discovery record and capability manifest for catalogues, registries, and client-config generators; the MCP server does not expose an A2A endpoint.","documentationUrl":"https://github.com/qompassai/phlow","name":"Phlow MCP Server","provider":{"organization":"Qompass AI","url":"https://qompass.ai"},"skills":[{"description":"Run bounded planner-coder-reviewer workflows against the shared runtime and read their state (flow_run, flow_status).","id":"agent-workflows","name":"Agent workflows","tags":["mcp","agents","workflows"]},{"description":"Run the operator-approved checks configured for a workflow and read their verdicts (flow_check).","id":"operator-checks","name":"Operator checks","tags":["mcp","checks","verification"]},{"description":"Publish, focus, align, and decide on the joint-attention coordination board shared by concurrent agents (flow_attention_publish, flow_attention_focus, flow_attention_alignment, flow_attention_decide).","id":"joint-attention","name":"Joint attention","tags":["mcp","coordination","attention"]}],"supportedInterfaces":[{"protocolBinding":"https://qompass.ai/extensions/mcp-interface/v1","protocolVersion":"1.0","url":"~/.local/bin/phlow"}],"version":"1.0.0"}
+{
+  "capabilities": {
+    "extensions": [
+      {
+        "description": "This agent's interface is MCP over stdio, not A2A. The card is a capability manifest and discovery record, not an A2A endpoint declaration; no A2A endpoint exists for this agent. The params carry the invocation facts a client config generator needs to wire this server from the card alone.",
+        "params": {
+          "implementation": "rmcp",
+          "interface": "mcp",
+          "invocation": {
+            "args": [
+              "serve"
+            ],
+            "command": "~/.local/bin/phlow",
+            "protocolEra": "2026-07-28",
+            "transport": "stdio"
+          },
+          "registryName": "ai.qompass/phlow"
+        },
+        "required": false,
+        "uri": "https://qompass.ai/extensions/mcp-interface/v1"
+      }
+    ],
+    "pushNotifications": false,
+    "streaming": false
+  },
+  "defaultInputModes": [
+    "application/json"
+  ],
+  "defaultOutputModes": [
+    "application/json"
+  ],
+  "description": "MCP server for the phlow agent runtime: bounded planner-coder-reviewer agent workflows under one shared safe runtime for CLI, TUI, and MCP, with operator-approved checks and a joint-attention coordination board for concurrent agents. This card is a discovery record and capability manifest for catalogues, registries, and client-config generators; the MCP server does not expose an A2A endpoint.",
+  "documentationUrl": "https://github.com/qompassai/phlow",
+  "name": "Phlow MCP Server",
+  "provider": {
+    "organization": "Qompass AI",
+    "url": "https://qompass.ai"
+  },
+  "skills": [
+    {
+      "description": "Run bounded planner-coder-reviewer workflows against the shared runtime and read their state (flow_run, flow_status).",
+      "id": "agent-workflows",
+      "name": "Agent workflows",
+      "tags": [
+        "mcp",
+        "agents",
+        "workflows"
+      ]
+    },
+    {
+      "description": "Run the operator-approved checks configured for a workflow and read their verdicts (flow_check).",
+      "id": "operator-checks",
+      "name": "Operator checks",
+      "tags": [
+        "mcp",
+        "checks",
+        "verification"
+      ]
+    },
+    {
+      "description": "Publish, focus, align, and decide on the joint-attention coordination board shared by concurrent agents (flow_attention_publish, flow_attention_focus, flow_attention_alignment, flow_attention_decide).",
+      "id": "joint-attention",
+      "name": "Joint attention",
+      "tags": [
+        "mcp",
+        "coordination",
+        "attention"
+      ]
+    }
+  ],
+  "supportedInterfaces": [
+    {
+      "protocolBinding": "https://qompass.ai/extensions/mcp-interface/v1",
+      "protocolVersion": "1.0",
+      "url": "~/.local/bin/phlow"
+    }
+  ],
+  "version": "1.1.0"
+}
