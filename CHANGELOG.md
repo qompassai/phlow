@@ -5,6 +5,12 @@ All notable changes to phlow are documented here. Format follows
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-11-27
+
+### Fixed
+
+- phlow-mcp ships a README carrying the  marker so the MCP Registry package validation passes (1.1.0 reached crates.io without one and could not be registered).
+
 ## [1.1.0] - 2026-11-27
 
 ### Added

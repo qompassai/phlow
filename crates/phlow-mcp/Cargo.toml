@@ -1,6 +1,7 @@
 [package]
 name = "phlow-mcp"
-version = "1.1.0"
+version = "1.1.1"
+readme = "README.md"
 description = "Newline-delimited JSON-RPC (MCP) server for the phlow agent runtime"
 license = "Apache-2.0"
 repository = "https://github.com/qompassai/phlow"
