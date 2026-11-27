@@ -109,8 +109,19 @@ until the turn budget would break; the rest defer — never truncated.
 token economy. Phase 0 measured the managed arm at 5–10x tokens with
 zero savings; no savings are claimed here.
 
-**Opt-in:** `SolpiFeature::ContextApi` on `SolpiAgentConfig`, disabled
-by default like every other mechanism.
+**Baseline (adopted 2026-11-27, Owner ruling):** the context API's
+protective core — task and instruction events pinned by kind, the
+tally outside the event stream, archive-backed collapse on both the
+model and harness paths (compaction never discards), and per-turn
+tool-result budgeting — is the default harness behaviour, not an
+opt-in. `SolpiAgentConfig::default()` enables
+`SolpiFeature::ContextApi`; `SolpiAgentConfig::disabled()` remains
+the all-off constructor and `disable()` is the explicit opt-out.
+The evidence is the Phase 1 record: destruction losses eliminated
+(zero truncating fallbacks in 24 runs), the injection task answered
+from pinned data at both budgets, 64K tied best — at model-arm
+token cost; no savings are claimed. The other two mechanisms
+remain opt-in, unchanged.
 
 **Witness:** gauntlet task-319 (collapse/retrieve round-trip; a
 summary insufficient by construction, completable only through the
@@ -164,12 +175,18 @@ Covered, each with a mitigation and an adversarial test in-module:
   completion, and pinned steps are exempt. Tests:
   `compact_ignores_full_window_of_incomplete_steps`,
   `compact_never_candidates_pinned_steps`.
-- **AML.T0081 Modify AI Agent Configuration:** default-off; enabling
-  requires an explicit `enable()`/`opt_in()` call; nonsense thresholds
-  (NaN, infinite, ≤0, >1, zero window) fail at construction. Tests:
+- **AML.T0081 Modify AI Agent Configuration:** the opt-in mechanisms
+  are default-off and enabling requires an explicit
+  `enable()`/`opt_in()` call; the context-API baseline (2026-11-27
+  adoption) is on in the default configuration, and turning it off
+  requires an explicit `disable()` call — no configuration change
+  is silent in either direction. Nonsense thresholds (NaN,
+  infinite, ≤0, >1, zero window) fail at construction. Tests:
   `reducer_refuses_without_opt_in`, `compact_refuses_without_opt_in`,
   `compact_rejects_nonsense_thresholds_at_construction`, config
-  `default_config_disables_everything`.
+  `default_config_is_the_baseline`,
+  `disabled_config_disables_everything`,
+  `disable_is_the_explicit_baseline_opt_out`.
 
 Out of scope, with rationale (not covered, not claimed):
 
