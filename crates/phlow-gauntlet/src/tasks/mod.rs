@@ -325,6 +325,7 @@ pub mod task_315;
 pub mod task_316;
 pub mod task_317;
 pub mod task_318;
+pub mod task_319;
 
 use crate::{Ctx, GauntletError, TaskKind, TaskOutcome, TaskReport};
 use std::time::Instant;
@@ -2259,6 +2260,12 @@ pub const TASKS: [TaskEntry; crate::TASK_COUNT_MAX] = [
         name: task_318::NAME,
         kind: task_318::KIND,
         run: task_318::run,
+    },
+    TaskEntry {
+        id: task_319::ID,
+        name: task_319::NAME,
+        kind: task_319::KIND,
+        run: task_319::run,
     },
 ];
 

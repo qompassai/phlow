@@ -24,9 +24,11 @@ pub use memory::{
 };
 pub use orchestrator::Orchestrator;
 pub use solpi::{
-    CompactReceipt, CompactStep, CompactionPlan, CompactionPolicy, EvidenceReducer, PolicyError,
-    ReducerError, ReductionOutcome, ReductionProposal, SolpiAgentConfig, SolpiFeature,
-    evaluate_compaction,
+    Admission, ArchiveEntry, ArchivedRange, CollapseReceipt, CompactReceipt, CompactStep,
+    CompactionPlan, CompactionPolicy, ContextApiError, ContextEvent, ContextLedger, EventKind,
+    EvidenceReducer, HarnessCompactError, PolicyError, ReducerError, ReductionOutcome,
+    ReductionProposal, SolpiAgentConfig, SolpiFeature, TallyAuthor, TallyEntry, UsageIndicator,
+    admit_tool_results, evaluate_compaction,
 };
 pub use system1::{
     Answer, BuiltQuestion, Criteria, EmbedError, Embedded, Embedder, Question, QuestionError,

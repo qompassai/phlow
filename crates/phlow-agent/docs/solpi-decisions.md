@@ -75,6 +75,49 @@ measuring anything when disabled. `with_thresholds()` rejects a zero
 window and any non-finite or out-of-range pressure threshold at
 construction.
 
+## 3. Context API (`solpi/context_api.rs`) — Manuscript Phase 1 (2026-11-27)
+
+**Authority:** the Manuscript Phase 0 record, section 6 (Owner GO
+2026-11-27). Phase 0 replicated Devoto et al. (arXiv 2611.34147) in
+miniature: the harness arm lost by *destruction* (compaction discarded
+figures the model still needed; on the injection task it answered the
+injected 0 after its real data was compacted away), and retrieval was
+never used in 48 runs. This module is the model-facing half section 6
+prescribed, built on section 2's engine — the engine still decides;
+the API holds the state and performs.
+
+**Re-expression:** `ContextLedger` holds live events, an archive, and
+a **tally**. `collapse(start, end, summary, tag)` replaces an event
+range with the model's summary and archives the originals under the
+tag — compaction never discards, on either the model path or the
+harness fallback (`harness_compact`, which runs `evaluate_compaction`
+over the live snapshot and archives the oldest group-safe candidate
+run). `retrieve(tag)` returns originals byte-for-byte. The task event
+(id 0) and instruction events are pinned *by kind* — pinning is not a
+caller flag, so tool traffic cannot acquire it — and no collapse range
+may include a pinned event or split a tool group. The tally lives
+outside the event stream: entries arrive only through explicit
+`tally_write` calls carrying an author (`Model`/`Harness`), so an
+instruction-shaped tool result has no path into the tally or the task.
+The usage indicator is fed by true token counts recorded from the
+serving stack (`record_true_prompt_tokens`) and surfaces the archive
+index (tags + sizes) so retrieval is discoverable at need.
+`admit_tool_results` budgets tool results per turn: whole, in order,
+until the turn budget would break; the rest defer — never truncated.
+
+**Honest scope:** the API buys answer survival under pressure, not
+token economy. Phase 0 measured the managed arm at 5–10x tokens with
+zero savings; no savings are claimed here.
+
+**Opt-in:** `SolpiFeature::ContextApi` on `SolpiAgentConfig`, disabled
+by default like every other mechanism.
+
+**Witness:** gauntlet task-319 (collapse/retrieve round-trip; a
+summary insufficient by construction, completable only through the
+archive; the injection shape under a compaction storm; storm bounds),
+plus the Phase 1 protocol re-run against Phase 0's numbers, recorded
+in the Phase 1 record.
+
 ## Bounds (named, with units)
 
 | Bound | Value | Rationale |
@@ -88,6 +131,14 @@ construction.
 | `MIN_SAVINGS_BYTES_DEFAULT` | 4096 B | Compaction must pay for itself |
 | `MIN_CANDIDATE_STEPS_DEFAULT` | 2 | One step is not a compaction |
 | `CANDIDATES_MAX` | 64 | Plan stays bounded |
+| `EVENTS_MAX` (context_api) | 4096 events | Live list cannot grow without bound |
+| `EVENT_BYTES_MAX` (context_api) | 256 KiB | One event cannot carry a corpus |
+| `TALLY_ENTRIES_MAX` | 128 | The pinned tally stays reviewable at a glance |
+| `TALLY_VALUE_BYTES_MAX` | 1024 B | A tally entry is a figure, not a document |
+| `ARCHIVE_TAGS_MAX` | 64 | Archive index stays surfacable in the indicator |
+| `COLLAPSE_SUMMARY_BYTES_MAX` | 64 KiB | A collapse summary cannot smuggle the range back in |
+| `LIVE_TAIL_EVENTS` | 10 events | The working set is never a harness candidate |
+| `TURN_RESULT_BUDGET_BYTES_DEFAULT` | 54,000 B | Half a 32K-token window per turn (Phase 0 density) |
 
 ## MITRE ATLAS mapping (v2026.05/2026.08 identifiers)
 

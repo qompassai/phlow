@@ -281,7 +281,10 @@ fn make_tracker(tool_calls_max: u64) -> Result<BudgetTracker, DriverError> {
 /// `footprint_estimate` in `phlow-inference/src/kv_policy.rs` (the
 /// KV-cache footprint for ONE TOKEN — the control sample) and
 /// trainlab's pass@k estimator (pass-rate statistics over finished
-/// runs) — estimation vocabulary, but not plan-cost estimation. Both
+/// runs), and the context API's indicator documentation in
+/// `phlow-agent/src/solpi/context_api.rs` (the word only in negations:
+/// true counts, never a character estimate — classified 2026-11-27)
+/// — estimation vocabulary, but not plan-cost estimation. All
 /// classified UNRELATED, never counted as the seam.
 fn case_no_plan_cost_estimator() -> Result<CaseReport, DriverError> {
     const CASE: &str = "no_plan_cost_estimator";
@@ -300,6 +303,15 @@ fn case_no_plan_cost_estimator() -> Result<CaseReport, DriverError> {
             evidence.push(format!(
                 "classified control sample (UNRELATED): {hit} — KV-cache footprint \
                  sizing for one token, not plan-cost estimation"
+            ));
+        } else if hit.contains("phlow-agent/src/solpi/context_api.rs") {
+            evidence.push(format!(
+                "classified (UNRELATED): {hit} — the Manuscript Phase 1 context \
+                 API's true-count indicator documentation (2026-11-27): the word \
+                 appears only in negations (the indicator never substitutes a \
+                 character estimate for the server's true token counts); the \
+                 module measures, it does not estimate, and nothing in it \
+                 estimates budget for a plan"
             ));
         } else if hit.contains("phlow-trainlab/src/runner.rs")
             || hit.contains("phlow-trainlab/src/lib.rs")

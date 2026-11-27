@@ -9,6 +9,11 @@
 //! - [`context_compact`]: online context compaction — completed steps
 //!   become compaction candidates under explicit economic and
 //!   window-pressure checks with named thresholds.
+//! - [`context_api`]: the model-facing context API (Manuscript
+//!   Phase 1) — the stateful half built on `context_compact`'s
+//!   decisions: a pinned task and tally, archive-backed collapse and
+//!   retrieval, a true-count usage indicator, and per-turn tool-result
+//!   budgeting. Compaction archives; it never discards.
 //!
 //! These are concept re-expressions, not ports of the upstream TypeScript.
 //! Design record and upstream citations live in
@@ -26,9 +31,15 @@
 //! start; each mechanism requires an explicit
 //! [`SolpiAgentConfig::enable`] call.
 
+pub mod context_api;
 pub mod context_compact;
 pub mod reducer;
 
+pub use context_api::{
+    Admission, ArchiveEntry, ArchivedRange, CollapseReceipt, ContextApiError, ContextEvent,
+    ContextLedger, EventKind, HarnessCompactError, TallyAuthor, TallyEntry, UsageIndicator,
+    admit_tool_results,
+};
 pub use context_compact::{
     CompactStep, CompactionPlan, CompactionPolicy, PolicyError, evaluate_compaction,
 };
@@ -43,6 +54,9 @@ pub enum SolpiFeature {
     EvidenceReducer,
     /// Completed steps become compaction candidates under cost checks.
     OnlineCompact,
+    /// The model-facing context API: pinned task and tally,
+    /// archive-backed collapse and retrieval.
+    ContextApi,
 }
 
 /// Explicit opt-in configuration for the agent-layer mechanisms.
@@ -53,6 +67,7 @@ pub enum SolpiFeature {
 pub struct SolpiAgentConfig {
     evidence_reducer: bool,
     online_compact: bool,
+    context_api: bool,
 }
 
 impl SolpiAgentConfig {
@@ -61,6 +76,7 @@ impl SolpiAgentConfig {
         Self {
             evidence_reducer: false,
             online_compact: false,
+            context_api: false,
         }
     }
 
@@ -69,6 +85,7 @@ impl SolpiAgentConfig {
         match feature {
             SolpiFeature::EvidenceReducer => self.evidence_reducer = true,
             SolpiFeature::OnlineCompact => self.online_compact = true,
+            SolpiFeature::ContextApi => self.context_api = true,
         }
         self
     }
@@ -78,6 +95,7 @@ impl SolpiAgentConfig {
         match feature {
             SolpiFeature::EvidenceReducer => self.evidence_reducer,
             SolpiFeature::OnlineCompact => self.online_compact,
+            SolpiFeature::ContextApi => self.context_api,
         }
     }
 }
@@ -98,6 +116,7 @@ mod tests {
         let config = SolpiAgentConfig::default();
         assert!(!config.is_enabled(SolpiFeature::EvidenceReducer));
         assert!(!config.is_enabled(SolpiFeature::OnlineCompact));
+        assert!(!config.is_enabled(SolpiFeature::ContextApi));
     }
 
     #[test]
@@ -105,6 +124,16 @@ mod tests {
         let mut config = SolpiAgentConfig::disabled();
         config.enable(SolpiFeature::OnlineCompact);
         assert!(config.is_enabled(SolpiFeature::OnlineCompact));
+        assert!(!config.is_enabled(SolpiFeature::EvidenceReducer));
+        assert!(!config.is_enabled(SolpiFeature::ContextApi));
+    }
+
+    #[test]
+    fn context_api_enable_is_independent() {
+        let mut config = SolpiAgentConfig::disabled();
+        config.enable(SolpiFeature::ContextApi);
+        assert!(config.is_enabled(SolpiFeature::ContextApi));
+        assert!(!config.is_enabled(SolpiFeature::OnlineCompact));
         assert!(!config.is_enabled(SolpiFeature::EvidenceReducer));
     }
 }
