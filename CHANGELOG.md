@@ -5,6 +5,12 @@ All notable changes to phlow are documented here. Format follows
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-11-27
+
+### Fixed
+
+- Registry validation, second attempt: the 1.1.1 helper publish carried the README path instead of its contents in the publish metadata, so crates.io registered no README. 1.1.2 republishes with the README contents carried correctly; the README itself (with the mcp-name marker) is unchanged.
+
 ## [1.1.1] - 2026-11-27
 
 ### Fixed
