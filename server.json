@@ -3,7 +3,7 @@
   "name": "ai.qompass/phlow",
   "title": "Phlow MCP Server",
   "description": "MCP server for the phlow agent runtime: bounded planner-coder-reviewer agent workflows.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "websiteUrl": "https://qompass.ai/solutions/phlow-mcp-server/",
   "repository": {
     "url": "https://github.com/qompassai/phlow",
@@ -11,9 +11,9 @@
   },
   "packages": [
     {
-      "registryType": "mcpb",
-      "identifier": "https://github.com/qompassai/phlow/releases/download/v1.0.0/phlow-mcp-1.0.0-linux-x64.mcpb",
-      "fileSha256": "c51dc201cd2397030c2c12326fd79c7fdab15d533cccc265572bcb7cf31c15c9",
+      "registryType": "cargo",
+      "identifier": "phlow-mcp",
+      "version": "1.1.0",
       "transport": {
         "type": "stdio"
       }

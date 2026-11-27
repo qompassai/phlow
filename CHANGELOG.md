@@ -5,6 +5,23 @@ All notable changes to phlow are documented here. Format follows
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-27
+
+### Added
+
+- phlow-seccomp: filesystem confinement for model-code child processes.
+- trainlab / self-improve: egress filtering restored for model code, with
+  gauntlet audits aligned to the confinement model.
+- Fleet agent card (D-1606/D-1607 capability manifest).
+
+### Fixed
+
+- Version incoherence closed: phlow-mcp, server.json (top-level and
+  package entry) and this changelog now agree at 1.1.0; the MCP Registry
+  top-level no longer lags at 1.0.0 and the published crate no longer
+  runs ahead of the tree.
+
+
 ### Added
 
 - Kev-4B routing/triage in phlow-system1 (D-1622): a `KevBackend`
